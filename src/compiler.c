@@ -105,6 +105,7 @@ void compile_stmt_ast(Parser *p, Stmt *s){
         case STMT_CLASS_DEF:{
             Function *body=compile_function_from_ast(p,s->name,NULL,0,s->body,s->body_count,1);
             int ci=add_const(p->chunk,objv(body->owner)); int ni=name_const(p,s->name);
+            if(s->name2) emit_arg(p->chunk,OP_LOAD,name_const(p,s->name2),s->line); else emit_op(p->chunk,OP_NONE,s->line);
             emit_arg(p->chunk,OP_CLASS,ci,s->line); emit(p->chunk,ni,s->line); emit_arg(p->chunk,OP_STORE,ni,s->line); apply_decorators(p,s); break;
         }
         case STMT_RETURN: if(s->expr) compile_expr_ast(p,s->expr); else emit_op(p->chunk,OP_NONE,s->line); emit_op(p->chunk,OP_RETURN,s->line); break;
@@ -190,7 +191,7 @@ void compile_stmt_ast(Parser *p, Stmt *s){
 }
 
 /* ---- Function object allocation + top-level driver ---- */
-Function *alloc_function(const char *name,char **params,int arity,Dict *globals,char *dir,int store_globals){ Obj *o=new_obj(O_FUNCTION); o->as.fn.name=xstrdup2(name); o->as.fn.params=params; o->as.fn.arity=arity; o->as.fn.min_arity=arity; o->as.fn.default_count=0; o->as.fn.defaults=NULL; o->as.fn.star_index=-1; o->as.fn.dstar_index=-1; o->as.fn.chunk=chunk_new(); o->as.fn.globals=globals; o->as.fn.closure=NULL; o->as.fn.module_dir=dir?xstrdup2(dir):xstrdup2("."); o->as.fn.store_globals=store_globals; o->as.fn.is_generator=0; o->as.fn.owner=o; return &o->as.fn; }
+Function *alloc_function(const char *name,char **params,int arity,Dict *globals,char *dir,int store_globals){ Obj *o=new_obj(O_FUNCTION); o->as.fn.name=xstrdup2(name); o->as.fn.params=params; o->as.fn.arity=arity; o->as.fn.min_arity=arity; o->as.fn.default_count=0; o->as.fn.defaults=NULL; o->as.fn.star_index=-1; o->as.fn.dstar_index=-1; o->as.fn.chunk=chunk_new(); o->as.fn.globals=globals; o->as.fn.closure=NULL; o->as.fn.module_dir=dir?xstrdup2(dir):xstrdup2("."); o->as.fn.store_globals=store_globals; o->as.fn.is_generator=0; o->as.fn.defining_class=NULL; o->as.fn.owner=o; return &o->as.fn; }
 Function *clone_function(Function *src, Dict *closure){ Obj *o=new_obj(O_FUNCTION); o->as.fn=*src; o->as.fn.name=xstrdup2(src->name); o->as.fn.closure=closure; o->as.fn.owner=o; return &o->as.fn; }
 Function *compile_source(const char *src,const char *name,const char *dir,Dict *globals){
     fprintf(stderr, "[minipy] compile: lex...\n"); fflush(stderr);

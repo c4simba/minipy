@@ -28,6 +28,7 @@ void  print_traceback(Value ex);
 
 /* Method binding + value/runtime operations (vm_ops.c) */
 int   function_declares(char **names, int n, const char *name);
+int   class_find(Class *kl, const char *name, Value *out);
 int   get_instance_method(Value obj, const char *name, Value *out);
 int   call_instance_method0(Value obj, const char *name, Value *out);
 int   call_instance_method1(Value obj, const char *name, Value arg, Value *out);
@@ -48,10 +49,13 @@ Value call_builtin_method(Value recv, const char *name, int argc, Value *argv);
 /* Builtins (vm_builtins.c) */
 int   iterator_next_value(Value top, Value *out);
 Value native_iter(int argc, Value *argv);
+Value builtin_str(Value v);
+char *mpy_instance_repr(Value v);
 extern Native N_LEN, N_RANGE, N_NEXT, N_ITER, N_INPUT;
 extern Native N_STR, N_REPR, N_INT, N_FLOAT, N_BOOL, N_LIST, N_TUPLE, N_SET, N_DICT;
 extern Native N_ABS, N_MIN, N_MAX, N_SUM, N_SORTED, N_REVERSED, N_ENUMERATE, N_ZIP, N_MAP, N_FILTER;
 extern Native N_TYPE, N_ISINSTANCE, N_ORD, N_CHR, N_ROUND, N_ANY, N_ALL;
+extern Native N_SUPER, N_STATICMETHOD, N_CLASSMETHOD, N_PROPERTY;
 
 /* Core dispatch / calling convention / generators (vm.c) */
 Value run_function(Function *fn, int argc, Value *args);

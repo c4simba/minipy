@@ -76,6 +76,7 @@ static Value native_enumerate(int,Value*); static Value native_zip(int,Value*); 
 static Value native_filter(int,Value*); static Value native_type(int,Value*); static Value native_isinstance(int,Value*);
 static Value native_ord(int,Value*); static Value native_chr(int,Value*); static Value native_round(int,Value*);
 static Value native_any(int,Value*); static Value native_all(int,Value*);
+static Value native_super(int,Value*); static Value native_staticmethod(int,Value*); static Value native_classmethod(int,Value*); static Value native_property(int,Value*);
 
 Native N_STR={"str",1,native_str}; Native N_REPR={"repr",1,native_repr}; Native N_INT={"int",-1,native_int};
 Native N_FLOAT={"float",-1,native_float}; Native N_BOOL={"bool",-1,native_bool}; Native N_LIST={"list",-1,native_list};
@@ -86,6 +87,7 @@ Native N_ENUMERATE={"enumerate",-1,native_enumerate}; Native N_ZIP={"zip",-1,nat
 Native N_FILTER={"filter",2,native_filter}; Native N_TYPE={"type",1,native_type}; Native N_ISINSTANCE={"isinstance",2,native_isinstance};
 Native N_ORD={"ord",1,native_ord}; Native N_CHR={"chr",1,native_chr}; Native N_ROUND={"round",-1,native_round};
 Native N_ANY={"any",1,native_any}; Native N_ALL={"all",1,native_all};
+Native N_SUPER={"super",-1,native_super}; Native N_STATICMETHOD={"staticmethod",1,native_staticmethod}; Native N_CLASSMETHOD={"classmethod",1,native_classmethod}; Native N_PROPERTY={"property",1,native_property};
 
 /* Collect any iterable into a fresh list. */
 static void collect_iterable(Value v, List *out){
@@ -93,8 +95,28 @@ static void collect_iterable(Value v, List *out){
     while(iterator_next_value(it,&nx)) list_push(out,nx);
 }
 
-static Value native_str(int argc,Value*argv){ if(argc==0) return stringv(""); if(is_obj(argv[0],O_STRING)) return argv[0]; char *s=value_repr(argv[0],0); Value r=stringv(s); free(s); return r; }
-static Value native_repr(int argc,Value*argv){ (void)argc; char *s=value_repr(argv[0],1); Value r=stringv(s); free(s); return r; }
+/* str() with __str__/__repr__ dispatch (shared with OP_PRINT). */
+Value builtin_str(Value v){
+    Value r;
+    if(call_instance_method0(v,"__str__",&r)) return r;
+    if(call_instance_method0(v,"__repr__",&r)) return r;
+    if(is_obj(v,O_STRING)) return v;
+    char *s=value_repr(v,0); Value o=stringv(s); free(s); return o;
+}
+static Value native_str(int argc,Value*argv){ if(argc==0) return stringv(""); return builtin_str(argv[0]); }
+static Value native_repr(int argc,Value*argv){ (void)argc; Value r; if(call_instance_method0(argv[0],"__repr__",&r)) return r; char *s=value_repr(argv[0],1); Value o=stringv(s); free(s); return o; }
+/* Hook for value_repr: repr of an instance via __repr__ (or __str__). */
+char *mpy_instance_repr(Value v){ Value r; if(call_instance_method0(v,"__repr__",&r)||call_instance_method0(v,"__str__",&r)) return value_to_cstr(r); return NULL; }
+static Value native_super(int argc,Value*argv){ (void)argc;(void)argv;
+    Frame *fr=&vm.frames[vm.fcount-1]; Function *m=fr->fn;
+    if(!m->defining_class||!m->defining_class->base) runtime_error("super(): no base class");
+    if(m->arity<1) runtime_error("super(): enclosing method has no self");
+    Value self; if(!dict_get(fr->locals,m->params[0],&self)) runtime_error("super(): cannot find self");
+    Obj *o=new_obj(O_SUPER); o->as.super.self=self; o->as.super.start=m->defining_class->base; return objv(o);
+}
+static Value native_staticmethod(int argc,Value*argv){ (void)argc; Obj *o=new_obj(O_METHWRAP); o->as.mw.kind=0; o->as.mw.fn=argv[0]; return objv(o); }
+static Value native_classmethod(int argc,Value*argv){ (void)argc; Obj *o=new_obj(O_METHWRAP); o->as.mw.kind=1; o->as.mw.fn=argv[0]; return objv(o); }
+static Value native_property(int argc,Value*argv){ (void)argc; Obj *o=new_obj(O_METHWRAP); o->as.mw.kind=2; o->as.mw.fn=argv[0]; return objv(o); }
 static Value native_int(int argc,Value*argv){ if(argc==0) return intv(0); Value v=argv[0]; if(v.type==V_INT||v.type==V_BOOL) return intv(as_int(v)); if(v.type==V_FLOAT) return intv((int64_t)v.as.f); if(is_obj(v,O_STRING)){ char *e; long long n=strtoll(v.as.obj->as.str.s,&e,10); return intv(n); } runtime_error("int() argument must be a number or string"); return nonev(); }
 static Value native_float(int argc,Value*argv){ if(argc==0) return floatv(0.0); Value v=argv[0]; if(is_number(v)) return floatv(as_double(v)); if(is_obj(v,O_STRING)) return floatv(strtod(v.as.obj->as.str.s,NULL)); runtime_error("float() argument must be a number or string"); return nonev(); }
 static Value native_bool(int argc,Value*argv){ if(argc==0) return boolv(0); return boolv(truthy(argv[0])); }
@@ -118,7 +140,7 @@ static int isinstance_one(Value x, Value t){
         if(n==&N_INT) return x.type==V_INT||x.type==V_BOOL; if(n==&N_FLOAT) return x.type==V_FLOAT; if(n==&N_BOOL) return x.type==V_BOOL;
         if(n==&N_STR) return is_obj(x,O_STRING); if(n==&N_LIST) return is_obj(x,O_LIST); if(n==&N_TUPLE) return is_obj(x,O_TUPLE);
         if(n==&N_SET) return is_obj(x,O_SET); if(n==&N_DICT) return is_obj(x,O_DICT); return 0; }
-    if(is_obj(t,O_CLASS)) return is_obj(x,O_INSTANCE) && x.as.obj->as.inst.klass==&t.as.obj->as.klass;
+    if(is_obj(t,O_CLASS)){ if(!is_obj(x,O_INSTANCE)) return 0; for(Class *k=x.as.obj->as.inst.klass;k;k=k->base) if(k==&t.as.obj->as.klass) return 1; return 0; }
     return 0;
 }
 static Value native_isinstance(int argc,Value*argv){ (void)argc; Value x=argv[0],t=argv[1]; if(is_obj(t,O_TUPLE)){ List *l=&t.as.obj->as.tuple; for(int i=0;i<l->count;i++) if(isinstance_one(x,l->items[i])) return boolv(1); return boolv(0); } return boolv(isinstance_one(x,t)); }

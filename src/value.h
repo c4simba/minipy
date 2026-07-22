@@ -5,11 +5,11 @@
 
 /* ========================= Values / Objects ========================= */
 
-typedef struct Obj Obj; typedef struct Function Function; typedef struct Native Native;
+typedef struct Obj Obj; typedef struct Function Function; typedef struct Native Native; typedef struct Class Class;
 struct Chunk; /* defined in bytecode.h; Function only needs the pointer */
 
 typedef enum { V_NONE, V_BOOL, V_INT, V_FLOAT, V_OBJ, V_NATIVE } VType;
-typedef enum { O_STRING, O_LIST, O_TUPLE, O_SET, O_DICT, O_FUNCTION, O_CLASS, O_INSTANCE, O_BOUND_METHOD, O_BOUND_NATIVE, O_MODULE, O_ITER, O_GENERATOR, O_EXCEPTION } OType;
+typedef enum { O_STRING, O_LIST, O_TUPLE, O_SET, O_DICT, O_FUNCTION, O_CLASS, O_INSTANCE, O_BOUND_METHOD, O_BOUND_NATIVE, O_MODULE, O_ITER, O_GENERATOR, O_EXCEPTION, O_SUPER, O_METHWRAP } OType;
 
 typedef struct { VType type; union { int boolean; int64_t i; double f; Obj *obj; Native *native; } as; } Value;
 
@@ -19,8 +19,8 @@ typedef struct { char *s; int len; } String;
 typedef struct { Value *items; int count, cap; } List;
 typedef struct { char **keys; Value *vals; int count, cap; } Dict;
 
-struct Function { char *name; char **params; int arity; int min_arity; Value *defaults; int default_count; int star_index; int dstar_index; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Obj *owner; };
-typedef struct { char *name; Dict *methods; } Class;
+struct Function { char *name; char **params; int arity; int min_arity; Value *defaults; int default_count; int star_index; int dstar_index; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Class *defining_class; Obj *owner; };
+struct Class { char *name; Dict *methods; Class *base; };
 typedef struct { Class *klass; Dict *fields; } Instance;
 typedef struct { Value receiver; Function *fn; } BoundMethod;
 typedef struct { Value receiver; char *name; } BoundNative;
@@ -28,8 +28,10 @@ typedef struct { char *name; Dict *dict; } Module;
 typedef struct { Value iterable; int index; } Iter;
 typedef struct { Function *fn; Dict *locals; int ip; int done; } Generator;
 typedef struct { char *type_name; char *message; Value payload; } ExceptionObj;
+typedef struct { Value self; Class *start; } Super;   /* super() proxy */
+typedef struct { int kind; Value fn; } MethWrap;      /* 0 static, 1 class, 2 property */
 
-struct Obj { OType type; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; } as; };
+struct Obj { OType type; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; Super super; MethWrap mw; } as; };
 
 /* Constructors */
 Value nonev(void);
@@ -64,5 +66,10 @@ int  val_equal(Value a, Value b);
 /* Python-style textual form. repr!=0 quotes strings; containers always show the
    repr of their elements. Returns a heap string the caller frees. */
 char *value_repr(Value v, int repr);
+/* Recover the boxed Value for a Class* (it lives inside an Obj's union). */
+Value class_to_value(Class *k);
+/* Optional hook so value_repr can dispatch __repr__/__str__ for instances
+   nested in containers. Set by the VM; returns a heap string or NULL. */
+extern char *(*mpy_repr_hook)(Value v);
 
 #endif /* MPY_VALUE_H */

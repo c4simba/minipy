@@ -4,8 +4,10 @@
 #include "containers.h"
 
 int function_declares(char **names,int n,const char *name){ for(int i=0;i<n;i++) if(strcmp(names[i],name)==0) return 1; return 0; }
+/* Look up `name` in a class and its base chain (MRO for single inheritance). */
+int class_find(Class *kl,const char *name,Value *out){ for(Class *k=kl;k;k=k->base) if(dict_get(k->methods,name,out)) return 1; return 0; }
 int get_instance_method(Value obj,const char *name,Value *out){
-    if(is_obj(obj,O_INSTANCE)){ Instance *in=&obj.as.obj->as.inst; if(dict_get(in->klass->methods,name,out) && is_obj(*out,O_FUNCTION)){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&out->as.obj->as.fn; *out=objv(b); return 1; } }
+    if(is_obj(obj,O_INSTANCE)){ if(class_find(obj.as.obj->as.inst.klass,name,out) && is_obj(*out,O_FUNCTION)){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&out->as.obj->as.fn; *out=objv(b); return 1; } }
     return 0;
 }
 int call_instance_method0(Value obj,const char *name, Value *out){
@@ -65,6 +67,7 @@ static Value str_format(Value fmtv, Value args){
 }
 Value binary_num(Value a,Value b,Op op){
     if(op==OP_MOD && is_obj(a,O_STRING)) return str_format(a,b);
+    if(is_obj(a,O_INSTANCE)){ const char *m=op==OP_SUB?"__sub__":op==OP_MUL?"__mul__":op==OP_DIV?"__truediv__":op==OP_FLOOR_DIV?"__floordiv__":op==OP_MOD?"__mod__":op==OP_POWER?"__pow__":NULL; if(m){ Value r; if(call_instance_method1(a,m,b,&r)) return r; } }
     if(!is_number(a)||!is_number(b)) raise_named("TypeError","unsupported operand type for arithmetic");
     if(op==OP_BITAND||op==OP_BITOR||op==OP_BITXOR||op==OP_SHL||op==OP_SHR){ if(a.type==V_FLOAT||b.type==V_FLOAT) runtime_error("bitwise operator on float"); int64_t x=as_int(a),y=as_int(b); switch(op){ case OP_BITAND: return intv(x&y); case OP_BITOR: return intv(x|y); case OP_BITXOR: return intv(x^y); case OP_SHL: return intv(x<<y); case OP_SHR: return intv(x>>y); default: break; } }
     if(op==OP_MOD){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) raise_named("ZeroDivisionError","float modulo by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv(x-(double)t*y); } int64_t x=as_int(a),y=as_int(b); if(y==0) raise_named("ZeroDivisionError","integer modulo by zero"); int64_t r=x%y; if(r!=0 && ((r<0)!=(y<0))) r+=y; return intv(r); }
@@ -83,11 +86,29 @@ static int value_cmp3(Value a,Value b){
     }
     raise_named("TypeError","comparison between unsupported types"); return 0;
 }
-Value compare(Value a,Value b,Op op){ int c=value_cmp3(a,b); int r=(op==OP_LT?c<0:op==OP_LE?c<=0:op==OP_GT?c>0:c>=0); return boolv(r); }
+Value compare(Value a,Value b,Op op){
+    if(is_obj(a,O_INSTANCE)){ const char *m=op==OP_LT?"__lt__":op==OP_LE?"__le__":op==OP_GT?"__gt__":"__ge__"; Value r; if(call_instance_method1(a,m,b,&r)) return boolv(truthy(r)); }
+    int c=value_cmp3(a,b); int r=(op==OP_LT?c<0:op==OP_LE?c<=0:op==OP_GT?c>0:c>=0); return boolv(r);
+}
 
+/* Resolve a class-attribute `v` for receiver `self` into the value returned by
+   attribute access: bind methods, unwrap static/class-methods, call properties. */
+static Value bind_class_attr(Value v, Value self, Class *owner){
+    if(is_obj(v,O_FUNCTION)){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=self; b->as.bm.fn=&v.as.obj->as.fn; return objv(b); }
+    if(is_obj(v,O_METHWRAP)){ MethWrap *w=&v.as.obj->as.mw;
+        if(w->kind==0) return w->fn;                                   /* staticmethod */
+        if(w->kind==1){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=class_to_value(owner); b->as.bm.fn=&w->fn.as.obj->as.fn; return objv(b); } /* classmethod */
+        if(w->kind==2){ return call_value(w->fn,1,&self); }            /* property getter */
+    }
+    return v;                                                          /* plain class attribute */
+}
 Value get_attr(Value obj,const char *name){
-    if(is_obj(obj,O_INSTANCE)){ Instance *in=&obj.as.obj->as.inst; Value v; if(dict_get(in->fields,name,&v)) return v; if(dict_get(in->klass->methods,name,&v) && is_obj(v,O_FUNCTION)){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&v.as.obj->as.fn; return objv(b); } runtime_error("unknown instance attribute"); }
-    if(is_obj(obj,O_CLASS)){ Value v; if(dict_get(obj.as.obj->as.klass.methods,name,&v)) return v; runtime_error("unknown class attribute"); }
+    if(is_obj(obj,O_INSTANCE)){ Instance *in=&obj.as.obj->as.inst; Value v; if(dict_get(in->fields,name,&v)) return v;
+        if(class_find(in->klass,name,&v)) return bind_class_attr(v,obj,in->klass);
+        Value g; if(class_find(in->klass,"__getattr__",&g) && is_obj(g,O_FUNCTION)){ Value nm=stringv(name); Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&g.as.obj->as.fn; return call_value(objv(b),1,&nm); }
+        raise_named("AttributeError","object has no attribute"); }
+    if(is_obj(obj,O_SUPER)){ Super *su=&obj.as.obj->as.super; Value v; if(class_find(su->start,name,&v)) return bind_class_attr(v,su->self,su->start); raise_named("AttributeError","super object has no attribute"); }
+    if(is_obj(obj,O_CLASS)){ Class *kl=&obj.as.obj->as.klass; Value v; if(class_find(kl,name,&v)){ if(is_obj(v,O_METHWRAP)){ MethWrap *w=&v.as.obj->as.mw; if(w->kind==0||w->kind==2) return w->fn; if(w->kind==1){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&w->fn.as.obj->as.fn; return objv(b); } } return v; } raise_named("AttributeError","class has no attribute"); }
     if(is_obj(obj,O_MODULE)){ Value v; if(dict_get(obj.as.obj->as.mod.dict,name,&v)) return v; runtime_error("unknown module attribute"); }
     if(is_obj(obj,O_STRING)||is_obj(obj,O_LIST)||is_obj(obj,O_DICT)||is_obj(obj,O_SET)){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2(name); return objv(b); }
     runtime_error("attribute access on unsupported type"); return nonev();

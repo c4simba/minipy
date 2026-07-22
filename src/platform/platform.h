@@ -19,6 +19,7 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <setjmp.h>
+#include <stddef.h>
 
 /* Unify the three legacy kolibri feature macros into one internal flag. */
 #if defined(MPY_PLATFORM_KOLIBRI) || defined(MPY_TARGET_KOLIBRIOS) || defined(MPY_FS_KOLIBRI)

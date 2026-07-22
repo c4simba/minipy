@@ -14,6 +14,8 @@ Value nativev(Native *n){ Value v; v.type=V_NATIVE; v.as.native=n; return v; }
 static void fmt_float(char *buf, size_t n, double f){ snprintf(buf,n,"%.15g",f); if(!strpbrk(buf,".eEnN")){ size_t l=strlen(buf); if(l+2<n){ buf[l]='.'; buf[l+1]='0'; buf[l+2]=0; } } }
 
 Obj *new_obj(OType t){ Obj *o=(Obj*)xmalloc(sizeof(Obj)); memset(o,0,sizeof(Obj)); o->type=t; return o; }
+Value class_to_value(Class *k){ Obj *o=(Obj*)((char*)k - offsetof(Obj,as)); return objv(o); }
+char *(*mpy_repr_hook)(Value v)=NULL;
 Value stringv_len(const char *s,int n){ Obj *o=new_obj(O_STRING); o->as.str.s=xstrndup2(s,n); o->as.str.len=n; return objv(o); }
 Value stringv(const char *s){ return stringv_len(s,(int)strlen(s)); }
 Obj *new_list(void){ Obj *o=new_obj(O_LIST); return o; }
@@ -74,7 +76,7 @@ static void repr_into(RBuf *b, Value v, int repr){
     if(is_obj(v,O_DICT)){ Dict *d=&v.as.obj->as.dict; rb_ch(b,'{'); for(int i=0;i<d->count;i++){ if(i) rb_str(b,", "); rb_ch(b,'\''); rb_str(b,d->keys[i]); rb_str(b,"': "); repr_into(b,d->vals[i],1); } rb_ch(b,'}'); return; }
     if(is_obj(v,O_FUNCTION)){ rb_str(b,"<function "); rb_str(b,v.as.obj->as.fn.name); rb_ch(b,'>'); return; }
     if(is_obj(v,O_CLASS)){ rb_str(b,"<class "); rb_str(b,v.as.obj->as.klass.name); rb_ch(b,'>'); return; }
-    if(is_obj(v,O_INSTANCE)){ rb_ch(b,'<'); rb_str(b,v.as.obj->as.inst.klass->name); rb_str(b," instance>"); return; }
+    if(is_obj(v,O_INSTANCE)){ if(mpy_repr_hook){ char *s=mpy_repr_hook(v); if(s){ rb_str(b,s); free(s); return; } } rb_ch(b,'<'); rb_str(b,v.as.obj->as.inst.klass->name); rb_str(b," instance>"); return; }
     if(is_obj(v,O_BOUND_METHOD)){ rb_str(b,"<bound method "); rb_str(b,v.as.obj->as.bm.fn->name); rb_ch(b,'>'); return; }
     if(is_obj(v,O_BOUND_NATIVE)){ rb_str(b,"<bound native "); rb_str(b,v.as.obj->as.bn.name); rb_ch(b,'>'); return; }
     if(is_obj(v,O_MODULE)){ rb_str(b,"<module "); rb_str(b,v.as.obj->as.mod.name); rb_ch(b,'>'); return; }

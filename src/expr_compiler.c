@@ -211,11 +211,11 @@ void assign_stmt(Parser *p){
     while(1){
         if(match(p,T_DOT)){ Tok *n=need(p,T_NAME,"attr"); Op ao2;
             if(aug_assign_op(peek(p)->kind,&ao2)){ p->pos++; emit_op(p->chunk,OP_DUP,line); emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line); expr(p); emit_op(p->chunk,ao2,line); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
-            if(match(p,T_ASSIGN)){ expr(p); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); need(p,T_NEWLINE,"newline"); return; }
+            if(match(p,T_ASSIGN)){ expr(p); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
             emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line);
         } else if(match(p,T_LB)){ expr(p); need(p,T_RB,"]"); Op ao2;
             if(aug_assign_op(peek(p)->kind,&ao2)){ p->pos++; emit_op(p->chunk,OP_DUP2,line); emit_op(p->chunk,OP_GET_INDEX,line); expr(p); emit_op(p->chunk,ao2,line); emit_op(p->chunk,OP_SET_INDEX,line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
-            if(match(p,T_ASSIGN)){ expr(p); emit_op(p->chunk,OP_SET_INDEX,line); need(p,T_NEWLINE,"newline"); return; }
+            if(match(p,T_ASSIGN)){ expr(p); emit_op(p->chunk,OP_SET_INDEX,line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
             emit_op(p->chunk,OP_GET_INDEX,line);
         } else break;
     }
