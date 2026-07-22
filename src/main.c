@@ -7,9 +7,11 @@
 #include "bytecode.h"
 #include "containers.h"
 #include "fs.h"
+#include "gc.h"
 
 int main(int argc,char **argv){
     const char *script_path = NULL;
+    gc_set_stack_base(&argc);
     mpy_platform_init();
     const char *program = (argc>0 && argv && argv[0]) ? argv[0] : "minipy";
 

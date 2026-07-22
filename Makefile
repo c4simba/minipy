@@ -12,7 +12,7 @@ HOST_TARGET ?= minipy
 # their .c; all includes resolve through -Isrc.
 # ---------------------------------------------------------------------------
 
-CORE_SRC = util qstr value containers bytecode lexer ast frontparser \
+CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
            compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri

@@ -1,6 +1,7 @@
 /* ========================= Values / Objects ========================= */
 
 #include "value.h"
+#include "gc.h"
 
 Value nonev(void){ Value v; v.type=V_NONE; return v; }
 Value boolv(int b){ Value v; v.type=V_BOOL; v.as.boolean=!!b; return v; }
@@ -13,7 +14,7 @@ Value nativev(Native *n){ Value v; v.type=V_NATIVE; v.as.native=n; return v; }
    trailing ".0" (2.0 -> "2.0", not "2"). */
 static void fmt_float(char *buf, size_t n, double f){ snprintf(buf,n,"%.15g",f); if(!strpbrk(buf,".eEnN")){ size_t l=strlen(buf); if(l+2<n){ buf[l]='.'; buf[l+1]='0'; buf[l+2]=0; } } }
 
-Obj *new_obj(OType t){ Obj *o=MPY_NEW0(Obj); o->type=t; return o; }
+Obj *new_obj(OType t){ Obj *o=MPY_NEW0(Obj); o->type=t; gc_track(o); return o; }
 Value class_to_value(Class *k){ Obj *o=(Obj*)((char*)k - offsetof(Obj,as)); return objv(o); }
 char *(*mpy_repr_hook)(Value v)=NULL;
 Value stringv_len(const char *s,int n){ Obj *o=new_obj(O_STRING); o->as.str.s=xstrndup2(s,n); o->as.str.len=n; return objv(o); }

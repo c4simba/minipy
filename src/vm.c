@@ -4,6 +4,7 @@
 #include "containers.h"
 #include "compiler.h"
 #include "fs.h"
+#include "gc.h"
 
 VM vm;
 
@@ -48,7 +49,7 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
         fn=fr->fn;
         c=fr->fn->chunk;
     }
-    for(;;){ Op op=(Op)c->code[fr->ip++];
+    for(;;){ gc_maybe_collect(); Op op=(Op)c->code[fr->ip++];
         switch(op){
             case OP_CONST: push(c->consts[c->code[fr->ip++]]); break; case OP_NONE: push(nonev()); break; case OP_TRUE: push(boolv(1)); break; case OP_FALSE: push(boolv(0)); break;
             case OP_LOAD:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value v; if(function_declares(fn->global_names,fn->global_count,name)){ if(dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } } else if(dict_get(fr->locals,name,&v)||dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } break; }

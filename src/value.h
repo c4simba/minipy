@@ -31,7 +31,7 @@ typedef struct { char *type_name; char *message; Value payload; } ExceptionObj;
 typedef struct { Value self; Class *start; } Super;   /* super() proxy */
 typedef struct { int kind; Value fn; } MethWrap;      /* 0 static, 1 class, 2 property */
 
-struct Obj { OType type; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; Super super; MethWrap mw; } as; };
+struct Obj { OType type; Obj *gc_next; unsigned char gc_mark; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; Super super; MethWrap mw; } as; };
 
 /* Constructors */
 Value nonev(void);
