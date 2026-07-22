@@ -61,6 +61,10 @@ void mpy_platform_init(void){
         fprintf(stderr, "[minipy] heap init: ptr=0x%x\n", heap_ptr);
         fflush(stderr);
     }
+    /* Bring the console up now (needs the heap) so *all* output -- including
+       early exits like -v/--version and usage -- is visible, not just script
+       output printed after the banner. Idempotent; the banner may call it too. */
+    kol_console_init();
 }
 
 void mpy_platform_shutdown(void){
@@ -75,6 +79,14 @@ void mpy_platform_shutdown(void){
 #endif
 
 const char *mpy_platform_default_script(void){ return MPY_DEFAULT_SCRIPT; }
+
+/* MENUET header buffers (see kos-app-fix.lds): the kernel copies the launch
+   command line into ___kosapp_cmdline and the program path into ___kosapp_name.
+   The PE toolchain prepends one underscore, so the C names carry two. */
+extern char __kosapp_cmdline[];
+extern char __kosapp_name[];
+const char *mpy_platform_cmdline(void){ return __kosapp_cmdline; }
+const char *mpy_platform_exe_path(void){ return __kosapp_name; }
 
 void mpy_platform_banner(const char *script_path){
     kol_console_init();

@@ -15,3 +15,7 @@ void mpy_platform_banner(const char *script_path){
 /* No raw syscalls on a hosted OS: sys.syscall raises "wrong platform". */
 int mpy_platform_has_syscall(void){ return 0; }
 int mpy_platform_syscall(const uint32_t in[6], uint32_t out[6]){ (void)in; (void)out; return 0; }
+
+/* Host has real argc/argv: return NULL so main() leaves them untouched. */
+const char *mpy_platform_cmdline(void){ return NULL; }
+const char *mpy_platform_exe_path(void){ return NULL; }

@@ -69,6 +69,13 @@ void        mpy_platform_shutdown(void);          /* teardown */
 const char *mpy_platform_default_script(void);    /* NULL when none (host) */
 void        mpy_platform_banner(const char *script_path);
 
+/* Command line as delivered by the platform. The host has a real argv and
+   returns NULL (main() uses argc/argv unchanged). KolibriOS has no argv: the
+   kernel copies the launch arguments into a header buffer, returned here, and
+   main() splits it into argc/argv itself. exe_path backs argv[0] if available. */
+const char *mpy_platform_cmdline(void);
+const char *mpy_platform_exe_path(void);
+
 /* Raw syscall gateway (backs the built-in `sys.syscall`).
    mpy_platform_has_syscall(): 1 only on the KolibriOS build, 0 elsewhere.
    mpy_platform_syscall(): loads eax..edi from in[0..5], executes `int 0x40`,

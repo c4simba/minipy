@@ -11,6 +11,7 @@ static char  g_cname[32];
 static int   g_cok = 0;
 
 int kol_console_init(void){
+    if(g_cok) return 0;                 /* idempotent: safe to call more than once */
     char *b = malloc(1024); if(!b) return -1;
     memset(b,0,1024);
     __asm__ __volatile__("int $0x40" : : "a"(9),"b"((int)b),"c"(-1) : "memory");

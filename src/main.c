@@ -9,16 +9,50 @@
 #include "fs.h"
 #include "gc.h"
 
+#ifndef MPY_VERSION
+#define MPY_VERSION "0.1"
+#endif
+
+/* Split a raw command-line string into argv (argv[0] = program name/path).
+   Tokenizes on whitespace into the caller's buffer; returns argc. Used on
+   platforms (KolibriOS) that hand over a single string instead of argv. */
+static int mpy_split_cmdline(const char *cmd,const char *exe,char *buf,int buflen,char **argv,int maxargv){
+    int argc=0;
+    argv[argc++]=(char*)((exe && exe[0]) ? exe : "minipy");   /* argv[0], read-only */
+    int n=0; if(cmd){ while(cmd[n] && n<buflen-1){ buf[n]=cmd[n]; n++; } } buf[n]=0;
+    char *p=buf;
+    while(*p && argc<maxargv){
+        while(*p==' '||*p=='\t') p++;
+        if(!*p) break;
+        argv[argc++]=p;
+        while(*p && *p!=' ' && *p!='\t') p++;
+        if(*p) *p++=0;
+    }
+    return argc;
+}
+
 int main(int argc,char **argv){
     const char *script_path = NULL;
     gc_set_stack_base(&argc);
     mpy_platform_init();
+
+    /* KolibriOS delivers the launch arguments as one header string, not argv;
+       rebuild argc/argv from it so all the option handling below just works. */
+    char cmdbuf[256]; char *kargv[32];
+    const char *kcmd = mpy_platform_cmdline();
+    if(kcmd){ argc=mpy_split_cmdline(kcmd,mpy_platform_exe_path(),cmdbuf,(int)sizeof(cmdbuf),kargv,32); argv=kargv; }
+
     const char *program = (argc>0 && argv && argv[0]) ? argv[0] : "minipy";
+
+    if(argc>=2 && (strcmp(argv[1],"-v")==0 || strcmp(argv[1],"--version")==0)){
+        printf("minipy %s (%s)\n",MPY_VERSION,mpy_fs_backend_name());
+        return 0;
+    }
 
     if(argc<2){
         script_path = mpy_platform_default_script();
         if(!script_path){
-            fprintf(stderr,"usage: %s [--dump-ast|--dump-symbols|--dump-bytecode|--fs-info] file.mpy\n",program);
+            fprintf(stderr,"usage: %s [-v|--version] [--dump-ast|--dump-symbols|--dump-bytecode|--fs-info] file.mpy\n",program);
             return 2;
         }
     }
