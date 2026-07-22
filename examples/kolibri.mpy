@@ -1,0 +1,65 @@
+# KolibriOS system-call wrappers, built on the low-level `sys.syscall` gateway.
+#
+# KolibriOS is register-based: sys.syscall(eax, ebx, ecx, edx, esi, edi) loads
+# those registers, runs `int 0x40`, and returns [eax, ebx, ecx, edx, esi, edi]
+# after the call. An argument that is a string is passed as the address of its
+# (NUL-terminated) buffer -- used for captions and text.
+#
+# Function reference: https://wiki.kolibrios.org/wiki/SysFn
+#
+# NOTE: this only runs on the KolibriOS build. On any other platform the first
+# sys.syscall raises RuntimeError ("wrong platform").
+
+import sys
+
+def _pk(hi, lo):
+    # KolibriOS packs a coordinate pair into one register: high 16 | low 16.
+    return (hi << 16) | (lo & 0xFFFF)
+
+# ---- window & drawing ----------------------------------------------------
+
+def window_redraw_begin():
+    sys.syscall(12, 1)                                  # fn 12.1: start redraw
+
+def window_redraw_end():
+    sys.syscall(12, 2)                                  # fn 12.2: finish redraw
+
+def define_window(x, y, w, h, work_color):
+    # fn 0: define & draw a skinned, fixed-size window (type 4).
+    sys.syscall(0, _pk(x, w), _pk(y, h), 0x34000000 | (work_color & 0xFFFFFF))
+
+def set_title(text):
+    sys.syscall(71, 1, text)                            # fn 71.1: set caption
+
+def draw_text(x, y, text, color):
+    # fn 4: ebx = x<<16|y, ecx = colour, edx = string ptr, esi = length.
+    sys.syscall(4, _pk(x, y), color & 0xFFFFFF, text, len(text))
+
+def define_button(x, y, w, h, button_id, color):
+    # fn 8: register a clickable button. Button id 1 is the skin's close box.
+    sys.syscall(8, _pk(x, w), _pk(y, h), button_id, color & 0xFFFFFF)
+
+def draw_rect(x, y, w, h, color):
+    sys.syscall(13, _pk(x, w), _pk(y, h), color & 0xFFFFFF)   # fn 13: filled bar
+
+# ---- events --------------------------------------------------------------
+# Event codes: 1 = redraw needed, 2 = key pressed, 3 = button pressed, 6 = mouse.
+
+def wait_event():
+    return sys.syscall(10)[0]                           # fn 10: block for event
+
+def check_event():
+    return sys.syscall(11)[0]                           # fn 11: poll (0 = none)
+
+def wait_event_timeout(ticks):
+    return sys.syscall(23, ticks)[0]                    # fn 23: wait up to ticks/100 s
+
+def get_key():
+    return sys.syscall(2)[0]                            # fn 2: read key from buffer
+
+def get_pressed_button():
+    # fn 17: pressed button id lives in the high bits of eax.
+    return sys.syscall(17)[0] >> 8
+
+def exit_process():
+    sys.syscall(-1)                                     # fn -1: terminate (no return)

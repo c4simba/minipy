@@ -65,4 +65,12 @@ void        mpy_platform_shutdown(void);          /* teardown */
 const char *mpy_platform_default_script(void);    /* NULL when none (host) */
 void        mpy_platform_banner(const char *script_path);
 
+/* Raw syscall gateway (backs the built-in `sys.syscall`).
+   mpy_platform_has_syscall(): 1 only on the KolibriOS build, 0 elsewhere.
+   mpy_platform_syscall(): loads eax..edi from in[0..5], executes `int 0x40`,
+   and stores the resulting eax..edi into out[0..5]. (ebp is not exposed --
+   GCC owns it as the frame pointer -- which covers the normal KolibriOS ABI.) */
+int         mpy_platform_has_syscall(void);
+int         mpy_platform_syscall(const uint32_t in[6], uint32_t out[6]);
+
 #endif /* MPY_PLATFORM_H */

@@ -1,0 +1,14 @@
+# The built-in `sys` module: importable everywhere; syscall is KolibriOS-only.
+
+import sys
+print(sys.platform)
+
+try:
+    sys.syscall(0)
+    print("BUG: syscall did not raise off-platform")
+except RuntimeError:
+    print("syscall blocked off KolibriOS")
+
+# `sys` resolves from the module cache without touching the filesystem
+from sys import platform
+print(platform)

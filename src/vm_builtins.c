@@ -46,6 +46,29 @@ static Value native_input(int argc,Value *argv){
 }
 Native N_INPUT={"input",-1,native_input};
 
+/* sys.syscall(eax, ebx=0, ecx=0, edx=0, esi=0, edi=0) -> [eax,ebx,ecx,edx,esi,edi]
+   The low-level KolibriOS gateway. Each argument is an int (a register value)
+   or a str (its buffer address is passed -- e.g. an ASCIIZ string for fn 4).
+   Returns the six general-purpose registers after `int 0x40`. Raises on any
+   non-KolibriOS build (wrong platform). */
+static Value native_syscall(int argc,Value *argv){
+    if(!mpy_platform_has_syscall()) raise_exception(exceptionv("RuntimeError","sys.syscall is only available on the KolibriOS build (wrong platform)",nonev()));
+    if(argc<1||argc>6) runtime_error("syscall() takes 1 to 6 register arguments (eax..edi)");
+    uint32_t in[6]={0}, out[6]={0};
+    for(int i=0;i<argc;i++){
+        Value a=argv[i];
+        if(a.type==V_INT) in[i]=(uint32_t)a.as.i;
+        else if(a.type==V_BOOL) in[i]=(uint32_t)a.as.boolean;
+        else if(is_obj(a,O_STRING)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.str.s;   /* pass buffer address */
+        else runtime_error("syscall() arguments must be int or str");
+    }
+    mpy_platform_syscall(in,out);
+    Obj *o=new_list();
+    for(int i=0;i<6;i++) list_push(&o->as.list,intv((int64_t)out[i]));   /* zero-extended */
+    return objv(o);
+}
+Native N_SYSCALL={"syscall",-1,native_syscall};
+
 Native N_LEN={"len",1,native_len};
 Native N_RANGE={"range",-1,native_range};
 int iterator_next_value(Value top, Value *out){

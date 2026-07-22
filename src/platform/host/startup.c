@@ -11,3 +11,7 @@ void mpy_platform_banner(const char *script_path){
     printf("MiniPy - Mini Python Interpreter\n");
     printf("Script: %s\n\n", script_path ? script_path : "(default)");
 }
+
+/* No raw syscalls on a hosted OS: sys.syscall raises "wrong platform". */
+int mpy_platform_has_syscall(void){ return 0; }
+int mpy_platform_syscall(const uint32_t in[6], uint32_t out[6]){ (void)in; (void)out; return 0; }

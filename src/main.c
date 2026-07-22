@@ -55,6 +55,15 @@ int main(int argc,char **argv){
         const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError",NULL};
         for(int i=0;excs[i];i++){ Obj *ec=new_obj(O_CLASS); ec->as.klass.name=xstrdup2(excs[i]); ec->as.klass.methods=dict_new(); dict_set(vm.builtins,excs[i],objv(ec)); }
     }
+    /* Built-in `sys` module: the raw syscall gateway + platform tag. Preloaded
+       into the module cache so `import sys` resolves without touching the FS. */
+    {
+        Dict *sysd=dict_new();
+        dict_set(sysd,"__name__",stringv("sys"));
+        dict_set(sysd,"syscall",nativev(&N_SYSCALL));
+        dict_set(sysd,"platform",stringv(mpy_platform_has_syscall()?"kolibrios":"host"));
+        dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
+    }
     char *src=mpy_fs_read_file(script_path);
     if(!src) return 1;
     char *dir=mpy_fs_dirname(script_path);

@@ -1,0 +1,34 @@
+# A KolibriOS window with a close button, written in MiniPy.
+#
+# Run on the KolibriOS build:  minipy examples/window.mpy
+# On any other platform it stops immediately with a "wrong platform" error the
+# moment the first syscall runs (that is by design).
+
+import kolibri as k
+
+CLOSE_BOX = 1        # skinned windows expose their [X] as button id 1
+MY_BUTTON = 2
+
+def redraw():
+    k.window_redraw_begin()
+    k.define_window(120, 100, 320, 180, 0x223344)
+    k.set_title("MiniPy on KolibriOS")
+    k.draw_text(20, 40, "Hello from a dependency-free Python!", 0xFFFFFF)
+    k.define_button(20, 90, 140, 30, MY_BUTTON, 0x5588CC)
+    k.draw_text(34, 98, "Click me", 0xFFFFFF)
+    k.window_redraw_end()
+
+redraw()
+
+while True:
+    event = k.wait_event()
+    if event == 1:                      # window needs repainting
+        redraw()
+    elif event == 2:                    # key pressed - drain the buffer
+        k.get_key()
+    elif event == 3:                    # a button was pressed
+        button = k.get_pressed_button()
+        if button == CLOSE_BOX:
+            k.exit_process()
+        elif button == MY_BUTTON:
+            redraw()
