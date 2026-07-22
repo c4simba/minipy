@@ -31,17 +31,11 @@ static int mpy_split_cmdline(const char *cmd,const char *exe,char *buf,int bufle
     return argc;
 }
 
-int main(int argc,char **argv){
+/* All program logic. Every exit path RETURNS a status code so main() can
+   guarantee platform teardown (closing the KolibriOS console buffer) on all of
+   them -- including -v, usage, and error paths. */
+static int mpy_run(int argc,char **argv){
     const char *script_path = NULL;
-    gc_set_stack_base(&argc);
-    mpy_platform_init();
-
-    /* KolibriOS delivers the launch arguments as one header string, not argv;
-       rebuild argc/argv from it so all the option handling below just works. */
-    char cmdbuf[256]; char *kargv[32];
-    const char *kcmd = mpy_platform_cmdline();
-    if(kcmd){ argc=mpy_split_cmdline(kcmd,mpy_platform_exe_path(),cmdbuf,(int)sizeof(cmdbuf),kargv,32); argv=kargv; }
-
     const char *program = (argc>0 && argv && argv[0]) ? argv[0] : "minipy";
 
     if(argc>=2 && (strcmp(argv[1],"-v")==0 || strcmp(argv[1],"--version")==0)){
@@ -111,6 +105,21 @@ int main(int argc,char **argv){
     Function *mainfn=compile_source(src,"__main__",dir,globals);
     run_function(mainfn,0,NULL);
     free(src); free(dir);
-    mpy_platform_shutdown();
     return 0;
+}
+
+int main(int argc,char **argv){
+    gc_set_stack_base(&argc);
+    mpy_platform_init();
+    atexit(mpy_platform_shutdown);   /* closes the console on exit() paths (lexer/parser/die) */
+
+    /* KolibriOS delivers the launch arguments as one header string, not argv;
+       rebuild argc/argv from it so all the option handling just works. */
+    char cmdbuf[256]; char *kargv[32];
+    const char *kcmd = mpy_platform_cmdline();
+    if(kcmd){ argc=mpy_split_cmdline(kcmd,mpy_platform_exe_path(),cmdbuf,(int)sizeof(cmdbuf),kargv,32); argv=kargv; }
+
+    int rc = mpy_run(argc,argv);
+    mpy_platform_shutdown();          /* closes the console on every return from mpy_run */
+    return rc;
 }
