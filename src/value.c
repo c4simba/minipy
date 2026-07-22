@@ -24,6 +24,7 @@ Obj *new_tuple(void){ Obj *o=new_obj(O_TUPLE); return o; }
 Obj *new_set(void){ Obj *o=new_obj(O_SET); return o; }
 Obj *new_dict_obj(void){ Obj *o=new_obj(O_DICT); return o; }
 Obj *new_module(const char *name, Dict *d){ Obj *o=new_obj(O_MODULE); o->as.mod.name=xstrdup2(name); o->as.mod.dict=d; return o; }
+Obj *new_buffer(int len){ if(len<0) len=0; Obj *o=new_obj(O_BUFFER); o->as.buf.data=(unsigned char*)xmalloc((size_t)len+1); memset(o->as.buf.data,0,(size_t)len+1); o->as.buf.len=len; return o; }
 Value exceptionv(const char *type_name,const char *message,Value payload){ Obj *o=new_obj(O_EXCEPTION); o->as.exc.type_name=xstrdup2(type_name?type_name:"RuntimeError"); o->as.exc.message=xstrdup2(message?message:""); o->as.exc.payload=payload; return objv(o); }
 
 int is_obj(Value v,OType t){ return v.type==V_OBJ && v.as.obj && v.as.obj->type==t; }
@@ -47,7 +48,7 @@ static const char *const otype_name[] = {
     [O_INSTANCE]="object", [O_BOUND_METHOD]="method",
     [O_BOUND_NATIVE]="builtin_function_or_method", [O_MODULE]="module",
     [O_ITER]="iterator", [O_GENERATOR]="generator", [O_EXCEPTION]="exception",
-    [O_SUPER]="super", [O_METHWRAP]="method",
+    [O_SUPER]="super", [O_METHWRAP]="method", [O_BUFFER]="buffer",
 };
 const char *value_type_name(Value v){
     switch(v.type){
@@ -103,6 +104,7 @@ static void repr_into(RBuf *b, Value v, int repr){
     if(is_obj(v,O_BOUND_NATIVE)){ rb_str(b,"<bound native "); rb_str(b,v.as.obj->as.bn.name); rb_ch(b,'>'); return; }
     if(is_obj(v,O_MODULE)){ rb_str(b,"<module "); rb_str(b,v.as.obj->as.mod.name); rb_ch(b,'>'); return; }
     if(is_obj(v,O_ITER)){ rb_str(b,"<iterator>"); return; }
+    if(is_obj(v,O_BUFFER)){ char t[32]; snprintf(t,sizeof(t),"<buffer %d bytes>",v.as.obj->as.buf.len); rb_str(b,t); return; }
     if(is_obj(v,O_GENERATOR)){ rb_str(b,"<generator>"); return; }
     if(is_obj(v,O_EXCEPTION)){ rb_str(b,v.as.obj->as.exc.message); return; }
     { char *s=value_to_cstr(v); rb_str(b,s); free(s); }

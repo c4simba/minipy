@@ -108,11 +108,24 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
     int exc_slot=vm.exc_depth++;
     if(exc_slot>=256) runtime_error("exception jump stack overflow");
     if(setjmp(vm.exc_jumps[exc_slot].buf)!=0){
+        /* An exception unwound to us. Each run_prepared owns exactly one frame
+           (its own, now on top), so we may only resume a handler that lives in
+           THAT frame; anything else belongs to a caller and must propagate up
+           the longjmp chain (popping our frame as we go). */
         vm.exc_depth=exc_slot+1;
-        if(!dispatch_pending_exception()){ vm.exc_depth=exc_slot; return nonev(); }
-        fr=&vm.frames[vm.fcount-1];
-        fn=fr->fn;
-        c=fr->fn->chunk;
+        Frame *hf=&vm.frames[vm.fcount-1];
+        if(hf->hcount>0){
+            Handler h=hf->handlers[--hf->hcount];
+            vm.sp=h.sp;
+            push(vm.pending_exception);
+            hf->ip=h.ip;
+            fr=hf; fn=fr->fn; c=fr->fn->chunk;
+        } else {
+            vm.fcount--;                                  /* unwind our frame */
+            vm.exc_depth=exc_slot;                        /* release our slot */
+            if(vm.exc_depth>0) longjmp(vm.exc_jumps[vm.exc_depth-1].buf,1);   /* propagate */
+            longjmp(vm.panic,1);                          /* uncaught: to top level */
+        }
     }
     for(;;){ gc_maybe_collect(); Op op=(Op)c->code[fr->ip++];
         switch(op){

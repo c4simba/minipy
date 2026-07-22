@@ -24,12 +24,14 @@ def window_redraw_begin():
 def window_redraw_end():
     sys.syscall(12, 2)                                  # fn 12.2: finish redraw
 
-def define_window(x, y, w, h, work_color):
-    # fn 0: define & draw a skinned, fixed-size window (type 4).
-    sys.syscall(0, _pk(x, w), _pk(y, h), 0x34000000 | (work_color & 0xFFFFFF))
+def define_window(x, y, w, h, work_color, caption):
+    # fn 0: define & draw a skinned, fixed-size window.
+    #   edx byte 3 = 0x14: window type 4 (skinned, fixed) + bit 28 "caption in edi".
+    #   edi = pointer to the ASCIIZ caption (passed as a string).
+    sys.syscall(0, _pk(x, w), _pk(y, h), 0x14000000 | (work_color & 0xFFFFFF), 0, caption)
 
 def set_title(text):
-    sys.syscall(71, 1, text)                            # fn 71.1: set caption
+    sys.syscall(71, 1, text)                            # fn 71.1: change caption later
 
 def draw_text(x, y, text, color):
     # fn 4: ebx = x<<16|y, ecx = colour, edx = string ptr, esi = length.
@@ -63,3 +65,32 @@ def get_pressed_button():
 
 def exit_process():
     sys.syscall(-1)                                     # fn -1: terminate (no return)
+
+# ---- register-based system info ----
+def screen_size():
+    # fn 14: returns (width-1)<<16 | (height-1) in eax
+    v = sys.syscall(14)[0]
+    return ((v >> 16) + 1, (v & 0xFFFF) + 1)
+
+# ---- struct-based syscall: reading a file (fn 70) ----
+# This is the "build a struct, pass its address, parse the answer" pattern.
+# fn 70 takes ebx = pointer to an 80-byte information block:
+#   +0  subfunction (0 = read)     +12 bytes to read
+#   +4  position low               +16 destination buffer pointer
+#   +8  position high              +20 ASCIIZ path
+# and returns eax = status (0 ok, 6 = EOF), ebx = bytes actually read.
+def read_file(path, max_size):
+    data = sys.buffer(max_size)            # where the file bytes land
+    info = sys.buffer(24 + len(path))      # the f70 information block
+    sys.poke(info, 0, 0, 4)                # subfunction 0 = read
+    sys.poke(info, 4, 0, 4)                # position low
+    sys.poke(info, 8, 0, 4)                # position high
+    sys.poke(info, 12, max_size, 4)        # bytes to read
+    sys.poke(info, 16, sys.addr(data), 4)  # destination buffer address
+    sys.poke_str(info, 20, path)           # NUL already present (buffer is zeroed)
+    result = sys.syscall(70, info)         # eax=70, ebx=&info
+    status = result[0]
+    nread = result[1]
+    if status != 0 and status != 6:        # 6 = EOF (still returns data)
+        return None
+    return sys.peek_str(data, 0, nread)

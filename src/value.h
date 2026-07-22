@@ -9,7 +9,7 @@ typedef struct Obj Obj; typedef struct Function Function; typedef struct Native 
 struct Chunk; /* defined in bytecode.h; Function only needs the pointer */
 
 typedef enum { V_NONE, V_BOOL, V_INT, V_FLOAT, V_OBJ, V_NATIVE } VType;
-typedef enum { O_STRING, O_LIST, O_TUPLE, O_SET, O_DICT, O_FUNCTION, O_CLASS, O_INSTANCE, O_BOUND_METHOD, O_BOUND_NATIVE, O_MODULE, O_ITER, O_GENERATOR, O_EXCEPTION, O_SUPER, O_METHWRAP } OType;
+typedef enum { O_STRING, O_LIST, O_TUPLE, O_SET, O_DICT, O_FUNCTION, O_CLASS, O_INSTANCE, O_BOUND_METHOD, O_BOUND_NATIVE, O_MODULE, O_ITER, O_GENERATOR, O_EXCEPTION, O_SUPER, O_METHWRAP, O_BUFFER } OType;
 
 typedef struct { VType type; union { int boolean; int64_t i; double f; Obj *obj; Native *native; } as; } Value;
 
@@ -30,8 +30,9 @@ typedef struct { Function *fn; Dict *locals; int ip; int done; } Generator;
 typedef struct { char *type_name; char *message; Value payload; } ExceptionObj;
 typedef struct { Value self; Class *start; } Super;   /* super() proxy */
 typedef struct { int kind; Value fn; } MethWrap;      /* 0 static, 1 class, 2 property */
+typedef struct { unsigned char *data; int len; } Buffer;  /* raw mutable bytes (syscall structs) */
 
-struct Obj { OType type; Obj *gc_next; unsigned char gc_mark; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; Super super; MethWrap mw; } as; };
+struct Obj { OType type; Obj *gc_next; unsigned char gc_mark; union { String str; List list; List tuple; List set; Dict dict; Function fn; Class klass; Instance inst; BoundMethod bm; BoundNative bn; Module mod; Iter iter; Generator gen; ExceptionObj exc; Super super; MethWrap mw; Buffer buf; } as; };
 
 /* Constructors */
 Value nonev(void);
@@ -48,6 +49,7 @@ Obj  *new_tuple(void);
 Obj  *new_set(void);
 Obj  *new_dict_obj(void);
 Obj  *new_module(const char *name, Dict *d);
+Obj  *new_buffer(int len);
 Value exceptionv(const char *type_name, const char *message, Value payload);
 
 /* Inspection / coercion */

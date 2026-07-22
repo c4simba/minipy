@@ -1,0 +1,9 @@
+MiniPy - Mini Python Interpreter
+Script: tests/exc_across_calls_test.mpy
+
+caught across two calls
+continues normally
+caught by outer handler
+3
+last caught
+end

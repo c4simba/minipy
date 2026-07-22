@@ -12,3 +12,18 @@ except RuntimeError:
 # `sys` resolves from the module cache without touching the filesystem
 from sys import platform
 print(platform)
+
+# raw byte buffers: build a struct and read the fields back (little-endian)
+b = sys.buffer(16)
+sys.poke(b, 0, 0x12345678, 4)
+sys.poke(b, 4, 0xAB, 1)
+sys.poke_str(b, 8, "hi")
+print(sys.peek(b, 0, 4))
+print(sys.peek(b, 0, 2))
+print(sys.peek(b, 4, 1))
+print(sys.peek_str(b, 8, 2))
+print(sys.addr(b) != 0)
+try:
+    sys.peek(b, 14, 4)
+except RuntimeError:
+    print("bounds enforced")

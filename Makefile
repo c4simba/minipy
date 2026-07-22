@@ -20,9 +20,15 @@ KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platfor
 HEADERS  = $(wildcard src/*.h) $(wildcard src/platform/*.h)
 INCLUDES = -Isrc
 
-.PHONY: all test test-update clean kolibrios
+.PHONY: all test test-update clean kolibrios kolibrios-debug clean-kolibri debug
 
 all: $(HOST_TARGET)
+
+# Verbose host build (same logging switches as kolibrios-debug), handy for
+# reproducing debug output on the development machine.
+debug:
+	$(MAKE) clean
+	$(MAKE) all CFLAGS="$(CFLAGS) -DMPY_DEBUG=1 -DMPY_FS_DEBUG=1"
 
 # ---------------------------- Host build -----------------------------------
 HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLATFORM_SRC)))
@@ -61,6 +67,7 @@ KOS_CFLAGS += -DMPY_FS_DEFAULT_IMPORT_DIR=\"$(KOS_IMPORT_DIR)\"
 KOS_CFLAGS += -DMPY_DEFAULT_SCRIPT=\"$(KOS_IMPORT_DIR)/main.mpy\"
 KOS_CFLAGS += -U__WIN32__ -U_Win32 -U_WIN32 -U__MINGW32__ -UWIN32
 KOS_CFLAGS += -I$(KOS_NEWLIB_INC)
+KOS_CFLAGS += $(EXTRA_KOS_CFLAGS)      # kolibrios-debug injects -DMPY_DEBUG / -DMPY_FS_DEBUG here
 
 KOS_OBJ = $(addprefix $(KOS_BUILD_DIR)/,$(addsuffix .o,$(CORE_SRC) $(KOLIBRI_PLATFORM_SRC)))
 
@@ -69,6 +76,17 @@ $(KOS_BUILD_DIR)/%.o: src/%.c $(HEADERS)
 	$(KOS32_CC) $(KOS_CFLAGS) $(INCLUDES) -c $< -o $@
 
 kolibrios: $(KOS_BIN)
+
+# Verbose KolibriOS build: enables MPY_DEBUG (compile + syscall trace) and
+# MPY_FS_DEBUG (f70 file I/O trace). Objects are rebuilt from clean so the debug
+# defines actually take effect (they change every translation unit).
+kolibrios-debug:
+	$(MAKE) clean-kolibri
+	$(MAKE) kolibrios EXTRA_KOS_CFLAGS="-DMPY_DEBUG=1 -DMPY_FS_DEBUG=1"
+	@echo "built KolibriOS DEBUG image ($(KOS_BIN)) with logging enabled"
+
+clean-kolibri:
+	rm -rf $(KOS_BUILD_DIR)
 
 $(KOS_BIN): $(KOS_OBJ)
 	PATH=$(KOS32_BINDIR):$$PATH $(KOS32_CC) $(KOS_CFLAGS) -nostdlib \

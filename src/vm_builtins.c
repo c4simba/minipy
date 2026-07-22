@@ -59,15 +59,79 @@ static Value native_syscall(int argc,Value *argv){
         Value a=argv[i];
         if(a.type==V_INT) in[i]=(uint32_t)a.as.i;
         else if(a.type==V_BOOL) in[i]=(uint32_t)a.as.boolean;
-        else if(is_obj(a,O_STRING)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.str.s;   /* pass buffer address */
-        else runtime_error("syscall() arguments must be int or str");
+        else if(is_obj(a,O_STRING)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.str.s;   /* ASCIIZ string address */
+        else if(is_obj(a,O_BUFFER)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.buf.data; /* struct address */
+        else runtime_error("syscall() arguments must be int, str, or buffer");
     }
+    MPY_LOG("[minipy] syscall  eax=%u ebx=%u ecx=%u edx=%u esi=%u edi=%u\n",in[0],in[1],in[2],in[3],in[4],in[5]);
     mpy_platform_syscall(in,out);
+    MPY_LOG("[minipy] syscall -> eax=%u ebx=%u ecx=%u edx=%u esi=%u edi=%u\n",out[0],out[1],out[2],out[3],out[4],out[5]);
     Obj *o=new_list();
     for(int i=0;i<6;i++) list_push(&o->as.list,intv((int64_t)out[i]));   /* zero-extended */
     return objv(o);
 }
 Native N_SYSCALL={"syscall",-1,native_syscall};
+
+/* ---- raw byte buffers, for syscalls that take/return a pointer to a struct ----
+   Build a struct with poke/poke_str, hand it to syscall (its address is passed),
+   then read results back with peek/peek_str. addr() gives a buffer's address so
+   one struct can embed a pointer to another. All integers are little-endian. */
+static Buffer *arg_buffer(Value v, const char *who){
+    if(!is_obj(v,O_BUFFER)){ char m[64]; snprintf(m,sizeof(m),"%s expects a buffer",who); runtime_error(m); }
+    return &v.as.obj->as.buf;
+}
+static Value native_buffer(int argc,Value *argv){
+    if(argc!=1) runtime_error("buffer() expects 1 argument (size or str)");
+    Value a=argv[0];
+    if(a.type==V_INT){ if(a.as.i<0||a.as.i>(1<<24)) runtime_error("buffer() size out of range"); return objv(new_buffer((int)a.as.i)); }
+    if(is_obj(a,O_STRING)){ int n=a.as.obj->as.str.len; Obj *o=new_buffer(n); memcpy(o->as.buf.data,a.as.obj->as.str.s,(size_t)n); return objv(o); }
+    runtime_error("buffer() expects an int size or a str"); return nonev();
+}
+static Value native_poke(int argc,Value *argv){
+    if(argc!=4) runtime_error("poke(buf, offset, value, nbytes) expects 4 arguments");
+    Buffer *b=arg_buffer(argv[0],"poke()");
+    int off=(int)as_int(argv[1]); uint32_t val=(uint32_t)as_int(argv[2]); int nb=(int)as_int(argv[3]);
+    if(nb!=1&&nb!=2&&nb!=4) runtime_error("poke() nbytes must be 1, 2, or 4");
+    if(off<0||off+nb>b->len) runtime_error("poke() offset out of range");
+    for(int i=0;i<nb;i++) b->data[off+i]=(unsigned char)((val>>(8*i))&0xFF);
+    return nonev();
+}
+static Value native_peek(int argc,Value *argv){
+    if(argc!=3) runtime_error("peek(buf, offset, nbytes) expects 3 arguments");
+    Buffer *b=arg_buffer(argv[0],"peek()");
+    int off=(int)as_int(argv[1]); int nb=(int)as_int(argv[2]);
+    if(nb!=1&&nb!=2&&nb!=4) runtime_error("peek() nbytes must be 1, 2, or 4");
+    if(off<0||off+nb>b->len) runtime_error("peek() offset out of range");
+    uint32_t v=0; for(int i=0;i<nb;i++) v|=((uint32_t)b->data[off+i])<<(8*i);
+    return intv((int64_t)v);
+}
+static Value native_poke_str(int argc,Value *argv){
+    if(argc!=3) runtime_error("poke_str(buf, offset, s) expects 3 arguments");
+    Buffer *b=arg_buffer(argv[0],"poke_str()");
+    if(!is_obj(argv[2],O_STRING)) runtime_error("poke_str() third argument must be a str");
+    int off=(int)as_int(argv[1]); String *s=&argv[2].as.obj->as.str;
+    if(off<0||off+s->len>b->len) runtime_error("poke_str() offset out of range");
+    memcpy(b->data+off,s->s,(size_t)s->len);
+    return nonev();
+}
+static Value native_peek_str(int argc,Value *argv){
+    if(argc!=3) runtime_error("peek_str(buf, offset, length) expects 3 arguments");
+    Buffer *b=arg_buffer(argv[0],"peek_str()");
+    int off=(int)as_int(argv[1]); int n=(int)as_int(argv[2]);
+    if(off<0||n<0||off+n>b->len) runtime_error("peek_str() range out of bounds");
+    return stringv_len((const char*)(b->data+off),n);
+}
+static Value native_addr(int argc,Value *argv){
+    if(argc!=1) runtime_error("addr() expects 1 argument");
+    Buffer *b=arg_buffer(argv[0],"addr()");
+    return intv((int64_t)(uintptr_t)b->data);
+}
+Native N_BUFFER={"buffer",1,native_buffer};
+Native N_POKE={"poke",4,native_poke};
+Native N_PEEK={"peek",3,native_peek};
+Native N_POKE_STR={"poke_str",3,native_poke_str};
+Native N_PEEK_STR={"peek_str",3,native_peek_str};
+Native N_ADDR={"addr",1,native_addr};
 
 Native N_LEN={"len",1,native_len};
 Native N_RANGE={"range",-1,native_range};

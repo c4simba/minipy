@@ -203,23 +203,19 @@ void compile_stmt_ast(Parser *p, Stmt *s){
 Function *alloc_function(const char *name,char **params,int arity,Dict *globals,char *dir,int store_globals){ Obj *o=new_obj(O_FUNCTION); o->as.fn.name=xstrdup2(name); o->as.fn.params=params; o->as.fn.arity=arity; o->as.fn.min_arity=arity; o->as.fn.default_count=0; o->as.fn.defaults=NULL; o->as.fn.star_index=-1; o->as.fn.dstar_index=-1; o->as.fn.chunk=chunk_new(); o->as.fn.globals=globals; o->as.fn.closure=NULL; o->as.fn.module_dir=dir?xstrdup2(dir):xstrdup2("."); o->as.fn.store_globals=store_globals; o->as.fn.is_generator=0; o->as.fn.defining_class=NULL; o->as.fn.owner=o; return &o->as.fn; }
 Function *clone_function(Function *src, Dict *closure){ Obj *o=new_obj(O_FUNCTION); o->as.fn=*src; o->as.fn.name=xstrdup2(src->name); o->as.fn.closure=closure; o->as.fn.owner=o; return &o->as.fn; }
 Function *compile_source(const char *src,const char *name,const char *dir,Dict *globals){
-    fprintf(stderr, "[minipy] compile: lex...\n"); fflush(stderr);
+    MPY_LOG("[minipy] compile %s: lex...\n", name);
     TokVec tv=lex(src);
-    fprintf(stderr, "[minipy] compile: lex done, %d tokens\n", tv.n); fflush(stderr);
+    MPY_LOG("[minipy] compile %s: lex done, %d tokens\n", name, tv.n);
     SymTable sym={0};
-    fprintf(stderr, "[minipy] compile: build_ast...\n"); fflush(stderr);
     Ast *ast_root=build_ast_and_symbols(&tv,&sym);
-    fprintf(stderr, "[minipy] compile: ast done\n"); fflush(stderr);
+    MPY_LOG("[minipy] compile %s: ast built\n", name);
     dict_set(globals,"__name__",stringv(name));   /* "__main__" for the entry script, else the module name */
     Parser p={0}; p.tv=tv; p.globals=globals; p.module_dir=(char*)dir;
-    fprintf(stderr, "[minipy] compile: alloc_function...\n"); fflush(stderr);
     Function *mainfn=alloc_function(name,NULL,0,globals,(char*)dir,1);
-    fprintf(stderr, "[minipy] compile: alloc done, compiling ast...\n"); fflush(stderr);
     p.chunk=mainfn->chunk;
     compile_stmt_ast(&p,ast_root);
-    fprintf(stderr, "[minipy] compile: ast compiled, emitting RETURN\n"); fflush(stderr);
     emit_op(p.chunk,OP_NONE,peek(&p)->line);
     emit_op(p.chunk,OP_RETURN,peek(&p)->line);
-    fprintf(stderr, "[minipy] compile: done\n"); fflush(stderr);
+    MPY_LOG("[minipy] compile %s: done\n", name);
     return mainfn;
 }

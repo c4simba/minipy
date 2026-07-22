@@ -9,7 +9,7 @@
 typedef struct { int ip; int sp; } Handler;
 typedef struct { Function *fn; int ip; Dict *locals; Handler handlers[32]; int hcount; } Frame;
 typedef struct { jmp_buf buf; } ExcJump;
-typedef struct { Value stack[4096]; int sp; Frame frames[256]; int fcount; Dict *builtins; Dict *modules; jmp_buf panic; ExcJump exc_jumps[256]; int exc_depth; Value pending_exception; char *error_msg; } VM;
+typedef struct { Value stack[4096]; int sp; Frame frames[256]; int fcount; Dict *builtins; Dict *modules; jmp_buf panic; ExcJump exc_jumps[256]; int exc_depth; Value pending_exception; char *error_msg; struct { Function *fn; int ip; } tb[256]; int tb_count; } VM;
 
 extern VM vm;
 
@@ -52,6 +52,7 @@ Value native_iter(int argc, Value *argv);
 Value builtin_str(Value v);
 char *mpy_instance_repr(Value v);
 extern Native N_LEN, N_RANGE, N_NEXT, N_ITER, N_INPUT, N_SYSCALL;
+extern Native N_BUFFER, N_POKE, N_PEEK, N_POKE_STR, N_PEEK_STR, N_ADDR;
 extern Native N_STR, N_REPR, N_INT, N_FLOAT, N_BOOL, N_LIST, N_TUPLE, N_SET, N_DICT;
 extern Native N_ABS, N_MIN, N_MAX, N_SUM, N_SORTED, N_REVERSED, N_ENUMERATE, N_ZIP, N_MAP, N_FILTER;
 extern Native N_TYPE, N_ISINSTANCE, N_ORD, N_CHR, N_ROUND, N_ANY, N_ALL;

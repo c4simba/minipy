@@ -11,8 +11,7 @@ MY_BUTTON = 2
 
 def redraw():
     k.window_redraw_begin()
-    k.define_window(120, 100, 320, 180, 0x223344)
-    k.set_title("MiniPy on KolibriOS")
+    k.define_window(120, 100, 320, 180, 0x223344, "MiniPy on KolibriOS")
     k.draw_text(20, 40, "Hello from a dependency-free Python!", 0xFFFFFF)
     k.define_button(20, 90, 140, 30, MY_BUTTON, 0x5588CC)
     k.draw_text(34, 98, "Click me", 0xFFFFFF)

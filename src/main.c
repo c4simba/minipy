@@ -62,6 +62,12 @@ int main(int argc,char **argv){
         dict_set(sysd,"__name__",stringv("sys"));
         dict_set(sysd,"syscall",nativev(&N_SYSCALL));
         dict_set(sysd,"platform",stringv(mpy_platform_has_syscall()?"kolibrios":"host"));
+        dict_set(sysd,"buffer",nativev(&N_BUFFER));       /* raw struct build/parse */
+        dict_set(sysd,"poke",nativev(&N_POKE));
+        dict_set(sysd,"peek",nativev(&N_PEEK));
+        dict_set(sysd,"poke_str",nativev(&N_POKE_STR));
+        dict_set(sysd,"peek_str",nativev(&N_PEEK_STR));
+        dict_set(sysd,"addr",nativev(&N_ADDR));
         dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
     }
     char *src=mpy_fs_read_file(script_path);

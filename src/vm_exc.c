@@ -15,7 +15,9 @@ void print_traceback(Value ex){
     fprintf(stderr,"%s: %s\n",exception_type_name(ex),msg);
     free(msg);
     fprintf(stderr,"Traceback (most recent call last):\n");
-    for(int i=vm.fcount-1;i>=0;i--){ Frame *f=&vm.frames[i]; int ip=f->ip>0?f->ip-1:0; int line=f->fn->chunk->line[ip]; fprintf(stderr,"  line %d, in %s\n",line,f->fn->name); }
+    /* Printed from the snapshot captured at raise time: the live frames unwind
+       as the exception propagates, so vm.frames is no longer the call stack. */
+    for(int i=0;i<vm.tb_count;i++){ Function *f=vm.tb[i].fn; int ip=vm.tb[i].ip>0?vm.tb[i].ip-1:0; int line=f->chunk->line[ip]; fprintf(stderr,"  line %d, in %s\n",line,f->name); }
 }
 Value normalize_exception(Value v){
     if(is_obj(v,O_EXCEPTION)) return v;
@@ -30,6 +32,10 @@ Value normalize_exception(Value v){
 }
 void raise_exception(Value ex){
     vm.pending_exception=normalize_exception(ex);
+    /* Snapshot the call stack now, while it is intact: propagation unwinds
+       vm.frames one at a time, so a later traceback could not reconstruct it. */
+    vm.tb_count=0;
+    for(int i=vm.fcount-1;i>=0 && vm.tb_count<256;i--){ vm.tb[vm.tb_count].fn=vm.frames[i].fn; vm.tb[vm.tb_count].ip=vm.frames[i].ip; vm.tb_count++; }
     if(vm.exc_depth>0) longjmp(vm.exc_jumps[vm.exc_depth-1].buf,1);
     char *m=exception_message(vm.pending_exception);
     free(vm.error_msg); vm.error_msg=m;

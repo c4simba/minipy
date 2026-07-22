@@ -11,6 +11,15 @@
 #define MPY_NORETURN
 #endif
 
+/* Debug logging: prints to stderr only in debug builds (-DMPY_DEBUG); expands
+   to nothing otherwise, so release builds stay silent and pay no cost.
+   On KolibriOS, stderr is mirrored to the console/debug board (see console.c). */
+#ifdef MPY_DEBUG
+#define MPY_LOG(...)          do{ fprintf(stderr, __VA_ARGS__); fflush(stderr); }while(0)
+#else
+#define MPY_LOG(...)          do{}while(0)
+#endif
+
 #define MPY_MIN(a,b)          ((a) < (b) ? (a) : (b))
 #define MPY_MAX(a,b)          ((a) > (b) ? (a) : (b))
 #define MPY_ARRAY_SIZE(a)     (sizeof(a) / sizeof((a)[0]))

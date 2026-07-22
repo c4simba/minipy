@@ -51,6 +51,7 @@ static void gc_mark_obj(Obj *o){
         case O_EXCEPTION: gc_mark_value(o->as.exc.payload); break;
         case O_SUPER: gc_mark_value(o->as.super.self); if(o->as.super.start) gc_mark_obj(class_obj(o->as.super.start)); break;
         case O_METHWRAP: gc_mark_value(o->as.mw.fn); break;
+        case O_BUFFER: break;
     }
 }
 static void gc_mark_value(Value v){ if(v.type==V_OBJ && v.as.obj) gc_mark_obj(v.as.obj); }
@@ -69,6 +70,7 @@ static void gc_free_obj(Obj *o){
         case O_EXCEPTION: free(o->as.exc.type_name); free(o->as.exc.message); break;
         case O_BOUND_NATIVE: free(o->as.bn.name); break;
         case O_MODULE: free(o->as.mod.name); break;
+        case O_BUFFER: free(o->as.buf.data); break;
         case O_CLASS: free(o->as.klass.name); break;   /* methods dict is shared/permanent */
         default: break;                                 /* function/bound/iter/super/methwrap: struct only */
     }
