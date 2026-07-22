@@ -96,21 +96,24 @@ static Stmt *fp_parse_stmt(FrontParser *p){
     if(fp_match(p,T_RAISE)){ Stmt *s=stmt_new(STMT_RAISE,NULL,line,start); if(fp_peek(p)->kind!=T_NEWLINE) s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_IMPORT)){ Stmt *s=stmt_new(STMT_IMPORT,NULL,line,start); Tok *n=fp_need(p,T_NAME); if(n) s->name2=xstrdup2(n->text); if(fp_match(p,T_AS)){ Tok *a=fp_need(p,T_NAME); if(a) s->name=xstrdup2(a->text); } else if(n) s->name=xstrdup2(n->text); fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_FROM)){ Stmt *s=stmt_new(STMT_FROM_IMPORT,NULL,line,start); Tok *m=fp_need(p,T_NAME); if(m) s->name2=xstrdup2(m->text); fp_need(p,T_IMPORT); fp_target_name_after_from_import(p,s); fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
-    if(fp_match(p,T_WITH)){ Stmt *s=stmt_new(STMT_WITH,NULL,line,start); s->expr=fp_expr_until(p,T_AS,T_COLON); if(fp_match(p,T_AS)){ Tok *n=fp_need(p,T_NAME); if(n) s->name=xstrdup2(n->text); } fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s; }
+    if(fp_match(p,T_WITH)){ Stmt *s=stmt_new(STMT_WITH,NULL,line,start); s->expr=fp_expr_until(p,T_COLON,T_EOF); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s; }
     if(fp_match(p,T_GLOBAL)) return fp_parse_simple_name_list(p,STMT_GLOBAL,line,start);
     if(fp_match(p,T_NONLOCAL)) return fp_parse_simple_name_list(p,STMT_NONLOCAL,line,start);
-    if(fp_match(p,T_DEL)){ Stmt *s=stmt_new(STMT_DEL,NULL,line,start); Tok *n=fp_need(p,T_NAME); if(n) s->name=xstrdup2(n->text); fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
+    if(fp_match(p,T_DEL)){ Stmt *s=stmt_new(STMT_DEL,NULL,line,start); s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
+    if(fp_match(p,T_ASSERT)){ Stmt *s=stmt_new(STMT_ASSERT,NULL,line,start); s->expr=fp_expr_until(p,T_COMMA,T_NEWLINE); if(fp_match(p,T_COMMA)) s->expr2=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_BREAK)){ Stmt *s=stmt_new(STMT_BREAK,NULL,line,start); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_CONTINUE)){ Stmt *s=stmt_new(STMT_CONTINUE,NULL,line,start); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_PASS)){ Stmt *s=stmt_new(STMT_PASS,NULL,line,start); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_YIELD)){ Stmt *s=stmt_new(STMT_YIELD,NULL,line,start); if(fp_peek(p)->kind!=T_NEWLINE) s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_TRY)){
         Stmt *s=stmt_new(STMT_TRY,NULL,line,start); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); fp_skip_nl(p);
-        if(fp_match(p,T_EXCEPT)){
-            if(fp_peek(p)->kind==T_NAME){ Tok *ex=fp_need(p,T_NAME); (void)ex; if(fp_match(p,T_AS)){ Tok *as=fp_need(p,T_NAME); if(as) s->name=xstrdup2(as->text); } }
-            fp_need(p,T_COLON); fp_parse_suite_into(p,s,1); fp_skip_nl(p);
+        while(fp_match(p,T_EXCEPT)){
+            Stmt *b=stmt_new(STMT_BLOCK,NULL,line,p->pos); b->block_tag=1;
+            if(fp_peek(p)->kind!=T_COLON){ b->expr=fp_expr_until(p,T_AS,T_COLON); if(fp_match(p,T_AS)){ Tok *as=fp_need(p,T_NAME); if(as) b->name=xstrdup2(as->text); } }
+            fp_need(p,T_COLON); fp_parse_suite_into(p,b,0); stmt_add_orelse(s,b); fp_skip_nl(p);
         }
-        if(fp_match(p,T_FINALLY)){ fp_need(p,T_COLON); Stmt *fin=stmt_new(STMT_BLOCK,"finally",line,p->pos); fp_parse_suite_into(p,fin,0); stmt_add_orelse(s,fin); }
+        if(fp_match(p,T_ELSE)){ fp_need(p,T_COLON); Stmt *el=stmt_new(STMT_BLOCK,"else",line,p->pos); el->block_tag=2; fp_parse_suite_into(p,el,0); stmt_add_orelse(s,el); fp_skip_nl(p); }
+        if(fp_match(p,T_FINALLY)){ fp_need(p,T_COLON); Stmt *fin=stmt_new(STMT_BLOCK,"finally",line,p->pos); fin->block_tag=3; fp_parse_suite_into(p,fin,0); stmt_add_orelse(s,fin); }
         s->end=p->pos; return s;
     }
     if(fp_peek(p)->kind==T_MATCH||fp_peek(p)->kind==T_ASYNC){ Stmt *s=stmt_new(STMT_UNSUPPORTED,fp_peek(p)->text,line,start); fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }

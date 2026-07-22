@@ -44,4 +44,7 @@ with "ctx" as c:
     print(c)
 
 del c
-print(c)
+try:
+    print(c)
+except NameError:
+    print("c deleted")

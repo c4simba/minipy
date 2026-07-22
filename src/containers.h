@@ -9,6 +9,7 @@ Dict *dict_new(void);
 int   dict_find(Dict *d, const char *key);
 void  dict_set(Dict *d, const char *key, Value v);
 int   dict_get(Dict *d, const char *key, Value *out);
+int   dict_del(Dict *d, const char *key);
 Dict *dict_clone(Dict *src);
 
 void  list_push(List *l, Value v);

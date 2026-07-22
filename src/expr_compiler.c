@@ -67,8 +67,12 @@ static void primary(Parser *p){
         }
         else if(match(p,T_DOT)){ Tok *n=need(p,T_NAME,"attribute name"); emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),n->line); }
         else if(match(p,T_LB)){
-            if(match(p,T_COLON)){ emit_op(p->chunk,OP_NONE,line); if(peek(p)->kind!=T_RB) expr(p); else emit_op(p->chunk,OP_NONE,line); need(p,T_RB,"]"); emit_op(p->chunk,OP_GET_SLICE,line); }
-            else { expr(p); if(match(p,T_COLON)){ if(peek(p)->kind!=T_RB) expr(p); else emit_op(p->chunk,OP_NONE,line); need(p,T_RB,"]"); emit_op(p->chunk,OP_GET_SLICE,line); } else { need(p,T_RB,"]"); emit_op(p->chunk,OP_GET_INDEX,line); } }
+            if(peek(p)->kind==T_COLON) emit_op(p->chunk,OP_NONE,line); else expr(p);   /* start */
+            if(match(p,T_COLON)){
+                if(peek(p)->kind==T_COLON||peek(p)->kind==T_RB) emit_op(p->chunk,OP_NONE,line); else expr(p);  /* stop */
+                if(match(p,T_COLON)){ if(peek(p)->kind==T_RB) emit_op(p->chunk,OP_NONE,line); else expr(p); } else emit_op(p->chunk,OP_NONE,line);  /* step */
+                need(p,T_RB,"]"); emit_op(p->chunk,OP_GET_SLICE,line);
+            } else { need(p,T_RB,"]"); emit_op(p->chunk,OP_GET_INDEX,line); }
         }
         else break;
     }
@@ -225,7 +229,7 @@ static void class_stmt(Parser *p){ int line=prev(p)->line; Tok *n=need(p,T_NAME,
 static void import_stmt(Parser *p){ Tok *n=need(p,T_NAME,"module name"); int line=n->line; const char *alias=n->text; if(match(p,T_AS)){ Tok *a=need(p,T_NAME,"alias"); alias=a->text; } emit_arg(p->chunk,OP_IMPORT,name_const(p,n->text),line); emit_arg(p->chunk,OP_STORE,name_const(p,alias),line); need(p,T_NEWLINE,"newline"); }
 void from_import_stmt(Parser *p){ Tok *m=need(p,T_NAME,"module name"); int line=m->line; need(p,T_IMPORT,"import"); do{ Tok *n=need(p,T_NAME,"imported name"); const char *alias=n->text; if(match(p,T_AS)){ Tok *a=need(p,T_NAME,"alias"); alias=a->text; } emit_arg(p->chunk,OP_IMPORT,name_const(p,m->text),line); emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line); emit_arg(p->chunk,OP_STORE,name_const(p,alias),line); } while(match(p,T_COMMA)); need(p,T_NEWLINE,"newline"); }
 static void with_stmt(Parser *p){ int line=prev(p)->line; expr(p); if(match(p,T_AS)){ Tok *n=need(p,T_NAME,"with target"); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),line); } else emit_op(p->chunk,OP_POP,line); need(p,T_COLON,":"); block(p); }
-static void raise_stmt(Parser *p){ int line=prev(p)->line; if(peek(p)->kind!=T_NEWLINE) expr(p); else emit_arg(p->chunk,OP_CONST,add_const(p->chunk,stringv("raise")),line); emit_op(p->chunk,OP_RAISE,line); need(p,T_NEWLINE,"newline"); }
+static void raise_stmt(Parser *p){ int line=prev(p)->line; if(peek(p)->kind!=T_NEWLINE){ expr(p); emit_op(p->chunk,OP_RAISE,line); } else emit_op(p->chunk,OP_RERAISE,line); need(p,T_NEWLINE,"newline"); }
 static void global_nonlocal_stmt(Parser *p){ do{ need(p,T_NAME,"name"); }while(match(p,T_COMMA)); need(p,T_NEWLINE,"newline"); }
 static void del_stmt(Parser *p){ Tok *n=need(p,T_NAME,"name"); emit_op(p->chunk,OP_NONE,n->line); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),n->line); need(p,T_NEWLINE,"newline"); }
 static void unsupported_stmt(Parser *p,const char *what){ fprintf(stderr,"parse error at line %d: %s syntax is recognized but not implemented in this mini runtime\n",prev(p)->line,what); exit(1); }

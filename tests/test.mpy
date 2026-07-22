@@ -16,7 +16,7 @@ print(len(a))
 
 m = {"name": "mini", "n": 3}
 m["n"] = m["n"] + 4
-print(m["name"] + " " + m["n"])
+print(m["name"] + " " + str(m["n"]))
 
 class Counter:
     def __init__(self, start):

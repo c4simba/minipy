@@ -47,10 +47,10 @@ int main(int argc,char **argv){
     dict_set(vm.builtins,"abs",nativev(&N_ABS)); dict_set(vm.builtins,"min",nativev(&N_MIN)); dict_set(vm.builtins,"max",nativev(&N_MAX)); dict_set(vm.builtins,"sum",nativev(&N_SUM)); dict_set(vm.builtins,"sorted",nativev(&N_SORTED)); dict_set(vm.builtins,"reversed",nativev(&N_REVERSED));
     dict_set(vm.builtins,"enumerate",nativev(&N_ENUMERATE)); dict_set(vm.builtins,"zip",nativev(&N_ZIP)); dict_set(vm.builtins,"map",nativev(&N_MAP)); dict_set(vm.builtins,"filter",nativev(&N_FILTER));
     dict_set(vm.builtins,"type",nativev(&N_TYPE)); dict_set(vm.builtins,"isinstance",nativev(&N_ISINSTANCE)); dict_set(vm.builtins,"ord",nativev(&N_ORD)); dict_set(vm.builtins,"chr",nativev(&N_CHR)); dict_set(vm.builtins,"round",nativev(&N_ROUND)); dict_set(vm.builtins,"any",nativev(&N_ANY)); dict_set(vm.builtins,"all",nativev(&N_ALL));
-    Obj *be=new_obj(O_CLASS); be->as.klass.name=xstrdup2("BaseException"); be->as.klass.methods=dict_new();
-    Obj *re=new_obj(O_CLASS); re->as.klass.name=xstrdup2("RuntimeError"); re->as.klass.methods=dict_new();
-    Obj *se=new_obj(O_CLASS); se->as.klass.name=xstrdup2("StopIteration"); se->as.klass.methods=dict_new();
-    dict_set(vm.builtins,"BaseException",objv(be)); dict_set(vm.builtins,"RuntimeError",objv(re)); dict_set(vm.builtins,"StopIteration",objv(se));
+    {
+        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError",NULL};
+        for(int i=0;excs[i];i++){ Obj *ec=new_obj(O_CLASS); ec->as.klass.name=xstrdup2(excs[i]); ec->as.klass.methods=dict_new(); dict_set(vm.builtins,excs[i],objv(ec)); }
+    }
     char *src=mpy_fs_read_file(script_path);
     if(!src) return 1;
     char *dir=mpy_fs_dirname(script_path);

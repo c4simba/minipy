@@ -9,7 +9,7 @@ finally:
 
 try:
     [1][9]
-except RuntimeError as e:
+except IndexError as e:
     print(e)
 finally:
     print("finally vm")
@@ -23,5 +23,5 @@ except StopIteration as e:
 
 try:
     1 + []
-except RuntimeError as e:
+except TypeError as e:
     print(e)

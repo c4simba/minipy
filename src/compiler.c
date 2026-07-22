@@ -111,17 +111,39 @@ void compile_stmt_ast(Parser *p, Stmt *s){
         case STMT_ASSIGN: compile_assign_ast(p,s); break;
         case STMT_IMPORT: compile_import_ast(p,s); break;
         case STMT_FROM_IMPORT: compile_from_import_ast(p,s); break;
-        case STMT_RAISE: if(s->expr) compile_expr_ast(p,s->expr); else emit_arg(p->chunk,OP_CONST,add_const(p->chunk,stringv("raise")),s->line); emit_op(p->chunk,OP_RAISE,s->line); break;
+        case STMT_RAISE: if(s->expr){ compile_expr_ast(p,s->expr); emit_op(p->chunk,OP_RAISE,s->line); } else emit_op(p->chunk,OP_RERAISE,s->line); break;
         case STMT_TRY:{
-            emit_arg(p->chunk,OP_SETUP_EXCEPT,0,s->line); int handler=p->chunk->count-1; compile_block_ast(p,s->body,s->body_count); emit_op(p->chunk,OP_POP_EXCEPT,s->line);
-            emit_arg(p->chunk,OP_JUMP,0,s->line); int done=p->chunk->count-1; patch(p->chunk,handler,p->chunk->count);
-            if(s->name) emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); else emit_op(p->chunk,OP_POP,s->line);
-            for(int i=0;i<s->orelse_count;i++){ if(s->orelse[i]->kind!=STMT_BLOCK || !s->orelse[i]->name || strcmp(s->orelse[i]->name,"finally")!=0) compile_stmt_ast(p,s->orelse[i]); }
-            patch(p->chunk,done,p->chunk->count);
-            for(int i=0;i<s->orelse_count;i++){ if(s->orelse[i]->kind==STMT_BLOCK && s->orelse[i]->name && strcmp(s->orelse[i]->name,"finally")==0) compile_block_ast(p,s->orelse[i]->body,s->orelse[i]->body_count); }
+            /* try body */
+            emit_arg(p->chunk,OP_SETUP_EXCEPT,0,s->line); int handler=p->chunk->count-1;
+            compile_block_ast(p,s->body,s->body_count); emit_op(p->chunk,OP_POP_EXCEPT,s->line);
+            /* no-exception path: else clause, then jump to finally */
+            for(int i=0;i<s->orelse_count;i++) if(s->orelse[i]->block_tag==2) compile_block_ast(p,s->orelse[i]->body,s->orelse[i]->body_count);
+            emit_arg(p->chunk,OP_JUMP,0,s->line); int fin_jump=p->chunk->count-1;
+            /* handler dispatch: exception is on the stack */
+            patch(p->chunk,handler,p->chunk->count);
+            int endjumps[64]; int nend=0;
+            for(int i=0;i<s->orelse_count;i++){ Stmt *cl=s->orelse[i]; if(cl->block_tag!=1) continue;
+                int nextj=-1;
+                if(cl->expr){ emit_op(p->chunk,OP_DUP,s->line); compile_expr_ast(p,cl->expr); emit_op(p->chunk,OP_EXC_MATCH,s->line); emit_arg(p->chunk,OP_JUMP_IF_FALSE,0,s->line); nextj=p->chunk->count-1; }
+                if(cl->name) emit_arg(p->chunk,OP_STORE,name_const(p,cl->name),s->line); else emit_op(p->chunk,OP_POP,s->line);
+                compile_block_ast(p,cl->body,cl->body_count);
+                emit_arg(p->chunk,OP_JUMP,0,s->line); if(nend<64) endjumps[nend++]=p->chunk->count-1;
+                if(nextj>=0) patch(p->chunk,nextj,p->chunk->count);
+            }
+            /* no except clause matched: re-raise the exception still on the stack */
+            emit_op(p->chunk,OP_RAISE,s->line);
+            patch(p->chunk,fin_jump,p->chunk->count);
+            for(int i=0;i<nend;i++) patch(p->chunk,endjumps[i],p->chunk->count);
+            /* finally clause runs on the normal and handled paths */
+            for(int i=0;i<s->orelse_count;i++) if(s->orelse[i]->block_tag==3) compile_block_ast(p,s->orelse[i]->body,s->orelse[i]->body_count);
             break;
         }
-        case STMT_WITH: compile_expr_ast(p,s->expr); if(s->name) emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); else emit_op(p->chunk,OP_POP,s->line); compile_block_ast(p,s->body,s->body_count); break;
+        case STMT_WITH:{
+            int old=p->pos; p->pos=s->expr->start;
+            do { expr(p); if(match(p,T_AS)){ Tok *n=need(p,T_NAME,"with target"); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),s->line); } else emit_op(p->chunk,OP_POP,s->line); } while(match(p,T_COMMA));
+            p->pos=old;
+            compile_block_ast(p,s->body,s->body_count); break;
+        }
         case STMT_BREAK:{
             if(p->loop_depth<=0){ fprintf(stderr,"parse error at line %d: break outside loop\n",s->line); exit(1); }
             LoopCtx *lc=&p->loops[p->loop_depth-1]; if(lc->is_for) emit_op(p->chunk,OP_POP,s->line);
@@ -132,7 +154,31 @@ void compile_stmt_ast(Parser *p, Stmt *s){
             LoopCtx *lc=&p->loops[p->loop_depth-1]; emit_arg(p->chunk,OP_JUMP,lc->start,s->line); break;
         }
         case STMT_PASS: case STMT_GLOBAL: case STMT_NONLOCAL: break;
-        case STMT_DEL: emit_op(p->chunk,OP_NONE,s->line); emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); break;
+        case STMT_DEL:{
+            int old=p->pos; int endp=s->expr?s->expr->end:s->start; p->pos=s->expr?s->expr->start:s->start;
+            Tok *base=need(p,T_NAME,"del target");
+            if(p->pos>=endp){ emit_arg(p->chunk,OP_DELETE_NAME,name_const(p,base->text),s->line); }
+            else {
+                emit_arg(p->chunk,OP_LOAD,name_const(p,base->text),s->line);
+                while(1){
+                    if(match(p,T_DOT)){ Tok *n=need(p,T_NAME,"attr"); if(p->pos>=endp){ emit_arg(p->chunk,OP_DEL_ATTR,name_const(p,n->text),s->line); break; } emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),s->line); }
+                    else if(match(p,T_LB)){ expr(p); need(p,T_RB,"]"); if(p->pos>=endp){ emit_op(p->chunk,OP_DEL_INDEX,s->line); break; } emit_op(p->chunk,OP_GET_INDEX,s->line); }
+                    else break;
+                }
+            }
+            p->pos=old; break;
+        }
+        case STMT_ASSERT:{
+            compile_expr_ast(p,s->expr);
+            emit_arg(p->chunk,OP_JUMP_IF_FALSE,0,s->line); int jf=p->chunk->count-1;
+            emit_arg(p->chunk,OP_JUMP,0,s->line); int jend=p->chunk->count-1;
+            patch(p->chunk,jf,p->chunk->count);
+            emit_arg(p->chunk,OP_LOAD,name_const(p,"AssertionError"),s->line);
+            if(s->expr2){ compile_expr_ast(p,s->expr2); emit_arg(p->chunk,OP_CALL,1,s->line); } else emit_arg(p->chunk,OP_CALL,0,s->line);
+            emit_op(p->chunk,OP_RAISE,s->line);
+            patch(p->chunk,jend,p->chunk->count);
+            break;
+        }
         case STMT_EXPR:{
             int old=p->pos; p->pos=s->start; if(peek(p)->kind==T_PRINT || is_assignment(p)){ legacy_statement(p); p->pos=old; break; } p->pos=old;
             compile_expr_ast(p,s->expr); emit_op(p->chunk,OP_POP,s->line); break;

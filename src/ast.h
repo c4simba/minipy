@@ -58,6 +58,7 @@ typedef enum {
     STMT_NONLOCAL,
     STMT_EXPR,
     STMT_YIELD,
+    STMT_ASSERT,
     STMT_UNSUPPORTED
 } StmtKind;
 
@@ -90,6 +91,7 @@ struct Stmt {
     Stmt **body; int body_count, body_cap;
     Stmt **orelse; int orelse_count, orelse_cap;
     int star_index, dstar_index;   /* def params: index of *args / **kwargs, else -1 */
+    int block_tag;                 /* try-clause blocks: 0 normal, 1 except, 2 else, 3 finally */
     SymScope *scope;
 };
 

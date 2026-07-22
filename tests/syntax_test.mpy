@@ -39,4 +39,7 @@ with "resource" as r:
     print(r)
 
 del r
-print(r)
+try:
+    print(r)
+except NameError:
+    print("r deleted")

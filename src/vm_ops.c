@@ -29,8 +29,10 @@ int val_equal(Value a,Value b){
 Value binary_add(Value a,Value b){
     Value r; if(call_instance_method1(a,"__add__",b,&r)) return r;
     if(is_number(a)&&is_number(b)){ if(a.type==V_FLOAT||b.type==V_FLOAT) return floatv(as_double(a)+as_double(b)); return intv(as_int(a)+as_int(b)); }
-    if(is_obj(a,O_STRING)||is_obj(b,O_STRING)){ char *sa=value_to_cstr(a); char *sb=value_to_cstr(b); int n=(int)(strlen(sa)+strlen(sb)); char *r=(char*)xmalloc((size_t)n+1); strcpy(r,sa); strcat(r,sb); Value v=stringv(r); free(sa); free(sb); free(r); return v; }
-    runtime_error("unsupported operands for +"); return nonev();
+    if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)){ String *x=&a.as.obj->as.str,*y=&b.as.obj->as.str; int n=x->len+y->len; char *s=(char*)xmalloc((size_t)n+1); memcpy(s,x->s,(size_t)x->len); memcpy(s+x->len,y->s,(size_t)y->len); s[n]=0; Value v=stringv_len(s,n); free(s); return v; }
+    if(is_obj(a,O_LIST)&&is_obj(b,O_LIST)){ Obj *o=new_list(); List *la=&a.as.obj->as.list,*lb=&b.as.obj->as.list; for(int i=0;i<la->count;i++) list_push(&o->as.list,la->items[i]); for(int i=0;i<lb->count;i++) list_push(&o->as.list,lb->items[i]); return objv(o); }
+    if(is_obj(a,O_TUPLE)&&is_obj(b,O_TUPLE)){ Obj *o=new_tuple(); List *la=&a.as.obj->as.tuple,*lb=&b.as.obj->as.tuple; for(int i=0;i<la->count;i++) list_push(&o->as.tuple,la->items[i]); for(int i=0;i<lb->count;i++) list_push(&o->as.tuple,lb->items[i]); return objv(o); }
+    raise_named("TypeError","unsupported operand type(s) for +"); return nonev();
 }
 /* printf-style string formatting for  "fmt" % args  (args: single value or tuple). */
 static Value str_format(Value fmtv, Value args){
@@ -63,31 +65,44 @@ static Value str_format(Value fmtv, Value args){
 }
 Value binary_num(Value a,Value b,Op op){
     if(op==OP_MOD && is_obj(a,O_STRING)) return str_format(a,b);
-    if(!is_number(a)||!is_number(b)) runtime_error("numeric operator on non-number");
+    if(!is_number(a)||!is_number(b)) raise_named("TypeError","unsupported operand type for arithmetic");
     if(op==OP_BITAND||op==OP_BITOR||op==OP_BITXOR||op==OP_SHL||op==OP_SHR){ if(a.type==V_FLOAT||b.type==V_FLOAT) runtime_error("bitwise operator on float"); int64_t x=as_int(a),y=as_int(b); switch(op){ case OP_BITAND: return intv(x&y); case OP_BITOR: return intv(x|y); case OP_BITXOR: return intv(x^y); case OP_SHL: return intv(x<<y); case OP_SHR: return intv(x>>y); default: break; } }
-    if(op==OP_MOD){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) runtime_error("float modulo by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv(x-(double)t*y); } int64_t x=as_int(a),y=as_int(b); if(y==0) runtime_error("integer modulo by zero"); int64_t r=x%y; if(r!=0 && ((r<0)!=(y<0))) r+=y; return intv(r); }
-    if(op==OP_DIV) return floatv(as_double(a)/as_double(b)); if(op==OP_FLOOR_DIV){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) runtime_error("float floor division by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv((double)t); } int64_t x=as_int(a),y=as_int(b); if(y==0) runtime_error("integer division or modulo by zero"); int64_t q=x/y; if((x%y!=0) && ((x<0)!=(y<0))) q--; return intv(q); } if(op==OP_POWER){ if((a.type==V_INT||a.type==V_BOOL)&&(b.type==V_INT||b.type==V_BOOL)&&as_int(b)>=0){ int64_t base=as_int(a),e=as_int(b),r=1; for(int64_t i=0;i<e;i++) r*=base; return intv(r); } double base=as_double(a); double exp=as_double(b); double r=1; int e_neg=0; if(exp<0){ e_neg=1; exp=-exp; } int ei=(int)exp; for(int i=0;i<ei;i++) r*=base; if(e_neg) r=1.0/r; return floatv(r); } if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(op==OP_SUB)return floatv(x-y); if(op==OP_MUL)return floatv(x*y); } int64_t x=as_int(a),y=as_int(b); if(op==OP_SUB)return intv(x-y); return intv(x*y); }
-Value compare(Value a,Value b,Op op){ int r=0; if(is_number(a)&&is_number(b)){ double x=as_double(a),y=as_double(b); r=(op==OP_LT?x<y:op==OP_LE?x<=y:op==OP_GT?x>y:x>=y); } else if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)){ int c=strcmp(a.as.obj->as.str.s,b.as.obj->as.str.s); r=(op==OP_LT?c<0:op==OP_LE?c<=0:op==OP_GT?c>0:c>=0); } else runtime_error("comparison between unsupported types"); return boolv(r); }
+    if(op==OP_MOD){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) raise_named("ZeroDivisionError","float modulo by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv(x-(double)t*y); } int64_t x=as_int(a),y=as_int(b); if(y==0) raise_named("ZeroDivisionError","integer modulo by zero"); int64_t r=x%y; if(r!=0 && ((r<0)!=(y<0))) r+=y; return intv(r); }
+    if(op==OP_DIV){ if(as_double(b)==0.0) raise_named("ZeroDivisionError","division by zero"); return floatv(as_double(a)/as_double(b)); } if(op==OP_FLOOR_DIV){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) raise_named("ZeroDivisionError","float floor division by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv((double)t); } int64_t x=as_int(a),y=as_int(b); if(y==0) raise_named("ZeroDivisionError","division by zero"); int64_t q=x/y; if((x%y!=0) && ((x<0)!=(y<0))) q--; return intv(q); } if(op==OP_POWER){ if((a.type==V_INT||a.type==V_BOOL)&&(b.type==V_INT||b.type==V_BOOL)&&as_int(b)>=0){ int64_t base=as_int(a),e=as_int(b),r=1; for(int64_t i=0;i<e;i++) r*=base; return intv(r); } double base=as_double(a); double exp=as_double(b); double r=1; int e_neg=0; if(exp<0){ e_neg=1; exp=-exp; } int ei=(int)exp; for(int i=0;i<ei;i++) r*=base; if(e_neg) r=1.0/r; return floatv(r); } if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(op==OP_SUB)return floatv(x-y); if(op==OP_MUL)return floatv(x*y); } int64_t x=as_int(a),y=as_int(b); if(op==OP_SUB)return intv(x-y); return intv(x*y); }
+/* Three-way order comparison (-1/0/1). Handles numbers, strings, and
+   lexicographic ordering of lists/tuples. Raises on unorderable types. */
+static int value_cmp3(Value a,Value b){
+    if(is_number(a)&&is_number(b)){ double x=as_double(a),y=as_double(b); return x<y?-1:(x>y?1:0); }
+    if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)){ int c=strcmp(a.as.obj->as.str.s,b.as.obj->as.str.s); return c<0?-1:(c>0?1:0); }
+    if((is_obj(a,O_LIST)||is_obj(a,O_TUPLE)) && (is_obj(b,O_LIST)||is_obj(b,O_TUPLE))){
+        List *la=is_obj(a,O_LIST)?&a.as.obj->as.list:&a.as.obj->as.tuple;
+        List *lb=is_obj(b,O_LIST)?&b.as.obj->as.list:&b.as.obj->as.tuple;
+        int n=la->count<lb->count?la->count:lb->count;
+        for(int i=0;i<n;i++){ int c=value_cmp3(la->items[i],lb->items[i]); if(c) return c; }
+        return la->count<lb->count?-1:(la->count>lb->count?1:0);
+    }
+    raise_named("TypeError","comparison between unsupported types"); return 0;
+}
+Value compare(Value a,Value b,Op op){ int c=value_cmp3(a,b); int r=(op==OP_LT?c<0:op==OP_LE?c<=0:op==OP_GT?c>0:c>=0); return boolv(r); }
 
 Value get_attr(Value obj,const char *name){
     if(is_obj(obj,O_INSTANCE)){ Instance *in=&obj.as.obj->as.inst; Value v; if(dict_get(in->fields,name,&v)) return v; if(dict_get(in->klass->methods,name,&v) && is_obj(v,O_FUNCTION)){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&v.as.obj->as.fn; return objv(b); } runtime_error("unknown instance attribute"); }
     if(is_obj(obj,O_CLASS)){ Value v; if(dict_get(obj.as.obj->as.klass.methods,name,&v)) return v; runtime_error("unknown class attribute"); }
     if(is_obj(obj,O_MODULE)){ Value v; if(dict_get(obj.as.obj->as.mod.dict,name,&v)) return v; runtime_error("unknown module attribute"); }
-    if(is_obj(obj,O_LIST)&&strcmp(name,"append")==0){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2("append"); return objv(b); }
-    if(is_obj(obj,O_SET)&&strcmp(name,"add")==0){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2("add"); return objv(b); }
+    if(is_obj(obj,O_STRING)||is_obj(obj,O_LIST)||is_obj(obj,O_DICT)||is_obj(obj,O_SET)){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2(name); return objv(b); }
     runtime_error("attribute access on unsupported type"); return nonev();
 }
 void set_attr(Value obj,const char *name,Value val){ if(is_obj(obj,O_INSTANCE)){ dict_set(obj.as.obj->as.inst.fields,name,val); return; } if(is_obj(obj,O_MODULE)){ dict_set(obj.as.obj->as.mod.dict,name,val); return; } runtime_error("cannot set attribute on this object"); }
 Value get_index(Value obj,Value idx){
     Value r; if(call_instance_method1(obj,"__getitem__",idx,&r)) return r;
-    if(is_obj(obj,O_LIST)){ if(!is_number(idx)) runtime_error("list index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.list; if(i<0) i+=l->count; if(i<0||i>=l->count) runtime_error("list index out of range"); return l->items[i]; }
-    if(is_obj(obj,O_DICT)){ char *k=value_to_cstr(idx); Value v; int ok=dict_get(&obj.as.obj->as.dict,k,&v); free(k); if(!ok) runtime_error("dict key not found"); return v; }
-    if(is_obj(obj,O_STRING)){ if(!is_number(idx)) runtime_error("string index must be int"); int64_t i=as_int(idx); String *s=&obj.as.obj->as.str; if(i<0)i+=s->len; if(i<0||i>=s->len) runtime_error("string index out of range"); return stringv_len(&s->s[i],1); }
+    if(is_obj(obj,O_LIST)){ if(!is_number(idx)) runtime_error("list index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.list; if(i<0) i+=l->count; if(i<0||i>=l->count) raise_named("IndexError","list index out of range"); return l->items[i]; }
+    if(is_obj(obj,O_DICT)){ char *k=value_to_cstr(idx); Value v; int ok=dict_get(&obj.as.obj->as.dict,k,&v); free(k); if(!ok) raise_named("KeyError","dict key not found"); return v; }
+    if(is_obj(obj,O_STRING)){ if(!is_number(idx)) runtime_error("string index must be int"); int64_t i=as_int(idx); String *s=&obj.as.obj->as.str; if(i<0)i+=s->len; if(i<0||i>=s->len) raise_named("IndexError","string index out of range"); return stringv_len(&s->s[i],1); }
     runtime_error("indexing unsupported type"); return nonev();
 }
 void set_index(Value obj,Value idx,Value val){
     Value m; if(get_instance_method(obj,"__setitem__",&m)){ Value argv[2]; argv[0]=idx; argv[1]=val; call_value(m,2,argv); return; }
-    if(is_obj(obj,O_LIST)){ if(!is_number(idx)) runtime_error("list index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.list; if(i<0)i+=l->count; if(i<0||i>=l->count) runtime_error("list index out of range"); l->items[i]=val; return; }
+    if(is_obj(obj,O_LIST)){ if(!is_number(idx)) runtime_error("list index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.list; if(i<0)i+=l->count; if(i<0||i>=l->count) raise_named("IndexError","list index out of range"); l->items[i]=val; return; }
     if(is_obj(obj,O_DICT)){ char *k=value_to_cstr(idx); dict_set(&obj.as.obj->as.dict,k,val); free(k); return; }
     runtime_error("item assignment unsupported type");
 }
@@ -108,16 +123,28 @@ Value contains_value(Value needle,Value hay){
     if(is_obj(hay,O_STRING)){ char *n=value_to_cstr(needle); int ok=strstr(hay.as.obj->as.str.s,n)!=NULL; free(n); return boolv(ok); }
     runtime_error("right operand is not container"); return boolv(0);
 }
-static int norm_bound(int64_t x,int n){ if(x<0) x+=n; if(x<0) x=0; if(x>n) x=n; return (int)x; }
-Value get_slice(Value obj,Value startv,Value endv){
-    int has_start=startv.type!=V_NONE, has_end=endv.type!=V_NONE;
-    if(is_obj(obj,O_LIST)||is_obj(obj,O_TUPLE)){
-        List *l=is_obj(obj,O_LIST)?&obj.as.obj->as.list:&obj.as.obj->as.tuple;
-        int a=has_start?norm_bound(as_int(startv),l->count):0; int b=has_end?norm_bound(as_int(endv),l->count):l->count; if(b<a)b=a;
-        Obj *o=is_obj(obj,O_LIST)?new_list():new_tuple(); for(int i=a;i<b;i++) list_push(is_obj(obj,O_LIST)?&o->as.list:&o->as.tuple,l->items[i]); return objv(o);
+Value get_slice(Value obj,Value sv,Value ev,Value stv){
+    int64_t step = stv.type==V_NONE?1:as_int(stv);
+    if(step==0) raise_named("ValueError","slice step cannot be zero");
+    int isstr=is_obj(obj,O_STRING), islist=is_obj(obj,O_LIST), istup=is_obj(obj,O_TUPLE);
+    if(!isstr&&!islist&&!istup){ raise_named("TypeError","slicing unsupported type"); return nonev(); }
+    List *seq = islist?&obj.as.obj->as.list : (istup?&obj.as.obj->as.tuple : NULL);
+    String *str = isstr?&obj.as.obj->as.str : NULL;
+    int64_t n = isstr?str->len:seq->count;
+    int64_t start = (sv.type==V_NONE)?(step>0?0:n-1):as_int(sv);
+    int64_t stop  = (ev.type==V_NONE)?(step>0?n:-1):as_int(ev);
+    if(sv.type!=V_NONE && start<0) start+=n;
+    if(ev.type!=V_NONE && stop<0) stop+=n;
+    if(step>0){ if(start<0)start=0; if(start>n)start=n; if(stop<0)stop=0; if(stop>n)stop=n; }
+    else { if(start<0)start=-1; if(start>=n)start=n-1; if(ev.type!=V_NONE){ if(stop<-1)stop=-1; if(stop>=n)stop=n-1; } }
+    if(isstr){
+        char *buf=(char*)xmalloc((size_t)n+1); int b=0;
+        if(step>0) for(int64_t i=start;i<stop;i+=step) buf[b++]=str->s[i];
+        else for(int64_t i=start;i>stop;i+=step) buf[b++]=str->s[i];
+        Value r=stringv_len(buf,b); free(buf); return r;
     }
-    if(is_obj(obj,O_STRING)){
-        String *st=&obj.as.obj->as.str; int a=has_start?norm_bound(as_int(startv),st->len):0; int b=has_end?norm_bound(as_int(endv),st->len):st->len; if(b<a)b=a; return stringv_len(st->s+a,b-a);
-    }
-    runtime_error("slicing unsupported type"); return nonev();
+    Obj *o=islist?new_list():new_tuple(); List *ol=islist?&o->as.list:&o->as.tuple;
+    if(step>0) for(int64_t i=start;i<stop;i+=step) list_push(ol,seq->items[i]);
+    else for(int64_t i=start;i>stop;i+=step) list_push(ol,seq->items[i]);
+    return objv(o);
 }

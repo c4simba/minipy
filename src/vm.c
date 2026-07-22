@@ -11,6 +11,7 @@ void push(Value v){ if(vm.sp>=4096) die("stack overflow"); vm.stack[vm.sp++]=v; 
 Value popv(void){ if(vm.sp<=0) die("stack underflow"); return vm.stack[--vm.sp]; }
 
 static Value call_value_ex(Value callee, List *pos, Dict *kw);
+static int exc_matches(Value exc, Value type);
 
 /* Bind call arguments into `locals`, honoring positional params, keyword args,
    defaults, *args (collect extra positionals into a tuple) and **kwargs
@@ -50,7 +51,7 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
     for(;;){ Op op=(Op)c->code[fr->ip++];
         switch(op){
             case OP_CONST: push(c->consts[c->code[fr->ip++]]); break; case OP_NONE: push(nonev()); break; case OP_TRUE: push(boolv(1)); break; case OP_FALSE: push(boolv(0)); break;
-            case OP_LOAD:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value v; if(function_declares(fn->global_names,fn->global_count,name)){ if(dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); runtime_error(b); } } else if(dict_get(fr->locals,name,&v)||dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); runtime_error(b); } break; }
+            case OP_LOAD:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value v; if(function_declares(fn->global_names,fn->global_count,name)){ if(dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } } else if(dict_get(fr->locals,name,&v)||dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } break; }
             case OP_STORE:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value v=popv(); if(fn->store_globals||function_declares(fn->global_names,fn->global_count,name)) dict_set(fn->globals,name,v); else { if(function_declares(fn->nonlocal_names,fn->nonlocal_count,name) && fn->closure) dict_set(fn->closure,name,v); dict_set(fr->locals,name,v); } break; }
             case OP_STORE_GLOBAL:{ Value namev=c->consts[c->code[fr->ip++]]; dict_set(fn->globals,namev.as.obj->as.str.s,popv()); break; }
             case OP_POP: popv(); break;
@@ -63,6 +64,7 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_PRINT: print_value(popv()); printf("\n"); break;
             case OP_NOT:{ Value a=popv(); push(boolv(!truthy(a))); break; }
             case OP_RAISE:{ Value a=popv(); raise_exception(a); break; }
+            case OP_RERAISE: raise_exception(vm.pending_exception); break;
             case OP_SETUP_EXCEPT:{ int target=c->code[fr->ip++]; if(fr->hcount>=32) runtime_error("too many exception handlers"); fr->handlers[fr->hcount].ip=target; fr->handlers[fr->hcount].sp=vm.sp; fr->hcount++; break; }
             case OP_POP_EXCEPT:{ if(fr->hcount>0) fr->hcount--; break; }
             case OP_ITER:{ Value itv=popv(); push(native_iter(1,&itv)); break; }
@@ -73,6 +75,7 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_DICT_SETNAME:{ Value namev=c->consts[c->code[fr->ip++]]; Value v=popv(); dict_set(&vm.stack[vm.sp-1].as.obj->as.dict,namev.as.obj->as.str.s,v); break; }
             case OP_DICT_MERGE:{ Value src=popv(); if(!is_obj(src,O_DICT)) runtime_error("argument after ** must be a dict"); Dict *sd=&src.as.obj->as.dict; Dict *dd=&vm.stack[vm.sp-1].as.obj->as.dict; for(int i=0;i<sd->count;i++) dict_set(dd,sd->keys[i],sd->vals[i]); break; }
             case OP_CALL_EX:{ Value kw=popv(),pos=popv(),cal=popv(); Value r=call_value_ex(cal,&pos.as.obj->as.list,&kw.as.obj->as.dict); push(r); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
+            case OP_EXC_MATCH:{ Value type=popv(); Value exc=popv(); push(boolv(exc_matches(exc,type))); break; }
             case OP_YIELD:{ if(!gen_obj) runtime_error("yield outside generator"); Value r=popv(); gen_obj->as.gen.ip=fr->ip; gen_obj->as.gen.locals=fr->locals; vm.fcount--; vm.exc_depth=exc_slot; return r; }
             case OP_RETURN:{ Value r=popv(); if(gen_obj) gen_obj->as.gen.done=1; vm.fcount--; vm.exc_depth=exc_slot; return r; }
             case OP_DUP:{ Value v=vm.stack[vm.sp-1]; push(v); break; }
@@ -85,7 +88,10 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_MAKE_TUPLE:{ int n=c->code[fr->ip++]; Obj *o=new_tuple(); for(int i=0;i<n;i++) list_push(&o->as.tuple,vm.stack[vm.sp-n+i]); vm.sp-=n; push(objv(o)); break; }
             case OP_MAKE_SET:{ int n=c->code[fr->ip++]; Obj *o=new_set(); for(int i=0;i<n;i++) set_add(&o->as.set,vm.stack[vm.sp-n+i]); vm.sp-=n; push(objv(o)); break; }
             case OP_MAKE_DICT:{ int n=c->code[fr->ip++]; Obj *o=new_dict_obj(); for(int i=0;i<n;i++){ Value val=popv(); Value key=popv(); char *ks=value_to_cstr(key); dict_set(&o->as.dict,ks,val); free(ks); } push(objv(o)); break; }
-            case OP_GET_INDEX:{ Value idx=popv(),obj=popv(); push(get_index(obj,idx)); break; } case OP_GET_SLICE:{ Value endv=popv(),startv=popv(),obj=popv(); push(get_slice(obj,startv,endv)); break; } case OP_SET_INDEX:{ Value val=popv(),idx=popv(),obj=popv(); set_index(obj,idx,val); push(val); break; }
+            case OP_GET_INDEX:{ Value idx=popv(),obj=popv(); push(get_index(obj,idx)); break; } case OP_GET_SLICE:{ Value step=popv(),endv=popv(),startv=popv(),obj=popv(); push(get_slice(obj,startv,endv,step)); break; }
+            case OP_DEL_INDEX:{ Value idx=popv(),obj=popv(); if(is_obj(obj,O_LIST)){ List *l=&obj.as.obj->as.list; int64_t i=as_int(idx); if(i<0)i+=l->count; if(i<0||i>=l->count) raise_named("IndexError","list index out of range"); for(int j=(int)i;j<l->count-1;j++) l->items[j]=l->items[j+1]; l->count--; } else if(is_obj(obj,O_DICT)){ Dict *d=&obj.as.obj->as.dict; char *k=value_to_cstr(idx); int ix=dict_find(d,k); free(k); if(ix<0) raise_named("KeyError","key not found"); free(d->keys[ix]); for(int j=ix;j<d->count-1;j++){ d->keys[j]=d->keys[j+1]; d->vals[j]=d->vals[j+1]; } d->count--; } else raise_named("TypeError","object does not support item deletion"); break; }
+            case OP_DELETE_NAME:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; if(fn->store_globals||function_declares(fn->global_names,fn->global_count,name)){ if(!dict_del(fn->globals,name)) raise_named("NameError",name); } else if(!dict_del(fr->locals,name) && !dict_del(fn->globals,name)) raise_named("NameError",name); break; }
+            case OP_DEL_ATTR:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value obj=popv(); if(is_obj(obj,O_INSTANCE)){ Dict *d=obj.as.obj->as.inst.fields; int ix=dict_find(d,name); if(ix<0) raise_named("AttributeError","no such attribute"); free(d->keys[ix]); for(int j=ix;j<d->count-1;j++){ d->keys[j]=d->keys[j+1]; d->vals[j]=d->vals[j+1]; } d->count--; } else raise_named("AttributeError","cannot delete attribute"); break; } case OP_SET_INDEX:{ Value val=popv(),idx=popv(),obj=popv(); set_index(obj,idx,val); push(val); break; }
             case OP_GET_ATTR:{ Value namev=c->consts[c->code[fr->ip++]]; Value obj=popv(); push(get_attr(obj,namev.as.obj->as.str.s)); break; } case OP_SET_ATTR:{ Value namev=c->consts[c->code[fr->ip++]]; Value val=popv(),obj=popv(); set_attr(obj,namev.as.obj->as.str.s,val); push(val); break; }
             case OP_DEF:{ Value fv=c->consts[c->code[fr->ip++]]; Function *tmpl=&fv.as.obj->as.fn; Function *nf=clone_function(tmpl,fr->locals); if(tmpl->default_count>0){ nf->defaults=(Value*)xmalloc(sizeof(Value)*(size_t)tmpl->default_count); for(int i=tmpl->default_count-1;i>=0;i--) nf->defaults[i]=popv(); } push(objv(nf->owner)); break; }
             case OP_CLASS:{ Value bodyv=c->consts[c->code[fr->ip++]]; Value namev=c->consts[c->code[fr->ip++]]; Function *body=&bodyv.as.obj->as.fn; Dict *oldg=body->globals; Dict *classdict=dict_new(); body->globals=classdict; run_function(body,0,NULL); body->globals=oldg; Obj *co=new_obj(O_CLASS); co->as.klass.name=xstrdup2(namev.as.obj->as.str.s); co->as.klass.methods=classdict; push(objv(co)); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
@@ -113,12 +119,24 @@ int generator_next(Obj *g, Value *out){
     *out=r;
     return 1;
 }
+/* Names of the built-in exception classes (no user hierarchy). */
+int is_builtin_exc_name(const char *n){
+    static const char *names[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError",NULL};
+    for(int i=0;names[i];i++) if(strcmp(n,names[i])==0) return 1; return 0;
+}
+/* Does exception `exc` match the except-clause type `type` (a class or tuple)?
+   No inheritance: Exception/BaseException catch all; others match by name. */
+static int exc_matches(Value exc, Value type){
+    if(is_obj(type,O_TUPLE)){ List *l=&type.as.obj->as.tuple; for(int i=0;i<l->count;i++) if(exc_matches(exc,l->items[i])) return 1; return 0; }
+    if(is_obj(type,O_CLASS)){ const char *tn=type.as.obj->as.klass.name; if(!strcmp(tn,"BaseException")||!strcmp(tn,"Exception")) return 1; if(is_obj(exc,O_EXCEPTION)) return strcmp(exc.as.obj->as.exc.type_name,tn)==0; return 0; }
+    return 0;
+}
 Value call_value(Value callee,int argc,Value *args){
     if(callee.type==V_NATIVE) return callee.as.native->fn(argc,args);
     if(is_obj(callee,O_FUNCTION)){ Function *fn=&callee.as.obj->as.fn; if(fn->is_generator) return objv(new_generator(fn,argc,args)); return run_function(fn,argc,args); }
     if(is_obj(callee,O_BOUND_METHOD)){ BoundMethod *bm=&callee.as.obj->as.bm; Value *argv=(Value*)xmalloc(sizeof(Value)*(size_t)(argc+1)); argv[0]=bm->receiver; for(int i=0;i<argc;i++) argv[i+1]=args[i]; Value r; if(bm->fn->is_generator) r=objv(new_generator(bm->fn,argc+1,argv)); else r=run_function(bm->fn,argc+1,argv); free(argv); return r; }
-    if(is_obj(callee,O_BOUND_NATIVE)){ BoundNative *bn=&callee.as.obj->as.bn; if(strcmp(bn->name,"append")==0){ if(argc!=1) runtime_error("append() expects 1 arg"); list_push(&bn->receiver.as.obj->as.list,args[0]); return nonev(); } if(strcmp(bn->name,"add")==0){ if(argc!=1) runtime_error("add() expects 1 arg"); set_add(&bn->receiver.as.obj->as.set,args[0]); return nonev(); } }
-    if(is_obj(callee,O_CLASS)){ Class *kl=&callee.as.obj->as.klass; if(strcmp(kl->name,"BaseException")==0||strcmp(kl->name,"RuntimeError")==0||strcmp(kl->name,"StopIteration")==0){ if(argc>1) runtime_error("exception constructor expects 0 or 1 argument"); char *m=argc==1?value_to_cstr(args[0]):xstrdup2(""); Value ex=exceptionv(kl->name,m,argc==1?args[0]:nonev()); free(m); return ex; } Obj *in=new_obj(O_INSTANCE); in->as.inst.klass=kl; in->as.inst.fields=dict_new(); Value self=objv(in); Value init; if(dict_get(kl->methods,"__init__",&init)){ Value *argv=(Value*)xmalloc(sizeof(Value)*(size_t)(argc+1)); argv[0]=self; for(int i=0;i<argc;i++) argv[i+1]=args[i]; run_function(&init.as.obj->as.fn,argc+1,argv); free(argv); } else if(argc!=0) runtime_error("class constructor takes no args"); return self; }
+    if(is_obj(callee,O_BOUND_NATIVE)){ BoundNative *bn=&callee.as.obj->as.bn; return call_builtin_method(bn->receiver,bn->name,argc,args); }
+    if(is_obj(callee,O_CLASS)){ Class *kl=&callee.as.obj->as.klass; if(is_builtin_exc_name(kl->name)){ if(argc>1) runtime_error("exception constructor expects 0 or 1 argument"); char *m=argc==1?value_to_cstr(args[0]):xstrdup2(""); Value ex=exceptionv(kl->name,m,argc==1?args[0]:nonev()); free(m); return ex; } Obj *in=new_obj(O_INSTANCE); in->as.inst.klass=kl; in->as.inst.fields=dict_new(); Value self=objv(in); Value init; if(dict_get(kl->methods,"__init__",&init)){ Value *argv=(Value*)xmalloc(sizeof(Value)*(size_t)(argc+1)); argv[0]=self; for(int i=0;i<argc;i++) argv[i+1]=args[i]; run_function(&init.as.obj->as.fn,argc+1,argv); free(argv); } else if(argc!=0) runtime_error("class constructor takes no args"); return self; }
     runtime_error("object is not callable"); return nonev();
 }
 /* Call with an explicit positional list and keyword dict (OP_CALL_EX). */
@@ -128,7 +146,7 @@ static Value call_value_ex(Value callee, List *pos, Dict *kw){
     if(is_obj(callee,O_BOUND_METHOD)){ BoundMethod *bm=&callee.as.obj->as.bm; int n=pos->count; Value *argv=(Value*)xmalloc(sizeof(Value)*(size_t)(n+1)); argv[0]=bm->receiver; for(int i=0;i<n;i++) argv[i+1]=pos->items[i]; Function *fn=bm->fn; Value r; if(fn->is_generator) r=objv(new_generator_bind(fn,argv,n+1,kw)); else { Dict *locals=dict_clone(fn->closure); bind_arguments(fn,argv,n+1,kw,locals); r=run_prepared(fn,locals,NULL); } free(argv); return r; }
     if(is_obj(callee,O_BOUND_NATIVE)){ if(kw->count) runtime_error("this function takes no keyword arguments"); return call_value(callee,pos->count,pos->items); }
     if(is_obj(callee,O_CLASS)){ Class *kl=&callee.as.obj->as.klass;
-        if(strcmp(kl->name,"BaseException")==0||strcmp(kl->name,"RuntimeError")==0||strcmp(kl->name,"StopIteration")==0){ if(kw->count) runtime_error("exception takes no keyword arguments"); return call_value(callee,pos->count,pos->items); }
+        if(is_builtin_exc_name(kl->name)){ if(kw->count) runtime_error("exception takes no keyword arguments"); return call_value(callee,pos->count,pos->items); }
         Obj *in=new_obj(O_INSTANCE); in->as.inst.klass=kl; in->as.inst.fields=dict_new(); Value self=objv(in); Value init;
         if(dict_get(kl->methods,"__init__",&init)){ int n=pos->count; Value *argv=(Value*)xmalloc(sizeof(Value)*(size_t)(n+1)); argv[0]=self; for(int i=0;i<n;i++) argv[i+1]=pos->items[i]; Function *fn=&init.as.obj->as.fn; Dict *locals=dict_clone(fn->closure); bind_arguments(fn,argv,n+1,kw,locals); run_prepared(fn,locals,NULL); free(argv); }
         else if(pos->count!=0 || kw->count!=0) runtime_error("class constructor takes no args");

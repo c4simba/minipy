@@ -1,0 +1,21 @@
+MiniPy - Mini Python Interpreter
+Script: tests/exc_types_test.mpy
+
+index error
+zero division
+bad value
+caught via Exception
+key error
+name error
+type error
+else after success
+handled
+a
+caught k
+finally B
+outer caught
+v
+bare except
+reraised to outer
+payload here
+12

@@ -33,6 +33,49 @@ static double my_strtod(const char *s, char **end){
     if(end)*end=(char*)s; return neg?-v:v;
 }
 
+/* Parse a decimal/float literal that may carry an exponent (1e3, 1.5e-2). */
+static double lex_atof(const char *s){
+    char *e; double m=my_strtod(s,&e);
+    if(*e=='e'||*e=='E'){ e++; int neg=0; if(*e=='+')e++; else if(*e=='-'){neg=1;e++;} int ex=0; while(*e>='0'&&*e<='9'){ex=ex*10+(*e-'0');e++;} double p=1; for(int i=0;i<ex;i++)p*=10.0; m=neg?m/p:m*p; }
+    return m;
+}
+static int lex_ishex(int c){ return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'); }
+static int lex_hv(int c){ if(c>='0'&&c<='9')return c-'0'; if(c>='a'&&c<='f')return c-'a'+10; return c-'A'+10; }
+static int lex_utf8(char *out,int cp){
+    if(cp<0x80){ out[0]=(char)cp; return 1; }
+    if(cp<0x800){ out[0]=(char)(0xC0|(cp>>6)); out[1]=(char)(0x80|(cp&0x3F)); return 2; }
+    out[0]=(char)(0xE0|(cp>>12)); out[1]=(char)(0x80|((cp>>6)&0x3F)); out[2]=(char)(0x80|(cp&0x3F)); return 3;
+}
+/* Lex a string literal starting at *pp (which points at the opening quote).
+   Handles single and triple quotes, escapes, and raw strings.
+   NOTE: triple-quoted strings must be closed on the same source line. */
+static void lex_string(TokVec *tv, const char **pp, int line, int raw){
+    const char *p=*pp;
+    char q=*p; int triple=(p[1]==q && p[2]==q);
+    p += triple?3:1;
+    char buf[8192]; int b=0;
+    while(*p){
+        if(triple){ if(p[0]==q && p[1]==q && p[2]==q){ p+=3; goto done; } }
+        else { if(*p==q){ p++; goto done; } }
+        if(*p=='\\' && p[1]){
+            if(raw){ buf[b++]='\\'; buf[b++]=p[1]; p+=2; }
+            else { p++; char e=*p;
+                if(e=='n'){buf[b++]='\n';p++;} else if(e=='t'){buf[b++]='\t';p++;} else if(e=='r'){buf[b++]='\r';p++;}
+                else if(e=='\\'){buf[b++]='\\';p++;} else if(e=='\''){buf[b++]='\'';p++;} else if(e=='"'){buf[b++]='"';p++;}
+                else if(e=='0'){buf[b++]='\0';p++;} else if(e=='a'){buf[b++]='\a';p++;} else if(e=='b'){buf[b++]='\b';p++;}
+                else if(e=='f'){buf[b++]='\f';p++;} else if(e=='v'){buf[b++]='\v';p++;}
+                else if(e=='x'){ p++; int h=0,cnt=0; while(cnt<2&&lex_ishex((unsigned char)*p)){h=h*16+lex_hv((unsigned char)*p);p++;cnt++;} buf[b++]=(char)h; }
+                else if(e=='u'){ p++; int h=0,cnt=0; while(cnt<4&&lex_ishex((unsigned char)*p)){h=h*16+lex_hv((unsigned char)*p);p++;cnt++;} b+=lex_utf8(buf+b,h); }
+                else { buf[b++]='\\'; buf[b++]=e; p++; }
+            }
+        } else buf[b++]=*p++;
+        if(b>=8190) die("string too long");
+    }
+    fprintf(stderr,"unterminated string at line %d\n",line); exit(1);
+done:
+    addtok(tv,T_STRING,buf,b,0,0,0,line);
+    *pp=p;
+}
 static TokKind kw(const char *s,int n){
     if(n==2&&!my_strncmp(s,"if",2))return T_IF;
     if(n==4&&!my_strncmp(s,"elif",4))return T_ELIF;
@@ -71,6 +114,7 @@ static TokKind kw(const char *s,int n){
     if(n==5&&!my_strncmp(s,"await",5))return T_AWAIT;
     if(n==5&&!my_strncmp(s,"match",5))return T_MATCH;
     if(n==4&&!my_strncmp(s,"case",4))return T_CASE;
+    if(n==6&&!my_strncmp(s,"assert",6))return T_ASSERT;
     return T_NAME;
 }
 
@@ -114,7 +158,8 @@ static void lex_fstring(TokVec *tv,const char **pp,int line){
                 addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
                 addtok(tv,T_RP,")",1,0,0,0,line);
             } else {
-                addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
+                /* wrap in str(...) so concatenation stays string-typed */
+                addtok(tv,T_NAME,"str",3,0,0,0,line); addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
             }
             emitted=1;
             continue;
@@ -135,15 +180,25 @@ static void lex_line(TokVec *tv,const char *p,int line){
         if(*p==' '||*p=='\r'||*p=='\t'){p++;continue;}
         if(*p=='#')break; /* comment */
         if((*p=='f'||*p=='F') && (p[1]=='"'||p[1]=='\'')){ lex_fstring(tv,&p,line); continue; }
+        if((*p=='r'||*p=='R') && (p[1]=='"'||p[1]=='\'')){ p++; lex_string(tv,&p,line,1); continue; }
         if(my_isdigit((unsigned char)*p)){
-            const char *s=p; int isf=0; while(my_isdigit((unsigned char)*p))p++; if(*p=='.'){ isf=1; p++; while(my_isdigit((unsigned char)*p))p++; }
-            char *tmp=xstrndup2(s,(int)(p-s)); if(isf){ double f=my_strtod(tmp,NULL); addtok(tv,T_NUMBER,tmp,(int)my_strlen(tmp),0,f,1,line); } else { int64_t i=my_strtoll(tmp,NULL,10); addtok(tv,T_NUMBER,tmp,(int)my_strlen(tmp),i,0,0,line); } free(tmp); continue;
+            const char *s=p;
+            if(*p=='0' && (p[1]=='x'||p[1]=='X'||p[1]=='o'||p[1]=='O'||p[1]=='b'||p[1]=='B')){
+                int base=(p[1]=='x'||p[1]=='X')?16:(p[1]=='o'||p[1]=='O')?8:2; p+=2;
+                int64_t v=0; while(1){ char c=*p; if(c=='_'){p++;continue;} int d; if(c>='0'&&c<='9')d=c-'0'; else if(c>='a'&&c<='f')d=c-'a'+10; else if(c>='A'&&c<='F')d=c-'A'+10; else break; if(d>=base) break; v=v*base+d; p++; }
+                addtok(tv,T_NUMBER,s,(int)(p-s),v,0,0,line); continue;
+            }
+            int isf=0; while(my_isdigit((unsigned char)*p)||*p=='_')p++;
+            if(*p=='.'){ isf=1; p++; while(my_isdigit((unsigned char)*p)||*p=='_')p++; }
+            if(*p=='e'||*p=='E'){ isf=1; p++; if(*p=='+'||*p=='-')p++; while(my_isdigit((unsigned char)*p)||*p=='_')p++; }
+            char tmp[128]; int ti=0; for(const char *s2=s;s2<p&&ti<127;s2++) if(*s2!='_') tmp[ti++]=*s2; tmp[ti]=0;
+            if(isf){ double f=lex_atof(tmp); addtok(tv,T_NUMBER,tmp,ti,0,f,1,line); }
+            else { int64_t i=my_strtoll(tmp,NULL,10); addtok(tv,T_NUMBER,tmp,ti,i,0,0,line); }
+            continue;
         }
         if(my_isalpha((unsigned char)*p)||*p=='_'){ const char *s=p; while(my_isalnum((unsigned char)*p)||*p=='_')p++; int n=(int)(p-s); addtok(tv,kw(s,n),s,n,0,0,0,line); continue; }
         if(*p=='"'||*p=='\''){
-            char q=*p++; char buf[8192]; int b=0;
-            while(*p&&*p!=q){ if(*p=='\\'&&p[1]){ p++; if(*p=='n')buf[b++]='\n'; else if(*p=='t')buf[b++]='\t'; else buf[b++]=*p; p++; } else buf[b++]=*p++; if(b>=8191) die("string too long"); }
-            if(*p!=q){ fprintf(stderr,"unterminated string at line %d\n",line); exit(1);} p++; addtok(tv,T_STRING,buf,b,0,0,0,line); continue;
+            lex_string(tv,&p,line,0); continue;
         }
         switch(*p){
             case '(':addtok(tv,T_LP,p,1,0,0,0,line);p++;break; case ')':addtok(tv,T_RP,p,1,0,0,0,line);p++;break;

@@ -38,6 +38,9 @@ void raise_exception(Value ex){
 void runtime_error(const char *msg){
     raise_exception(exceptionv("RuntimeError",msg?msg:"runtime error",nonev()));
 }
+void raise_named(const char *type,const char *msg){
+    raise_exception(exceptionv(type,msg?msg:"",nonev()));
+}
 int dispatch_pending_exception(void){
     for(int i=vm.fcount-1;i>=0;i--){
         Frame *f=&vm.frames[i];

@@ -1,0 +1,61 @@
+# Group 9: assert, slice with step, del index/attr, multiple with-items
+# --- assert ---
+assert 1 + 1 == 2
+assert [1, 2]
+print("asserts passed")
+try:
+    assert 3 > 5
+except AssertionError:
+    print("assert caught")
+try:
+    assert False, "boom"
+except AssertionError as e:
+    print(e)
+
+# --- slice with step ---
+xs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+print(xs[::2])
+print(xs[1::2])
+print(xs[1:8:2])
+print(xs[::-1])
+print(xs[8:2:-2])
+print(xs[-3:])
+print(xs[:3])
+print("abcdefgh"[::2])
+print("racecar"[::-1])
+print((10, 20, 30, 40)[::-1])
+
+# --- del on index / attribute / name ---
+lst = [10, 20, 30, 40]
+del lst[1]
+print(lst)
+del lst[-1]
+print(lst)
+d = {"a": 1, "b": 2, "c": 3}
+del d["b"]
+print(sorted(d.keys()))
+grid = [[1, 2, 3], [4, 5, 6]]
+del grid[0][1]
+print(grid)
+n = 99
+del n
+try:
+    print(n)
+except NameError:
+    print("n is gone")
+
+class Box:
+    def __init__(self):
+        self.a = 1
+        self.b = 2
+box = Box()
+del box.a
+print(box.b)
+try:
+    print(box.a)
+except Exception:
+    print("a deleted")
+
+# --- multiple with-items (this runtime binds the expression directly) ---
+with 100 as a, 200 as b, 300 as c:
+    print(a + b + c)

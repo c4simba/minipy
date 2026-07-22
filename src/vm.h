@@ -21,6 +21,8 @@ Value popv(void);
 Value normalize_exception(Value v);
 void  raise_exception(Value ex);
 void  runtime_error(const char *msg);
+void  raise_named(const char *type, const char *msg);
+int   is_builtin_exc_name(const char *n);
 int   dispatch_pending_exception(void);
 void  print_traceback(Value ex);
 
@@ -38,7 +40,10 @@ Value get_index(Value obj, Value idx);
 void  set_index(Value obj, Value idx, Value val);
 int   same_identity(Value a, Value b);
 Value contains_value(Value needle, Value hay);
-Value get_slice(Value obj, Value startv, Value endv);
+Value get_slice(Value obj, Value startv, Value endv, Value stepv);
+
+/* Type methods (vm_methods.c): str/list/dict/set instance methods. */
+Value call_builtin_method(Value recv, const char *name, int argc, Value *argv);
 
 /* Builtins (vm_builtins.c) */
 int   iterator_next_value(Value top, Value *out);
