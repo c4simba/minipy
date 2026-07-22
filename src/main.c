@@ -52,7 +52,7 @@ int main(int argc,char **argv){
     dict_set(vm.builtins,"type",nativev(&N_TYPE)); dict_set(vm.builtins,"isinstance",nativev(&N_ISINSTANCE)); dict_set(vm.builtins,"ord",nativev(&N_ORD)); dict_set(vm.builtins,"chr",nativev(&N_CHR)); dict_set(vm.builtins,"round",nativev(&N_ROUND)); dict_set(vm.builtins,"any",nativev(&N_ANY)); dict_set(vm.builtins,"all",nativev(&N_ALL));
     dict_set(vm.builtins,"super",nativev(&N_SUPER)); dict_set(vm.builtins,"staticmethod",nativev(&N_STATICMETHOD)); dict_set(vm.builtins,"classmethod",nativev(&N_CLASSMETHOD)); dict_set(vm.builtins,"property",nativev(&N_PROPERTY));
     {
-        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError",NULL};
+        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError",NULL};
         for(int i=0;excs[i];i++){ Obj *ec=new_obj(O_CLASS); ec->as.klass.name=xstrdup2(excs[i]); ec->as.klass.methods=dict_new(); dict_set(vm.builtins,excs[i],objv(ec)); }
     }
     char *src=mpy_fs_read_file(script_path);

@@ -13,6 +13,71 @@ Value popv(void){ if(vm.sp<=0) die("stack underflow"); return vm.stack[--vm.sp];
 
 static Value call_value_ex(Value callee, List *pos, Dict *kw);
 static int exc_matches(Value exc, Value type);
+static Value vm_import_dotted(const char *dotted, const char *importer_dir);
+
+/* Load one fully-named module from disk: `<name>.mpy`, else `<name>/__init__.mpy`.
+   Caches it in vm.modules BEFORE running its body (so circular imports see a
+   partial module, as in CPython). A non-leaf component with no file becomes an
+   empty namespace package; a missing leaf raises ModuleNotFoundError. */
+static Value load_module_file(const char *fullname, const char *importer_dir, int is_leaf){
+    char *path=mpy_fs_module_path(importer_dir,fullname);
+    char *err=NULL;
+    char *src=mpy_fs_try_read_file(path,&err);
+    if(!src){
+        free(err); err=NULL;
+        size_t L=strlen(fullname);
+        char *pkgname=(char*)xmalloc(L+10);
+        memcpy(pkgname,fullname,L); memcpy(pkgname+L,".__init__",10);   /* -> <name>/__init__.mpy */
+        char *ipath=mpy_fs_module_path(importer_dir,pkgname);
+        free(pkgname);
+        src=mpy_fs_try_read_file(ipath,&err);
+        free(path); path=ipath;
+    }
+    if(!src){
+        free(path); free(err);
+        if(!is_leaf){
+            Dict *g=dict_new(); dict_set(g,"__name__",stringv(fullname));
+            Value mod=objv(new_module(fullname,g));
+            dict_set(vm.modules,fullname,mod);
+            return mod;
+        }
+        char msg[256]; snprintf(msg,sizeof(msg),"No module named '%s'",fullname);
+        raise_named("ModuleNotFoundError",msg);
+        return nonev();   /* unreached */
+    }
+    char *dir=mpy_fs_dirname(path);
+    Dict *g=dict_new();
+    Function *mf=compile_source(src,fullname,dir,g);   /* also sets g["__name__"]=fullname */
+    Value mod=objv(new_module(fullname,g));
+    dict_set(vm.modules,fullname,mod);
+    run_function(mf,0,NULL);
+    free(src); free(dir); free(path);
+    return mod;
+}
+/* Import a (possibly dotted) module name: ensure every prefix a, a.b, a.b.c is
+   loaded and cached, link each parent's attribute to its child, and return the
+   TOP package (matching CPython's `import a.b.c` binding `a`). */
+static Value vm_import_dotted(const char *dotted, const char *importer_dir){
+    char prefix[256]; int plen=0;
+    Value top=nonev(), parent=nonev();
+    const char *p=dotted; int first=1;
+    for(;;){
+        const char *dot=strchr(p,'.');
+        int clen=dot?(int)(dot-p):(int)strlen(p);
+        char comp[128]; if(clen>127) clen=127; memcpy(comp,p,clen); comp[clen]=0;
+        if(plen && plen<255) prefix[plen++]='.';
+        if(plen+clen<256){ memcpy(prefix+plen,comp,clen); plen+=clen; }
+        prefix[plen]=0;
+        int is_leaf=(dot==NULL);
+        Value mod;
+        if(!dict_get(vm.modules,prefix,&mod)) mod=load_module_file(prefix,importer_dir,is_leaf);
+        if(first){ top=mod; first=0; } else set_attr(parent,comp,mod);
+        parent=mod;
+        if(is_leaf) break;
+        p=dot+1;
+    }
+    return top;
+}
 
 /* Bind call arguments into `locals`, honoring positional params, keyword args,
    defaults, *args (collect extra positionals into a tuple) and **kwargs
@@ -98,7 +163,8 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_GET_ATTR:{ Value namev=c->consts[c->code[fr->ip++]]; Value obj=popv(); push(get_attr(obj,namev.as.obj->as.str.s)); break; } case OP_SET_ATTR:{ Value namev=c->consts[c->code[fr->ip++]]; Value val=popv(),obj=popv(); set_attr(obj,namev.as.obj->as.str.s,val); push(val); break; }
             case OP_DEF:{ Value fv=c->consts[c->code[fr->ip++]]; Function *tmpl=&fv.as.obj->as.fn; Function *nf=clone_function(tmpl,fr->locals); if(tmpl->default_count>0){ nf->defaults=(Value*)xmalloc(sizeof(Value)*(size_t)tmpl->default_count); for(int i=tmpl->default_count-1;i>=0;i--) nf->defaults[i]=popv(); } push(objv(nf->owner)); break; }
             case OP_CLASS:{ Value bodyv=c->consts[c->code[fr->ip++]]; Value namev=c->consts[c->code[fr->ip++]]; Value basev=popv(); Function *body=&bodyv.as.obj->as.fn; Dict *oldg=body->globals; Dict *classdict=dict_new(); body->globals=classdict; run_function(body,0,NULL); body->globals=oldg; Obj *co=new_obj(O_CLASS); co->as.klass.name=xstrdup2(namev.as.obj->as.str.s); co->as.klass.methods=classdict; co->as.klass.base=is_obj(basev,O_CLASS)?&basev.as.obj->as.klass:NULL; for(int i=0;i<classdict->count;i++){ if(is_obj(classdict->vals[i],O_FUNCTION)) classdict->vals[i].as.obj->as.fn.defining_class=&co->as.klass; else if(is_obj(classdict->vals[i],O_METHWRAP) && is_obj(classdict->vals[i].as.obj->as.mw.fn,O_FUNCTION)) classdict->vals[i].as.obj->as.mw.fn.as.obj->as.fn.defining_class=&co->as.klass; } push(objv(co)); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
-            case OP_IMPORT:{ Value namev=c->consts[c->code[fr->ip++]]; char *mn=namev.as.obj->as.str.s; Value modv; if(dict_get(vm.modules,mn,&modv)){ push(modv); break; } char *path=mpy_fs_module_path(fn->module_dir,mn); char *err=NULL; char *src=mpy_fs_try_read_file(path,&err); if(!src){ Value ex=exceptionv("RuntimeError",err?err:"cannot import module",nonev()); free(err); free(path); raise_exception(ex); break; } char *dir=mpy_fs_dirname(path); Dict *g=dict_new(); Function *mf=compile_source(src,mn,dir,g); modv=objv(new_module(mn,g)); dict_set(vm.modules,mn,modv); run_function(mf,0,NULL); push(modv); free(src); free(dir); free(path); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
+            case OP_IMPORT:{ Value namev=c->consts[c->code[fr->ip++]]; char *mn=namev.as.obj->as.str.s; Value top=vm_import_dotted(mn,fn->module_dir); push(top); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
+            case OP_IMPORT_STAR:{ Value modv=popv(); if(!is_obj(modv,O_MODULE)) runtime_error("import * requires a module"); Dict *md=modv.as.obj->as.mod.dict; for(int i=0;i<md->count;i++){ const char *k=md->keys[i]; if(k[0]=='_') continue; dict_set(fn->globals,k,md->vals[i]); } break; }
         }
     }
 }
@@ -124,14 +190,27 @@ int generator_next(Obj *g, Value *out){
 }
 /* Names of the built-in exception classes (no user hierarchy). */
 int is_builtin_exc_name(const char *n){
-    static const char *names[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError",NULL};
+    static const char *names[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError",NULL};
     for(int i=0;names[i];i++) if(strcmp(n,names[i])==0) return 1; return 0;
 }
+/* Immediate base of a builtin exception type (NULL for BaseException). The
+   hierarchy is flat (everything -> Exception -> BaseException) apart from
+   ModuleNotFoundError -> ImportError, so `except ImportError` catches it. */
+static const char *exc_base(const char *n){
+    if(!strcmp(n,"BaseException")) return NULL;
+    if(!strcmp(n,"Exception")) return "BaseException";
+    if(!strcmp(n,"ModuleNotFoundError")) return "ImportError";
+    return "Exception";
+}
 /* Does exception `exc` match the except-clause type `type` (a class or tuple)?
-   No inheritance: Exception/BaseException catch all; others match by name. */
+   Matching walks the exception type up its base chain (subclass-aware). */
 static int exc_matches(Value exc, Value type){
     if(is_obj(type,O_TUPLE)){ List *l=&type.as.obj->as.tuple; for(int i=0;i<l->count;i++) if(exc_matches(exc,l->items[i])) return 1; return 0; }
-    if(is_obj(type,O_CLASS)){ const char *tn=type.as.obj->as.klass.name; if(!strcmp(tn,"BaseException")||!strcmp(tn,"Exception")) return 1; if(is_obj(exc,O_EXCEPTION)) return strcmp(exc.as.obj->as.exc.type_name,tn)==0; return 0; }
+    if(is_obj(type,O_CLASS)){ const char *tn=type.as.obj->as.klass.name;
+        if(!strcmp(tn,"BaseException")||!strcmp(tn,"Exception")) return 1;
+        if(is_obj(exc,O_EXCEPTION)){ for(const char *t=exc.as.obj->as.exc.type_name; t; t=exc_base(t)) if(!strcmp(t,tn)) return 1; }
+        return 0;
+    }
     return 0;
 }
 Value call_value(Value callee,int argc,Value *args){

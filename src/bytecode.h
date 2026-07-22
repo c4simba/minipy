@@ -17,7 +17,7 @@ typedef enum {
     OP_LIST_APPEND, OP_LIST_EXTEND, OP_DICT_SETNAME, OP_DICT_MERGE, OP_CALL_EX, OP_EXC_MATCH, OP_RERAISE,
     OP_MAKE_LIST, OP_MAKE_TUPLE, OP_MAKE_SET, OP_MAKE_DICT, OP_GET_INDEX, OP_GET_SLICE, OP_SET_INDEX, OP_DEL_INDEX, OP_DEL_ATTR, OP_DELETE_NAME,
     OP_GET_ATTR, OP_SET_ATTR,
-    OP_DEF, OP_CLASS, OP_IMPORT
+    OP_DEF, OP_CLASS, OP_IMPORT, OP_IMPORT_STAR
 } Op;
 
 typedef struct Chunk { int *code; int *line; int count, cap; Value *consts; int ccount, ccap; int has_yield; } Chunk;

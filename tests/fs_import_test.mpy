@@ -3,5 +3,5 @@ import utils
 print(utils.answer)
 try:
     import missing_module
-except RuntimeError as e:
+except ModuleNotFoundError as e:
     print("missing caught")

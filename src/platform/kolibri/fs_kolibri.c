@@ -17,6 +17,12 @@
 
 #include "fs.h"
 
+/* f70 info block: 20-byte header + inline null-terminated path at +20.
+   The block must be large enough to hold the whole path; 59 chars is far too
+   small once imports build nested paths like /rd/1/app/pkg/sub/mod.mpy. */
+#define KOS_F70_BUF   300
+#define KOS_PATH_MAX  (KOS_F70_BUF - 20 - 1)
+
 const char *mpy_fs_backend_name(void){
     return "kolibrios-native";
 }
@@ -24,7 +30,7 @@ const char *mpy_fs_backend_name(void){
 /* Subfunction 0: Read file at position.
  *   Returns: eax = 0 on success (or 6=EOF), ebx = bytes read */
 static int kos_read_file(const char *path, void *buf, int size, int pos_lo, int pos_hi){
-    unsigned char bi[80] __attribute__((aligned(16))) = {0};
+    unsigned char bi[KOS_F70_BUF] __attribute__((aligned(16))) = {0};
     *(int*)(bi + 0) = 0;          /* subfunction: read */
     *(int*)(bi + 4) = pos_lo;     /* position low */
     *(int*)(bi + 8) = pos_hi;     /* position high */
@@ -32,7 +38,7 @@ static int kos_read_file(const char *path, void *buf, int size, int pos_lo, int 
     *(int*)(bi + 16) = (int)buf;  /* buffer */
     /* Copy path to bi+20 */
     size_t plen = strlen(path);
-    if(plen > 59) plen = 59;
+    if(plen > KOS_PATH_MAX) plen = KOS_PATH_MAX;
     memcpy(bi + 20, path, plen);
     bi[20 + plen] = 0;
 
@@ -48,13 +54,13 @@ static int kos_read_file(const char *path, void *buf, int size, int pos_lo, int 
 
 /* Subfunction 5: Get file info (BDVK, file_size at +32). */
 static int kos_file_size(const char *path, int *lo32, int *hi32){
-    unsigned char bi[80] __attribute__((aligned(16))) = {0};
+    unsigned char bi[KOS_F70_BUF] __attribute__((aligned(16))) = {0};
     unsigned char bdvk[40] __attribute__((aligned(16))) = {0};
     *(int*)(bi + 0) = 5;          /* subfunction: get info */
     *(int*)(bi + 16) = (int)bdvk; /* pointer to BDVK buffer */
     /* Copy path to bi+20 */
     size_t plen = strlen(path);
-    if(plen > 59) plen = 59;
+    if(plen > KOS_PATH_MAX) plen = KOS_PATH_MAX;
     memcpy(bi + 20, path, plen);
     bi[20 + plen] = 0;
 
@@ -64,7 +70,7 @@ static int kos_file_size(const char *path, int *lo32, int *hi32){
         : "a"(70), "b"((int)bi)
         : "memory");
 
-    /* Debug */
+#ifdef MPY_FS_DEBUG
     fprintf(stderr, "[minipy] f70 sub5 path=%s result=%d\n", path, result);
     fprintf(stderr, "[minipy] BDVK hex:");
     for(int i = 0; i < 40; i++){
@@ -75,6 +81,7 @@ static int kos_file_size(const char *path, int *lo32, int *hi32){
     fprintf(stderr, "[minipy] size qword@32: lo=%d hi=%d\n",
         *(int*)(bdvk+32), *(int*)(bdvk+36));
     fflush(stderr);
+#endif
 
     *lo32 = *(int*)(bdvk + 32);
     *hi32 = *(int*)(bdvk + 36);
@@ -98,8 +105,10 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
         /* Read entire file at once */
         char *buf = (char*)xmalloc((size_t)fsize + 1);
         int rd = kos_read_file(normalized_path, buf, fsize, 0, 0);
+#ifdef MPY_FS_DEBUG
         fprintf(stderr, "[minipy] read_file rd=%d exp=%d\n", rd, fsize);
         fflush(stderr);
+#endif
         if(rd > 0){
             buf[rd] = 0;
             return buf;

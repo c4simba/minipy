@@ -1,0 +1,18 @@
+MiniPy - Mini Python Interpreter
+Script: tests/singleline_test.mpy
+
+42
+after def
+7
+if-true
+else-branch
+medium
+0
+1
+2
+3
+class ok
+neg
+nonneg
+zero
+nonzero

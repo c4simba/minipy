@@ -22,7 +22,7 @@ static const char *op_name(int op){
         case OP_DUP: return "OP_DUP"; case OP_DUP2: return "OP_DUP2"; case OP_ROT2: return "OP_ROT2"; case OP_ROT3: return "OP_ROT3"; case OP_UNPACK: return "OP_UNPACK";
         case OP_LIST_APPEND: return "OP_LIST_APPEND"; case OP_LIST_EXTEND: return "OP_LIST_EXTEND"; case OP_DICT_SETNAME: return "OP_DICT_SETNAME"; case OP_DICT_MERGE: return "OP_DICT_MERGE"; case OP_CALL_EX: return "OP_CALL_EX"; case OP_EXC_MATCH: return "OP_EXC_MATCH"; case OP_RERAISE: return "OP_RERAISE";
         case OP_MAKE_LIST: return "OP_MAKE_LIST"; case OP_MAKE_TUPLE: return "OP_MAKE_TUPLE"; case OP_MAKE_SET: return "OP_MAKE_SET"; case OP_MAKE_DICT: return "OP_MAKE_DICT"; case OP_GET_INDEX: return "OP_GET_INDEX"; case OP_GET_SLICE: return "OP_GET_SLICE"; case OP_SET_INDEX: return "OP_SET_INDEX"; case OP_DEL_INDEX: return "OP_DEL_INDEX"; case OP_DEL_ATTR: return "OP_DEL_ATTR"; case OP_DELETE_NAME: return "OP_DELETE_NAME";
-        case OP_GET_ATTR: return "OP_GET_ATTR"; case OP_SET_ATTR: return "OP_SET_ATTR"; case OP_DEF: return "OP_DEF"; case OP_CLASS: return "OP_CLASS"; case OP_IMPORT: return "OP_IMPORT";
+        case OP_GET_ATTR: return "OP_GET_ATTR"; case OP_SET_ATTR: return "OP_SET_ATTR"; case OP_DEF: return "OP_DEF"; case OP_CLASS: return "OP_CLASS"; case OP_IMPORT: return "OP_IMPORT"; case OP_IMPORT_STAR: return "OP_IMPORT_STAR";
         default: return "OP_?";
     }
 }

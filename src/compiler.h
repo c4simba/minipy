@@ -6,9 +6,10 @@
 #include "containers.h"
 
 /* ========================= Parser / Compiler =========================
-   Two compile paths share the Parser state and cursor primitives:
+   Two files share the Parser state and cursor primitives:
    - compiler.c       : AST-driven statement compiler + top-level driver
-   - expr_compiler.c  : legacy recursive-descent expression/statement grammar
+   - expr_compiler.c  : tree-based expression compiler + a few token-range
+                        statement helpers that compiler.c delegates to
    The two meet through the cross declarations below. */
 
 typedef struct { int start; int is_for; int breaks[256]; int bcount; } LoopCtx;
@@ -30,12 +31,11 @@ void      compile_block_ast(Parser *p, Stmt **stmts, int count);
 void      compile_stmt_ast(Parser *p, Stmt *s);
 Function *compile_source(const char *src, const char *name, const char *dir, Dict *globals);
 
-/* Legacy recursive-descent grammar (expr_compiler.c). */
+/* Expression compiler + token-range statement helpers (expr_compiler.c). */
 void      expr(Parser *p);
 void      assign_stmt(Parser *p);
 void      from_import_stmt(Parser *p);
-void      legacy_statement(Parser *p);
+void      print_stmt(Parser *p);
 int       is_assignment(Parser *p);
-Function *compile_function_from_parser(Parser *p, const char *name, char **params, int arity, int until_dedent, int store_globals);
 
 #endif /* MPY_COMPILER_H */

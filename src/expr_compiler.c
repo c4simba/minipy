@@ -1,11 +1,12 @@
 /* ========================= Tree-based expression compiler =========================
    The expression grammar PARSES tokens into an `Expr` tree (parse_*), then a
    separate walker (emit_expr) generates bytecode from that tree. The public
-   `expr()` is a thin parse+emit wrapper, so the statement helpers below and
-   `compile_expr_ast` (which re-parses a token range) are unaffected.
+   `expr()` is a thin parse+emit wrapper, so `compile_expr_ast` (which re-parses
+   a token range) and the handful of statement helpers kept here are unaffected.
 
-   Statement-level control flow (if/while/for/def/...) is still compiled in a
-   single emit-while-parse pass; only the *expression* layer is tree-based. */
+   Statement compilation itself lives entirely in compiler.c (AST-driven). This
+   file only retains the pieces that compiler.c delegates back to over a token
+   range: expression parsing, assignment targets, from-import, and print(). */
 
 #include "compiler.h"
 #include "lexer.h"
@@ -349,9 +350,10 @@ static void emit_expr(Parser *p, Expr *e){
 /* Public entry: parse an expression to a tree, then emit it. */
 void expr(Parser *p){ Expr *t=parse_expr(p); emit_expr(p,t); }
 
-/* ========================= Statement grammar (emit-while-parse) ========================= */
+/* ========================= Statement helpers for the AST compiler =========================
+   compiler.c owns statement compilation; it re-enters this file only for the
+   token-range pieces below: assignment targets, from-import, and print(). */
 
-static void block(Parser *p){ need(p,T_NEWLINE,"newline"); need(p,T_INDENT,"indent"); skip_nl(p); while(peek(p)->kind!=T_DEDENT&&peek(p)->kind!=T_EOF) legacy_statement(p); need(p,T_DEDENT,"dedent"); }
 static void skip_balanced_until(Parser *p, TokKind a, TokKind b){ int d=0; while(peek(p)->kind!=T_EOF){ TokKind k=peek(p)->kind; if(d==0&&(k==a||k==b||k==T_NEWLINE)) return; if(k==T_LP||k==T_LB||k==T_LC) d++; if(k==T_RP||k==T_RB||k==T_RC) d--; p->pos++; } }
 /* Map an augmented-assignment token to its binary opcode. */
 static int aug_assign_op(TokKind k, Op *out){
@@ -435,28 +437,26 @@ void assign_stmt(Parser *p){
     }
     fprintf(stderr,"parse error at line %d: invalid assignment target\n",line); exit(1);
 }
-static void if_stmt(Parser *p){ int line=prev(p)->line; expr(p); need(p,T_COLON,":"); emit_arg(p->chunk,OP_JUMP_IF_FALSE,0,line); int jf=p->chunk->count-1; block(p); if(match(p,T_ELIF)){ emit_arg(p->chunk,OP_JUMP,0,line); int je=p->chunk->count-1; patch(p->chunk,jf,p->chunk->count); if_stmt(p); patch(p->chunk,je,p->chunk->count); } else if(match(p,T_ELSE)){ need(p,T_COLON,":"); emit_arg(p->chunk,OP_JUMP,0,line); int je=p->chunk->count-1; patch(p->chunk,jf,p->chunk->count); block(p); patch(p->chunk,je,p->chunk->count); } else patch(p->chunk,jf,p->chunk->count); }
-static void while_stmt(Parser *p){ int start=p->chunk->count; int line=prev(p)->line; expr(p); need(p,T_COLON,":"); emit_arg(p->chunk,OP_JUMP_IF_FALSE,0,line); int jf=p->chunk->count-1; LoopCtx *lc=&p->loops[p->loop_depth++]; lc->start=start; lc->is_for=0; lc->bcount=0; block(p); emit_arg(p->chunk,OP_JUMP,start,line); int else_start=p->chunk->count; patch(p->chunk,jf,else_start); int after_else; if(match(p,T_ELSE)){ need(p,T_COLON,":"); block(p); } after_else=p->chunk->count; for(int i=0;i<lc->bcount;i++) patch(p->chunk,lc->breaks[i],after_else); p->loop_depth--; }
-static void for_stmt(Parser *p){ int line=prev(p)->line; Tok *var=need(p,T_NAME,"loop variable"); need(p,T_IN,"in"); expr(p); need(p,T_COLON,":"); emit_op(p->chunk,OP_ITER,line); int start=p->chunk->count; emit_arg(p->chunk,OP_FOR_NEXT,0,line); int exit_jump=p->chunk->count-1; emit_arg(p->chunk,OP_STORE,name_const(p,var->text),line); LoopCtx *lc=&p->loops[p->loop_depth++]; lc->start=start; lc->is_for=1; lc->bcount=0; block(p); emit_arg(p->chunk,OP_JUMP,start,line); int else_start=p->chunk->count; patch(p->chunk,exit_jump,else_start); int after_else; if(match(p,T_ELSE)){ need(p,T_COLON,":"); block(p); } after_else=p->chunk->count; for(int i=0;i<lc->bcount;i++) patch(p->chunk,lc->breaks[i],after_else); p->loop_depth--; }
-static void def_stmt(Parser *p){ int line=prev(p)->line; Tok *n=need(p,T_NAME,"function name"); need(p,T_LP,"("); char **params=NULL; int ar=0,cap=0; if(!match(p,T_RP)){ do{ Tok *a=need(p,T_NAME,"param"); if(ar==cap){cap=cap?cap*2:4; params=(char**)xrealloc(params,sizeof(char*)*(size_t)cap);} params[ar++]=xstrdup2(a->text); if(match(p,T_COLON)) skip_balanced_until(p,T_ASSIGN,T_COMMA); if(match(p,T_ASSIGN)){ fprintf(stderr,"parse error at line %d: default arguments are parsed but not implemented yet\n",line); exit(1); } }while(match(p,T_COMMA)); need(p,T_RP,")"); } need(p,T_COLON,":"); need(p,T_NEWLINE,"newline"); need(p,T_INDENT,"indent"); Function *fn=compile_function_from_parser(p,n->text,params,ar,1,0); emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),line); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),line); }
-static void class_stmt(Parser *p){ int line=prev(p)->line; Tok *n=need(p,T_NAME,"class name"); if(match(p,T_LP)){ skip_balanced_until(p,T_RP,T_NEWLINE); need(p,T_RP,")"); } need(p,T_COLON,":"); need(p,T_NEWLINE,"newline"); need(p,T_INDENT,"indent"); Function *body=compile_function_from_parser(p,n->text,NULL,0,1,1); int ci=add_const(p->chunk,objv(body->owner)); int ni=name_const(p,n->text); emit_arg(p->chunk,OP_CLASS,ci,line); emit(p->chunk,ni,line); emit_arg(p->chunk,OP_STORE,ni,line); }
-static void import_stmt(Parser *p){ Tok *n=need(p,T_NAME,"module name"); int line=n->line; const char *alias=n->text; if(match(p,T_AS)){ Tok *a=need(p,T_NAME,"alias"); alias=a->text; } emit_arg(p->chunk,OP_IMPORT,name_const(p,n->text),line); emit_arg(p->chunk,OP_STORE,name_const(p,alias),line); need(p,T_NEWLINE,"newline"); }
-void from_import_stmt(Parser *p){ Tok *m=need(p,T_NAME,"module name"); int line=m->line; need(p,T_IMPORT,"import"); do{ Tok *n=need(p,T_NAME,"imported name"); const char *alias=n->text; if(match(p,T_AS)){ Tok *a=need(p,T_NAME,"alias"); alias=a->text; } emit_arg(p->chunk,OP_IMPORT,name_const(p,m->text),line); emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line); emit_arg(p->chunk,OP_STORE,name_const(p,alias),line); } while(match(p,T_COMMA)); need(p,T_NEWLINE,"newline"); }
-static void with_stmt(Parser *p){ int line=prev(p)->line; expr(p); if(match(p,T_AS)){ Tok *n=need(p,T_NAME,"with target"); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),line); } else emit_op(p->chunk,OP_POP,line); need(p,T_COLON,":"); block(p); }
-static void raise_stmt(Parser *p){ int line=prev(p)->line; if(peek(p)->kind!=T_NEWLINE){ expr(p); emit_op(p->chunk,OP_RAISE,line); } else emit_op(p->chunk,OP_RERAISE,line); need(p,T_NEWLINE,"newline"); }
-static void global_nonlocal_stmt(Parser *p){ do{ need(p,T_NAME,"name"); }while(match(p,T_COMMA)); need(p,T_NEWLINE,"newline"); }
-static void del_stmt(Parser *p){ Tok *n=need(p,T_NAME,"name"); emit_op(p->chunk,OP_NONE,n->line); emit_arg(p->chunk,OP_STORE,name_const(p,n->text),n->line); need(p,T_NEWLINE,"newline"); }
-static void unsupported_stmt(Parser *p,const char *what){ fprintf(stderr,"parse error at line %d: %s syntax is recognized but not implemented in this mini runtime\n",prev(p)->line,what); exit(1); }
-static void print_stmt(Parser *p){ int line=prev(p)->line; need(p,T_LP,"("); expr(p); need(p,T_RP,")"); emit_op(p->chunk,OP_PRINT,line); need(p,T_NEWLINE,"newline"); }
-void legacy_statement(Parser *p){
-    skip_nl(p); if(peek(p)->kind==T_DEDENT||peek(p)->kind==T_EOF) return;
-    if(match(p,T_IF)) if_stmt(p); else if(match(p,T_WHILE)) while_stmt(p); else if(match(p,T_FOR)) for_stmt(p); else if(match(p,T_DEF)) def_stmt(p); else if(match(p,T_CLASS)) class_stmt(p); else if(match(p,T_IMPORT)) import_stmt(p); else if(match(p,T_FROM)) from_import_stmt(p); else if(match(p,T_WITH)) with_stmt(p); else if(match(p,T_RAISE)) raise_stmt(p); else if(match(p,T_GLOBAL)||match(p,T_NONLOCAL)) global_nonlocal_stmt(p); else if(match(p,T_DEL)) del_stmt(p); else if(match(p,T_TRY)) unsupported_stmt(p,"try/except/finally"); else if(match(p,T_MATCH)) unsupported_stmt(p,"match/case"); else if(match(p,T_ASYNC)) unsupported_stmt(p,"async/await"); else if(match(p,T_YIELD)){ int line=prev(p)->line; if(peek(p)->kind!=T_NEWLINE) expr(p); else emit_op(p->chunk,OP_NONE,line); emit_op(p->chunk,OP_YIELD,line); need(p,T_NEWLINE,"newline"); } else if(match(p,T_LAMBDA)) unsupported_stmt(p,"lambda statement") ;
-    else if(match(p,T_PRINT)) print_stmt(p); else if(match(p,T_PASS)){ need(p,T_NEWLINE,"newline"); }
-    else if(match(p,T_BREAK)){ int line=prev(p)->line; if(p->loop_depth<=0){ fprintf(stderr,"parse error at line %d: break outside loop\n",line); exit(1); } LoopCtx *lc=&p->loops[p->loop_depth-1]; if(lc->is_for) emit_op(p->chunk,OP_POP,line); emit_arg(p->chunk,OP_JUMP,0,line); lc->breaks[lc->bcount++]=p->chunk->count-1; need(p,T_NEWLINE,"newline"); }
-    else if(match(p,T_CONTINUE)){ int line=prev(p)->line; if(p->loop_depth<=0){ fprintf(stderr,"parse error at line %d: continue outside loop\n",line); exit(1); } LoopCtx *lc=&p->loops[p->loop_depth-1]; emit_arg(p->chunk,OP_JUMP,lc->start,line); need(p,T_NEWLINE,"newline"); }
-    else if(match(p,T_RETURN)){ int line=prev(p)->line; if(peek(p)->kind!=T_NEWLINE) expr(p); else emit_op(p->chunk,OP_NONE,line); emit_op(p->chunk,OP_RETURN,line); need(p,T_NEWLINE,"newline"); }
-    else if(is_assignment(p)) assign_stmt(p); else { int line=peek(p)->line; expr(p); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); }
+/* from a.b import c [as d], ...   |   from m import *
+   OP_IMPORT pushes the top package; we descend .b to reach the actual module,
+   then bind each name off it (or splash all public names for `*`). */
+void from_import_stmt(Parser *p){
+    char buf[256]; int bl=0;
+    Tok *m=need(p,T_NAME,"module name"); int line=m->line; bl+=snprintf(buf+bl,sizeof(buf)-(size_t)bl,"%s",m->text);
+    while(match(p,T_DOT)){ Tok *n=need(p,T_NAME,"module name"); if(bl<250) bl+=snprintf(buf+bl,sizeof(buf)-(size_t)bl,".%s",n->text); }
+    need(p,T_IMPORT,"import");
+    emit_arg(p->chunk,OP_IMPORT,name_const(p,buf),line);
+    for(const char *dot=strchr(buf,'.'); dot; ){ const char *comp=dot+1; const char *nd=strchr(comp,'.'); int clen=nd?(int)(nd-comp):(int)strlen(comp); char b[128]; if(clen>127) clen=127; memcpy(b,comp,clen); b[clen]=0; emit_arg(p->chunk,OP_GET_ATTR,name_const(p,b),line); dot=nd; }
+    if(match(p,T_STAR)){ emit_op(p->chunk,OP_IMPORT_STAR,line); need(p,T_NEWLINE,"newline"); return; }
+    do{
+        Tok *n=need(p,T_NAME,"imported name"); const char *alias=n->text;
+        if(match(p,T_AS)){ Tok *a=need(p,T_NAME,"alias"); alias=a->text; }
+        emit_op(p->chunk,OP_DUP,line);
+        emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line);
+        emit_arg(p->chunk,OP_STORE,name_const(p,alias),line);
+    } while(match(p,T_COMMA));
+    emit_op(p->chunk,OP_POP,line);                        /* drop the module left on the stack */
+    need(p,T_NEWLINE,"newline");
 }
-Function *compile_function_from_parser(Parser *p,const char *name,char **params,int arity,int until_dedent,int store_globals){
-    Chunk *outer=p->chunk; Function *fn=alloc_function(name,params,arity,p->globals,p->module_dir,store_globals); p->chunk=fn->chunk; skip_nl(p); while(peek(p)->kind!=T_EOF && !(until_dedent && peek(p)->kind==T_DEDENT)) legacy_statement(p); if(until_dedent) need(p,T_DEDENT,"dedent"); emit_op(p->chunk,OP_NONE,peek(p)->line); emit_op(p->chunk,OP_RETURN,peek(p)->line); if(p->chunk->has_yield) fn->is_generator=1; p->chunk=outer; return fn;
-}
+/* print(EXPR): keyword-statement form. Enter with the cursor at `print`. */
+void print_stmt(Parser *p){ need(p,T_PRINT,"print"); int line=prev(p)->line; need(p,T_LP,"("); expr(p); need(p,T_RP,")"); emit_op(p->chunk,OP_PRINT,line); need(p,T_NEWLINE,"newline"); }

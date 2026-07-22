@@ -25,7 +25,7 @@ cd "$ROOT" || exit 1
 # directory (both are import targets, not tests on their own).
 TESTS="advanced_runtime_test cpythonish_test draw error_test exceptions_test \
 expression_ast_test for_bool_test fs_import_test raise_test statement_ast_test \
-syntax_test test operators_test expressions_test assignment_test functions_test builtins_test literals_test methods_test exc_types_test stmts_test oop_test"
+syntax_test test operators_test expressions_test assignment_test functions_test builtins_test literals_test methods_test exc_types_test stmts_test oop_test singleline_test imports_test"
 
 UPDATE=0
 [ "${1:-}" = "--update" ] && UPDATE=1

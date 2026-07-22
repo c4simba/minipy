@@ -48,14 +48,20 @@ static Function *compile_function_from_ast(Parser *p,const char *name,char **par
     return fn;
 }
 static void compile_assign_ast(Parser *p,Stmt *s){ int old=p->pos; p->pos=s->start; assign_stmt(p); p->pos=old; }
+/* `import a.b.c`     -> OP_IMPORT (pushes top package `a`); STORE a
+   `import a.b.c as x` -> OP_IMPORT; walk .b.c to the leaf; STORE x
+   s->name is the bound name; s->block_tag!=0 marks an explicit `as` alias. */
 static void compile_import_ast(Parser *p,Stmt *s){
     int line=s->line;
     const char *module=s->name2?s->name2:s->name;
-    const char *alias=s->name?s->name:module;
     emit_arg(p->chunk,OP_IMPORT,name_const(p,module),line);
-    emit_arg(p->chunk,OP_STORE,name_const(p,alias),line);
+    if(s->block_tag){                                  /* alias: descend to the leaf module */
+        const char *dot=strchr(module,'.');
+        while(dot){ const char *comp=dot+1; const char *nd=strchr(comp,'.'); int clen=nd?(int)(nd-comp):(int)strlen(comp); char b[128]; if(clen>127) clen=127; memcpy(b,comp,clen); b[clen]=0; emit_arg(p->chunk,OP_GET_ATTR,name_const(p,b),line); dot=nd; }
+    }
+    emit_arg(p->chunk,OP_STORE,name_const(p,s->name),line);
 }
-static void compile_from_import_ast(Parser *p,Stmt *s){ (void)s; int old=p->pos; p->pos=s->start; legacy_statement(p); p->pos=old; }
+static void compile_from_import_ast(Parser *p,Stmt *s){ int old=p->pos; p->pos=s->start; match(p,T_FROM); from_import_stmt(p); p->pos=old; }
 void compile_block_ast(Parser *p, Stmt **stmts, int count){ for(int i=0;i<count;i++) compile_stmt_ast(p,stmts[i]); }
 static void compile_if_ast(Parser *p,Stmt *s){
     compile_expr_ast(p,s->expr);
@@ -181,7 +187,10 @@ void compile_stmt_ast(Parser *p, Stmt *s){
             break;
         }
         case STMT_EXPR:{
-            int old=p->pos; p->pos=s->start; if(peek(p)->kind==T_PRINT || is_assignment(p)){ legacy_statement(p); p->pos=old; break; } p->pos=old;
+            int old=p->pos; p->pos=s->start;
+            if(peek(p)->kind==T_PRINT){ print_stmt(p); p->pos=old; break; }
+            if(is_assignment(p)){ assign_stmt(p); p->pos=old; break; }
+            p->pos=old;
             compile_expr_ast(p,s->expr); emit_op(p->chunk,OP_POP,s->line); break;
         }
         case STMT_YIELD: if(s->expr) compile_expr_ast(p,s->expr); else emit_op(p->chunk,OP_NONE,s->line); emit_op(p->chunk,OP_YIELD,s->line); break;
@@ -201,6 +210,7 @@ Function *compile_source(const char *src,const char *name,const char *dir,Dict *
     fprintf(stderr, "[minipy] compile: build_ast...\n"); fflush(stderr);
     Ast *ast_root=build_ast_and_symbols(&tv,&sym);
     fprintf(stderr, "[minipy] compile: ast done\n"); fflush(stderr);
+    dict_set(globals,"__name__",stringv(name));   /* "__main__" for the entry script, else the module name */
     Parser p={0}; p.tv=tv; p.globals=globals; p.module_dir=(char*)dir;
     fprintf(stderr, "[minipy] compile: alloc_function...\n"); fflush(stderr);
     Function *mainfn=alloc_function(name,NULL,0,globals,(char*)dir,1);

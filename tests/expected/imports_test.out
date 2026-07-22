@@ -1,0 +1,12 @@
+MiniPy - Mini Python Interpreter
+Script: tests/imports_test.mpy
+
+pkgmod
+pkgmod
+pkgmod
+pkg.mod
+42
+10
+__main__
+MNFE caught
+ImportError caught
