@@ -2,15 +2,46 @@
    allocator, console lifecycle. */
 
 #include "platform/platform.h"
+#include "util.h"
 
-/* f68.12 page allocator (libc malloc crashes without TLS setup).
-   f68.12: eax=68, ebx=12, ecx=pages (1 page = 4096 bytes). */
+/* Page allocator over f68 (libc malloc crashes without TLS setup).
+   f68.12: eax=68, ebx=12, ecx=pages          -> allocate (1 page = 4096 bytes)
+   f68.13: eax=68, ebx=13, ecx=block          -> free a block from f68.12
+   Layout: [ magic(4) | size(4) | pad(8) ][ payload ... ]. The returned pointer
+   is payload = base+16 (16-aligned, since f68.12 blocks are page-aligned). The
+   header lets realloc copy the right amount and free release the right block. */
+#define KOS_HEAD   16u
+#define KOS_MAGIC  0x484f534bu   /* 'KOSH' */
+
 void *kos_malloc(size_t n){
-    int pages = (int)((n + 4095) / 4096);
-    void *p;
-    __asm__ __volatile__("int $0x40" : "=a"(p) : "a"(68), "b"(12), "c"(pages) : "memory");
-    if(!p || (int)p <= 0) die("out of memory");
-    return p;
+    /* f68.12: ecx = size in BYTES (the kernel rounds up to a page internally).
+       Passing a page COUNT here under-allocated everything over 4 KB. */
+    size_t total = n + KOS_HEAD;
+    unsigned *base;
+    __asm__ __volatile__("int $0x40" : "=a"(base) : "a"(68), "b"(12), "c"(total) : "memory");
+    if(!base || (int)base <= 0) die("out of memory");
+    base[0] = KOS_MAGIC;
+    base[1] = (unsigned)n;
+    return (char*)base + KOS_HEAD;
+}
+
+void kos_free(void *p){
+    if(!p) return;
+    unsigned *base = (unsigned*)((char*)p - KOS_HEAD);
+    if(base[0] != KOS_MAGIC) return;   /* not ours (foreign/libc pointer): leave it */
+    base[0] = 0;                       /* poison so a double free is a no-op */
+    __asm__ __volatile__("int $0x40" :: "a"(68), "b"(13), "c"(base) : "memory");
+}
+
+void *kos_realloc(void *p, size_t n){
+    void *np = kos_malloc(n);
+    if(p){
+        unsigned *base = (unsigned*)((char*)p - KOS_HEAD);
+        size_t old = (base[0] == KOS_MAGIC) ? base[1] : n;
+        memcpy(np, p, old < n ? old : n);
+        kos_free(p);
+    }
+    return np;
 }
 
 extern void _pei386_runtime_relocator(void);

@@ -49,12 +49,16 @@ void _dual_printf(const char *fmt, ...);
 #undef printf
 #define printf(...) _dual_printf(__VA_ARGS__)
 
-/* f68.12 page allocator (libc malloc crashes without TLS).
-   Defined in platform/kolibri/startup.c. */
+/* Page allocator over f68.12/f68.13 (libc malloc crashes without TLS setup).
+   Every block carries a 16-byte header (magic + usable size) so realloc copies
+   exactly the old contents (not the larger new size, which used to overread the
+   old block and fault) and free can hand the pages back. Defined in startup.c. */
 void *kos_malloc(size_t n);
+void *kos_realloc(void *p, size_t n);
+void  kos_free(void *p);
 #define malloc(n)    kos_malloc(n)
-#define realloc(p,n) ({ void *_p = kos_malloc(n); if(p){ memcpy(_p, p, n); free(p); } _p; })
-#define free(p)      /* no-op - KolibriOS heap manages pages */
+#define realloc(p,n) kos_realloc(p,n)
+#define free(p)      kos_free(p)
 
 #endif /* MPY_KOLIBRI */
 
