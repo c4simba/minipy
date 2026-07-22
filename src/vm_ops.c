@@ -28,13 +28,17 @@ int val_equal(Value a,Value b){
     Value r; if(call_instance_method1(a,"__eq__",b,&r)) return truthy(r);
     return a.as.obj==b.as.obj;
 }
+MPY_NORETURN static void type_err_binop(const char *op, Value a, Value b){
+    char buf[128]; snprintf(buf,sizeof(buf),"unsupported operand type(s) for %s: '%s' and '%s'", op, value_type_name(a), value_type_name(b));
+    raise_named("TypeError", buf);
+}
 Value binary_add(Value a,Value b){
     Value r; if(call_instance_method1(a,"__add__",b,&r)) return r;
     if(is_number(a)&&is_number(b)){ if(a.type==V_FLOAT||b.type==V_FLOAT) return floatv(as_double(a)+as_double(b)); return intv(as_int(a)+as_int(b)); }
     if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)){ String *x=&a.as.obj->as.str,*y=&b.as.obj->as.str; int n=x->len+y->len; char *s=(char*)xmalloc((size_t)n+1); memcpy(s,x->s,(size_t)x->len); memcpy(s+x->len,y->s,(size_t)y->len); s[n]=0; Value v=stringv_len(s,n); free(s); return v; }
     if(is_obj(a,O_LIST)&&is_obj(b,O_LIST)){ Obj *o=new_list(); List *la=&a.as.obj->as.list,*lb=&b.as.obj->as.list; for(int i=0;i<la->count;i++) list_push(&o->as.list,la->items[i]); for(int i=0;i<lb->count;i++) list_push(&o->as.list,lb->items[i]); return objv(o); }
     if(is_obj(a,O_TUPLE)&&is_obj(b,O_TUPLE)){ Obj *o=new_tuple(); List *la=&a.as.obj->as.tuple,*lb=&b.as.obj->as.tuple; for(int i=0;i<la->count;i++) list_push(&o->as.tuple,la->items[i]); for(int i=0;i<lb->count;i++) list_push(&o->as.tuple,lb->items[i]); return objv(o); }
-    raise_named("TypeError","unsupported operand type(s) for +"); return nonev();
+    type_err_binop("+",a,b); return nonev();
 }
 /* printf-style string formatting for  "fmt" % args  (args: single value or tuple). */
 static Value str_format(Value fmtv, Value args){

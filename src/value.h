@@ -52,6 +52,7 @@ Value exceptionv(const char *type_name, const char *message, Value payload);
 
 /* Inspection / coercion */
 int      is_obj(Value v, OType t);
+const char *value_type_name(Value v);   /* Python type() name, table-driven */
 int      truthy(Value v);
 int      is_number(Value v);
 double   as_double(Value v);

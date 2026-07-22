@@ -70,7 +70,7 @@ static Value dict_method(Value recv,const char *name,int argc,Value *argv){
     Dict *d=&recv.as.obj->as.dict;
     if(!strcmp(name,"get")){ char *k=value_to_cstr(argv[0]); Value v; int ok=dict_get(d,k,&v); free(k); if(ok) return v; return argc>=2?argv[1]:nonev(); }
     if(!strcmp(name,"setdefault")){ char *k=value_to_cstr(argv[0]); Value v; if(dict_get(d,k,&v)){ free(k); return v; } Value def=argc>=2?argv[1]:nonev(); dict_set(d,k,def); free(k); return def; }
-    if(!strcmp(name,"pop")){ char *k=value_to_cstr(argv[0]); int idx=dict_find(d,k); free(k); if(idx<0){ if(argc>=2) return argv[1]; runtime_error("KeyError"); } Value v=d->vals[idx]; free(d->keys[idx]); for(int j=idx;j<d->count-1;j++){ d->keys[j]=d->keys[j+1]; d->vals[j]=d->vals[j+1]; } d->count--; return v; }
+    if(!strcmp(name,"pop")){ char *k=value_to_cstr(argv[0]); int idx=dict_find(d,k); free(k); if(idx<0){ if(argc>=2) return argv[1]; runtime_error("KeyError"); } Value v=d->vals[idx]; for(int j=idx;j<d->count-1;j++){ d->keys[j]=d->keys[j+1]; d->vals[j]=d->vals[j+1]; } d->count--; return v; }
     if(!strcmp(name,"keys")){ Obj *o=new_list(); for(int i=0;i<d->count;i++) list_push(&o->as.list,stringv(d->keys[i])); return objv(o); }
     if(!strcmp(name,"values")){ Obj *o=new_list(); for(int i=0;i<d->count;i++) list_push(&o->as.list,d->vals[i]); return objv(o); }
     if(!strcmp(name,"items")){ Obj *o=new_list(); for(int i=0;i<d->count;i++){ Obj *pr=new_tuple(); list_push(&pr->as.tuple,stringv(d->keys[i])); list_push(&pr->as.tuple,d->vals[i]); list_push(&o->as.list,objv(pr)); } return objv(o); }

@@ -13,7 +13,7 @@ Value nativev(Native *n){ Value v; v.type=V_NATIVE; v.as.native=n; return v; }
    trailing ".0" (2.0 -> "2.0", not "2"). */
 static void fmt_float(char *buf, size_t n, double f){ snprintf(buf,n,"%.15g",f); if(!strpbrk(buf,".eEnN")){ size_t l=strlen(buf); if(l+2<n){ buf[l]='.'; buf[l+1]='0'; buf[l+2]=0; } } }
 
-Obj *new_obj(OType t){ Obj *o=(Obj*)xmalloc(sizeof(Obj)); memset(o,0,sizeof(Obj)); o->type=t; return o; }
+Obj *new_obj(OType t){ Obj *o=MPY_NEW0(Obj); o->type=t; return o; }
 Value class_to_value(Class *k){ Obj *o=(Obj*)((char*)k - offsetof(Obj,as)); return objv(o); }
 char *(*mpy_repr_hook)(Value v)=NULL;
 Value stringv_len(const char *s,int n){ Obj *o=new_obj(O_STRING); o->as.str.s=xstrndup2(s,n); o->as.str.len=n; return objv(o); }
@@ -37,6 +37,27 @@ int truthy(Value v){
     if(is_obj(v,O_SET)) return v.as.obj->as.set.count>0;
     if(is_obj(v,O_DICT)) return v.as.obj->as.dict.count>0;
     return 1;
+}
+/* Per-OType metadata table (in the spirit of MicroPython's mp_obj_type_t,
+   kept lightweight: just the type name). Indexed by OType. */
+static const char *const otype_name[] = {
+    [O_STRING]="str", [O_LIST]="list", [O_TUPLE]="tuple", [O_SET]="set",
+    [O_DICT]="dict", [O_FUNCTION]="function", [O_CLASS]="type",
+    [O_INSTANCE]="object", [O_BOUND_METHOD]="method",
+    [O_BOUND_NATIVE]="builtin_function_or_method", [O_MODULE]="module",
+    [O_ITER]="iterator", [O_GENERATOR]="generator", [O_EXCEPTION]="exception",
+    [O_SUPER]="super", [O_METHWRAP]="method",
+};
+const char *value_type_name(Value v){
+    switch(v.type){
+        case V_NONE: return "NoneType"; case V_BOOL: return "bool";
+        case V_INT: return "int"; case V_FLOAT: return "float";
+        case V_NATIVE: return "builtin_function_or_method"; case V_OBJ: break;
+    }
+    Obj *o=v.as.obj;
+    if(o->type==O_INSTANCE) return o->as.inst.klass->name;
+    if(o->type==O_EXCEPTION) return o->as.exc.type_name;
+    return otype_name[o->type];
 }
 int is_number(Value v){ return v.type==V_INT || v.type==V_FLOAT || v.type==V_BOOL; }
 double as_double(Value v){ if(v.type==V_FLOAT) return v.as.f; if(v.type==V_BOOL) return (double)v.as.boolean; return (double)v.as.i; }

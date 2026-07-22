@@ -19,9 +19,9 @@ Value popv(void);
 
 /* Exception machinery (vm_exc.c) */
 Value normalize_exception(Value v);
-void  raise_exception(Value ex);
-void  runtime_error(const char *msg);
-void  raise_named(const char *type, const char *msg);
+MPY_NORETURN void  raise_exception(Value ex);
+MPY_NORETURN void  runtime_error(const char *msg);
+MPY_NORETURN void  raise_named(const char *type, const char *msg);
 int   is_builtin_exc_name(const char *n);
 int   dispatch_pending_exception(void);
 void  print_traceback(Value ex);

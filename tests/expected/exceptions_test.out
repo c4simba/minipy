@@ -8,4 +8,4 @@ list index out of range
 finally vm
 1
 stop
-unsupported operand type(s) for +
+unsupported operand type(s) for +: 'int' and 'list'

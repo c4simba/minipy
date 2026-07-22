@@ -2,7 +2,7 @@
 
 #include "bytecode.h"
 
-Chunk *chunk_new(void){ Chunk *c=(Chunk*)xmalloc(sizeof(Chunk)); memset(c,0,sizeof(Chunk)); return c; }
+Chunk *chunk_new(void){ Chunk *c=MPY_NEW0(Chunk); return c; }
 int add_const(Chunk *c,Value v){ if(c->ccount==c->ccap){ c->ccap=c->ccap?c->ccap*2:32; c->consts=(Value*)xrealloc(c->consts,sizeof(Value)*(size_t)c->ccap); } c->consts[c->ccount]=v; return c->ccount++; }
 int emit(Chunk *c,int x,int line){ if(c->count==c->cap){ c->cap=c->cap?c->cap*2:128; c->code=(int*)xrealloc(c->code,sizeof(int)*(size_t)c->cap); c->line=(int*)xrealloc(c->line,sizeof(int)*(size_t)c->cap); } c->code[c->count]=x; c->line[c->count]=line; return c->count++; }
 int emit_op(Chunk *c,Op op,int line){ if(op==OP_YIELD) c->has_yield=1; return emit(c,(int)op,line); }
