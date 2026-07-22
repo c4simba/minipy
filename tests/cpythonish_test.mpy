@@ -1,0 +1,69 @@
+print("defaults")
+def add(a, b=10):
+    return a + b
+print(add(5))
+print(add(5, 2))
+
+print("decorator")
+def identity(fn):
+    return fn
+@identity
+def decorated(x):
+    return x + 1
+print(decorated(4))
+
+print("global")
+g = 1
+def setg():
+    global g
+    g = 9
+setg()
+print(g)
+
+print("nonlocal")
+def outer():
+    x = 1
+    def inc():
+        nonlocal x
+        x += 1
+        return x
+    return inc
+f = outer()
+print(f())
+print(f())
+
+print("try")
+try:
+    raise "boom"
+except RuntimeError as e:
+    print(e)
+finally:
+    print("finally")
+
+print("iter")
+it = iter([7, 8])
+print(next(it))
+print(next(it))
+try:
+    print(next(it))
+except StopIteration as e:
+    print("stop")
+
+print("object protocol")
+class Box:
+    def __init__(self, v):
+        self.v = v
+    def __len__(self):
+        return self.v
+    def __add__(self, other):
+        return self.v + other
+    def __getitem__(self, key):
+        return self.v + key
+    def __contains__(self, item):
+        return item == self.v
+
+b = Box(3)
+print(len(b))
+print(b + 4)
+print(b[5])
+print(3 in b)

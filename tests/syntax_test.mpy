@@ -1,0 +1,42 @@
+from utils import twice as t
+
+x: int = 1
+x += 4
+print(x)
+
+if x < 3:
+    print("small")
+elif x == 5:
+    print("five")
+else:
+    print("other")
+
+for i in range(3):
+    if i == 1:
+        continue
+    print(i)
+else:
+    print("for else")
+
+j = 0
+while j < 3:
+    j += 1
+    if j == 2:
+        break
+else:
+    print("while else should not print")
+print(j)
+
+print(2 in [1, 2, 3])
+print("ell" in "hello")
+print(x is not None)
+print((1, 2, 3)[1:])
+print([1, 2, 3, 4][1:3])
+print({1, 1, 2})
+print(t(6))
+
+with "resource" as r:
+    print(r)
+
+del r
+print(r)

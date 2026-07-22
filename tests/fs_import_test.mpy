@@ -1,0 +1,7 @@
+print("fs import")
+import utils
+print(utils.answer)
+try:
+    import missing_module
+except RuntimeError as e:
+    print("missing caught")
