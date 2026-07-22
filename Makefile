@@ -1,3 +1,8 @@
+# Machine-local overrides (cross-toolchain paths, etc.) live in an untracked
+# config.local.mk. Copy config.local.mk.example to config.local.mk and edit it;
+# values set there win over the ?= defaults below. See README.
+-include config.local.mk
+
 CC ?= gcc
 CFLAGS ?= -std=c99 -Wall -Wextra -Wno-clobbered -O2
 BUILD_DIR ?= build
@@ -48,18 +53,20 @@ test-update: $(HOST_TARGET)
 	@sh tests/run_tests.sh --update
 
 # ---------------------------- KolibriOS build -------------------------------
-KOS32_PREFIX  = /home/simba/private/ports
-KOS32_SDK     = $(KOS32_PREFIX)/sdk
-KOS32_BINDIR  = $(KOS32_SDK)/bin
-KOS32_CC      = $(KOS32_BINDIR)/i586-kolibrios-gcc
-KOS32_OBJCOPY = $(KOS32_BINDIR)/i586-kolibrios-objcopy
+# Cross-toolchain locations. Overridable via config.local.mk, the environment,
+# or the command line (defaults follow the common autobuild layout; see README).
+KOS32_PREFIX  ?= /home/autobuild/tools/win32
+KOS32_SDK     ?= $(KOS32_PREFIX)/sdk
+KOS32_BINDIR  ?= $(KOS32_SDK)/bin
+KOS32_CC      ?= $(KOS32_BINDIR)/i586-kolibrios-gcc
+KOS32_OBJCOPY ?= $(KOS32_BINDIR)/i586-kolibrios-objcopy
 KOS_APP_LDS    = kos-app-fix.lds
 KOS_IMPORT_DIR = /hd0/1/import_path
 KOS_BUILD_DIR  = $(BUILD_DIR)/kolibri
 KOS_BIN        = $(KOS_BUILD_DIR)/minipy
 KOS_MAP        = $(KOS_BUILD_DIR)/minipy.map
-KOS_SDK_LIBDIR = /home/simba/private/kolibrios-sdk/libraries/newlib/libc
-KOS_NEWLIB_INC = $(KOS32_SDK)/include
+KOS_SDK_LIBDIR ?= $(KOS32_SDK)/libraries/newlib/libc
+KOS_NEWLIB_INC ?= $(KOS32_SDK)/include
 
 KOS_CFLAGS = -std=c99 -Wall -Wextra -Wno-clobbered -O2 -fomit-frame-pointer -fno-stack-protector
 KOS_CFLAGS += -DMPY_PLATFORM_KOLIBRI=1 -DMPY_PLATFORM_KOLIBRIOS=1 -DMPY_FS_KOLIBRI=1

@@ -1,0 +1,8 @@
+# Machine-local build overrides (copy to config.local.mk, which is git-ignored).
+# Only set what differs from the Makefile defaults.
+
+# KolibriOS cross-toolchain root (contains sdk/bin/i586-kolibrios-gcc):
+# KOS32_PREFIX  = /path/to/kolibrios/toolchain
+
+# newlib libc dir (must contain crt/pseudo-reloc.o):
+# KOS_SDK_LIBDIR = /path/to/kolibrios-sdk/libraries/newlib/libc
