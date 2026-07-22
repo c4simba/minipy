@@ -25,6 +25,13 @@ int val_equal(Value a,Value b){
     if(a.type==V_INT)return a.as.i==b.as.i;
     if(a.type==V_FLOAT)return a.as.f==b.as.f;
     if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)) return strcmp(a.as.obj->as.str.s,b.as.obj->as.str.s)==0;
+    if((is_obj(a,O_LIST)&&is_obj(b,O_LIST))||(is_obj(a,O_TUPLE)&&is_obj(b,O_TUPLE))){
+        List *x=is_obj(a,O_LIST)?&a.as.obj->as.list:&a.as.obj->as.tuple;
+        List *y=is_obj(b,O_LIST)?&b.as.obj->as.list:&b.as.obj->as.tuple;
+        if(x->count!=y->count) return 0;
+        for(int i=0;i<x->count;i++) if(!val_equal(x->items[i],y->items[i])) return 0;
+        return 1;
+    }
     Value r; if(call_instance_method1(a,"__eq__",b,&r)) return truthy(r);
     return a.as.obj==b.as.obj;
 }

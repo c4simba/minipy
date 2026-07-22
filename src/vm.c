@@ -81,6 +81,8 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_RETURN:{ Value r=popv(); if(gen_obj) gen_obj->as.gen.done=1; vm.fcount--; vm.exc_depth=exc_slot; return r; }
             case OP_DUP:{ Value v=vm.stack[vm.sp-1]; push(v); break; }
             case OP_DUP2:{ Value a=vm.stack[vm.sp-2],b=vm.stack[vm.sp-1]; push(a); push(b); break; }
+            case OP_ROT2:{ Value t=vm.stack[vm.sp-1]; vm.stack[vm.sp-1]=vm.stack[vm.sp-2]; vm.stack[vm.sp-2]=t; break; }
+            case OP_ROT3:{ Value t=vm.stack[vm.sp-1]; vm.stack[vm.sp-1]=vm.stack[vm.sp-2]; vm.stack[vm.sp-2]=vm.stack[vm.sp-3]; vm.stack[vm.sp-3]=t; break; }
             case OP_UNPACK:{ int n=c->code[fr->ip++]; Value seq=popv();
                 if(is_obj(seq,O_LIST)||is_obj(seq,O_TUPLE)){ List *l=is_obj(seq,O_LIST)?&seq.as.obj->as.list:&seq.as.obj->as.tuple; if(l->count!=n) runtime_error("wrong number of values to unpack"); for(int i=n-1;i>=0;i--) push(l->items[i]); }
                 else if(is_obj(seq,O_STRING)){ String *s=&seq.as.obj->as.str; if(s->len!=n) runtime_error("wrong number of values to unpack"); for(int i=n-1;i>=0;i--) push(stringv_len(&s->s[i],1)); }

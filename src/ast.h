@@ -8,31 +8,41 @@
    (EXPR_TOKEN_RANGE); the bytecode compiler re-parses those ranges later. */
 
 typedef enum {
-    EXPR_TOKEN_RANGE,
-    EXPR_LITERAL,
-    EXPR_NAME,
-    EXPR_UNARY,
-    EXPR_BINARY,
-    EXPR_BOOL,
-    EXPR_CALL,
-    EXPR_ATTRIBUTE,
-    EXPR_INDEX,
-    EXPR_SLICE,
-    EXPR_LIST,
-    EXPR_TUPLE,
-    EXPR_SET,
-    EXPR_DICT,
-    EXPR_LAMBDA
+    EXPR_TOKEN_RANGE,   /* frontend: unparsed span of tokens (start..end) */
+    EXPR_LITERAL,       /* number / string, in `tok` */
+    EXPR_TRUE, EXPR_FALSE, EXPR_NONE,
+    EXPR_NAME,          /* `name` */
+    EXPR_UNARY,         /* op, a */
+    EXPR_BINARY,        /* op, a, b (arith/bitwise/shift) */
+    EXPR_BOOL,          /* op = T_AND/T_OR, a, b */
+    EXPR_COMPARE,       /* items = operands; items[i>=1]->akind = comparison code */
+    EXPR_TERNARY,       /* a = cond, b = then, c = else */
+    EXPR_CALL,          /* a = callee; items = args; arg->akind selects pos/star/dstar/kw */
+    EXPR_ATTRIBUTE,     /* a = obj, name */
+    EXPR_INDEX,         /* a = obj, b = index */
+    EXPR_SLICE,         /* a = obj, b = lo, c = hi, d = step (NULL = missing) */
+    EXPR_LIST, EXPR_TUPLE, EXPR_SET,   /* items */
+    EXPR_DICT,          /* items = keys, vals = values */
+    EXPR_COMPREHENSION, /* comp_kind 'L'/'S'/'D', a = element/key, b = dict value, clauses */
+    EXPR_LAMBDA         /* eparams, a = body */
 } ExprKind;
 
 typedef struct Expr Expr;
+typedef struct CompClause { char **vars; int nvars; Expr *iter; Expr **conds; int ncond; } CompClause;
 struct Expr {
     ExprKind kind;
-    char *name;
+    char *name;              /* NAME / attribute / keyword-arg name */
     int line;
-    int start, end;
-    Expr **items;
-    int count, cap;
+    int start, end;          /* EXPR_TOKEN_RANGE */
+    Tok *tok;                /* EXPR_LITERAL token */
+    TokKind op;              /* operator (unary/binary/bool) */
+    int akind;               /* call-arg kind (0 pos,1 *,2 **,3 kw) / compare code */
+    Expr *a, *b, *c, *d;     /* operands */
+    Expr **items; int count, cap;    /* sequence elems / call args / dict keys / compare operands */
+    Expr **vals;  int vcount, vcap;  /* dict values (parallel to items) */
+    char **eparams; int neparam;     /* lambda parameters */
+    int comp_kind;                   /* comprehension accumulator kind */
+    CompClause *clauses; int nclause, ccap;
 };
 
 typedef enum {
