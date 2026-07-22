@@ -21,18 +21,6 @@ void compile_expr_ast(Parser *p, Expr *e){
     if(p->pos!=e->end){ p->pos=e->end; }
     (void)old;
 }
-static Value const_value_from_expr(Parser *p, Expr *e){
-    if(!e) return nonev();
-    if(e->end==e->start+1){ Tok *t=&p->tv.v[e->start];
-        if(t->kind==T_NUMBER) return t->is_float?floatv(t->f):intv(t->i);
-        if(t->kind==T_STRING) return stringv(t->text);
-        if(t->kind==T_TRUE) return boolv(1);
-        if(t->kind==T_FALSE) return boolv(0);
-        if(t->kind==T_NONE) return nonev();
-    }
-    fprintf(stderr,"parse error at line %d: only literal default arguments are implemented in this mini runtime\n", e->line);
-    exit(1);
-}
 static void copy_scope_directives(Function *fn, Stmt **body, int body_count){
     for(int i=0;i<body_count;i++){ Stmt *s=body[i]; if(!s) continue;
         if(s->kind==STMT_GLOBAL){ fn->global_names=s->params; fn->global_count=s->param_count; }
@@ -89,7 +77,8 @@ static void compile_while_ast(Parser *p,Stmt *s){
 static void compile_for_ast(Parser *p,Stmt *s){
     compile_expr_ast(p,s->expr); emit_op(p->chunk,OP_ITER,s->line); int start=p->chunk->count;
     emit_arg(p->chunk,OP_FOR_NEXT,0,s->line); int exit_jump=p->chunk->count-1;
-    emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line);
+    if(s->param_count>1){ emit_arg(p->chunk,OP_UNPACK,s->param_count,s->line); for(int i=0;i<s->param_count;i++) emit_arg(p->chunk,OP_STORE,name_const(p,s->params[i]),s->line); }
+    else emit_arg(p->chunk,OP_STORE,name_const(p,s->param_count==1?s->params[0]:s->name),s->line);
     LoopCtx *lc=&p->loops[p->loop_depth++]; lc->start=start; lc->is_for=1; lc->bcount=0;
     compile_block_ast(p,s->body,s->body_count); emit_arg(p->chunk,OP_JUMP,start,s->line);
     int else_start=p->chunk->count; patch(p->chunk,exit_jump,else_start);
@@ -105,8 +94,12 @@ void compile_stmt_ast(Parser *p, Stmt *s){
         case STMT_FOR: compile_for_ast(p,s); break;
         case STMT_FUNCTION_DEF:{
             Function *fn=compile_function_from_ast(p,s->name,s->params,s->param_count,s->body,s->body_count,0);
-            fn->default_count=s->default_count; fn->min_arity=s->param_count-s->default_count;
-            if(s->default_count){ fn->defaults=(Value*)xmalloc(sizeof(Value)*(size_t)s->default_count); for(int di=0; di<s->default_count; di++) fn->defaults[di]=const_value_from_expr(p,s->defaults[di]); }
+            fn->default_count=s->default_count; fn->star_index=s->star_index; fn->dstar_index=s->dstar_index;
+            int nreg=s->param_count-(s->star_index>=0?1:0)-(s->dstar_index>=0?1:0);
+            fn->min_arity=nreg-s->default_count;
+            /* default values are evaluated at def-time in the enclosing frame and
+               pushed onto the stack; OP_DEF pops them into the new function. */
+            for(int di=0; di<s->default_count; di++) compile_expr_ast(p,s->defaults[di]);
             emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),s->line); emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); apply_decorators(p,s); break;
         }
         case STMT_CLASS_DEF:{
@@ -151,7 +144,7 @@ void compile_stmt_ast(Parser *p, Stmt *s){
 }
 
 /* ---- Function object allocation + top-level driver ---- */
-Function *alloc_function(const char *name,char **params,int arity,Dict *globals,char *dir,int store_globals){ Obj *o=new_obj(O_FUNCTION); o->as.fn.name=xstrdup2(name); o->as.fn.params=params; o->as.fn.arity=arity; o->as.fn.min_arity=arity; o->as.fn.default_count=0; o->as.fn.defaults=NULL; o->as.fn.chunk=chunk_new(); o->as.fn.globals=globals; o->as.fn.closure=NULL; o->as.fn.module_dir=dir?xstrdup2(dir):xstrdup2("."); o->as.fn.store_globals=store_globals; o->as.fn.is_generator=0; o->as.fn.owner=o; return &o->as.fn; }
+Function *alloc_function(const char *name,char **params,int arity,Dict *globals,char *dir,int store_globals){ Obj *o=new_obj(O_FUNCTION); o->as.fn.name=xstrdup2(name); o->as.fn.params=params; o->as.fn.arity=arity; o->as.fn.min_arity=arity; o->as.fn.default_count=0; o->as.fn.defaults=NULL; o->as.fn.star_index=-1; o->as.fn.dstar_index=-1; o->as.fn.chunk=chunk_new(); o->as.fn.globals=globals; o->as.fn.closure=NULL; o->as.fn.module_dir=dir?xstrdup2(dir):xstrdup2("."); o->as.fn.store_globals=store_globals; o->as.fn.is_generator=0; o->as.fn.owner=o; return &o->as.fn; }
 Function *clone_function(Function *src, Dict *closure){ Obj *o=new_obj(O_FUNCTION); o->as.fn=*src; o->as.fn.name=xstrdup2(src->name); o->as.fn.closure=closure; o->as.fn.owner=o; return &o->as.fn; }
 Function *compile_source(const char *src,const char *name,const char *dir,Dict *globals){
     fprintf(stderr, "[minipy] compile: lex...\n"); fflush(stderr);

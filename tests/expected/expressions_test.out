@@ -1,0 +1,26 @@
+MiniPy - Mini Python Interpreter
+Script: tests/expressions_test.mpy
+
+odd
+10
+pos
+101
+3 apples and 5 oranges
+name=bob age=42
+3.14
+[   42]
+ff
+just text
+2 + 3 = 5
+product is 6
+pi ~ 3.142
+[0007]
+{not a field}
+hello world
+[0, 1, 4, 9, 16, 25]
+[0, 3, 6, 9]
+[1, 2, 3, 2, 4, 6]
+16
+5
+4
+[0, 1, 2, 3, 4]

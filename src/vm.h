@@ -44,6 +44,9 @@ Value get_slice(Value obj, Value startv, Value endv);
 int   iterator_next_value(Value top, Value *out);
 Value native_iter(int argc, Value *argv);
 extern Native N_LEN, N_RANGE, N_NEXT, N_ITER, N_INPUT;
+extern Native N_STR, N_REPR, N_INT, N_FLOAT, N_BOOL, N_LIST, N_TUPLE, N_SET, N_DICT;
+extern Native N_ABS, N_MIN, N_MAX, N_SUM, N_SORTED, N_REVERSED, N_ENUMERATE, N_ZIP, N_MAP, N_FILTER;
+extern Native N_TYPE, N_ISINSTANCE, N_ORD, N_CHR, N_ROUND, N_ANY, N_ALL;
 
 /* Core dispatch / calling convention / generators (vm.c) */
 Value run_function(Function *fn, int argc, Value *args);

@@ -1,0 +1,53 @@
+MiniPy - Mini Python Interpreter
+Script: tests/builtins_test.mpy
+
+42
+3.5
+[1, 2, 3]
+'hi'
+[1, 'a']
+3
+100
+1
+2.0
+1.5
+False
+True
+False
+9
+2.5
+2
+9
+apple
+10
+106
+3.14
+2
+4
+1.235
+[1, 2, 3]
+['apple', 'kiwi', 'pear']
+[3, 2, 1]
+[(0, 'a'), (1, 'b'), (2, 'c')]
+[(1, 'x'), (2, 'y')]
+[(1, 4), (2, 5), (3, 6)]
+[1, 2, 3]
+[1, 2, 3]
+[0, 1, 2, 3]
+(1, 2, 3)
+[1, 2, 3]
+{'a': 1, 'b': 2}
+True
+True
+False
+True
+True
+65
+B
+True
+False
+True
+False
+30
+[2, 3, 5]
+7

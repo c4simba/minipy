@@ -1,0 +1,33 @@
+MiniPy - Mini Python Interpreter
+Script: tests/operators_test.mpy
+
+1
+2
+-2
+0
+1.5
+2
+7
+5
+-6
+16
+64
+3
+14
+8
+5
+2
+1024
+3
+2
+7
+4
+256
+128
+True
+False
+False
+True
+True
+True
+False

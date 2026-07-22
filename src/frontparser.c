@@ -41,6 +41,18 @@ static Stmt *fp_parse_simple_name_list(FrontParser *p,StmtKind kind,int line,int
     while(1){ Tok *n=fp_need(p,T_NAME); if(n) name_add_unique(&s->params,&s->param_count,&s->param_cap,n->text); if(!fp_match(p,T_COMMA)) break; }
     fp_need(p,T_NEWLINE); s->end=p->pos; return s;
 }
+/* Does the current logical line contain a top-level assignment operator? */
+static int fp_stmt_has_assign(FrontParser *p){
+    int i=p->pos, depth=0;
+    while(p->tv->v[i].kind!=T_EOF && !(depth==0 && p->tv->v[i].kind==T_NEWLINE)){
+        TokKind k=p->tv->v[i].kind;
+        if(k==T_LP||k==T_LB||k==T_LC) depth++;
+        else if(k==T_RP||k==T_RB||k==T_RC){ if(depth>0) depth--; }
+        else if(depth==0 && is_assign_op(k)) return 1;
+        i++;
+    }
+    return 0;
+}
 static Stmt *fp_parse_stmt(FrontParser *p){
     fp_skip_nl(p); int start=p->pos; Tok *t=fp_peek(p); int line=t->line;
     char **pending_decorators=NULL; int dec_count=0, dec_cap=0;
@@ -62,15 +74,19 @@ static Stmt *fp_parse_stmt(FrontParser *p){
         s->end=p->pos; return s;
     }
     if(fp_match(p,T_WHILE)){ Stmt *s=stmt_new(STMT_WHILE,NULL,line,start); s->expr=fp_expr_until(p,T_COLON,T_EOF); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); if(fp_match(p,T_ELSE)){ fp_need(p,T_COLON); Stmt *b=stmt_new(STMT_BLOCK,"else",line,p->pos); fp_parse_suite_into(p,b,0); for(int i=0;i<b->body_count;i++) stmt_add_orelse(s,b->body[i]); } s->end=p->pos; return s; }
-    if(fp_match(p,T_FOR)){ Stmt *s=stmt_new(STMT_FOR,NULL,line,start); Tok *n=fp_need(p,T_NAME); if(n) s->name=xstrdup2(n->text); fp_need(p,T_IN); s->expr=fp_expr_until(p,T_COLON,T_EOF); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); if(fp_match(p,T_ELSE)){ fp_need(p,T_COLON); Stmt *b=stmt_new(STMT_BLOCK,"else",line,p->pos); fp_parse_suite_into(p,b,0); for(int i=0;i<b->body_count;i++) stmt_add_orelse(s,b->body[i]); } s->end=p->pos; return s; }
+    if(fp_match(p,T_FOR)){ Stmt *s=stmt_new(STMT_FOR,NULL,line,start); do{ Tok *n=fp_need(p,T_NAME); if(n) name_add_unique(&s->params,&s->param_count,&s->param_cap,n->text); }while(fp_match(p,T_COMMA)); if(s->param_count==1) s->name=xstrdup2(s->params[0]); fp_need(p,T_IN); s->expr=fp_expr_until(p,T_COLON,T_EOF); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); if(fp_match(p,T_ELSE)){ fp_need(p,T_COLON); Stmt *b=stmt_new(STMT_BLOCK,"else",line,p->pos); fp_parse_suite_into(p,b,0); for(int i=0;i<b->body_count;i++) stmt_add_orelse(s,b->body[i]); } s->end=p->pos; return s; }
     if(fp_match(p,T_DEF)){
         Tok *n=fp_need(p,T_NAME); Stmt *s=stmt_new(STMT_FUNCTION_DEF,n?n->text:"<anon>",line,start);
         for(int di=0; di<dec_count; di++) stmt_add_decorator(s,pending_decorators[di]);
         fp_need(p,T_LP);
         while(fp_peek(p)->kind!=T_EOF && fp_peek(p)->kind!=T_RP){
-            Tok *a=fp_need(p,T_NAME); if(a) name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text);
-            if(fp_match(p,T_COLON)) fp_skip_balanced_to(p,T_COMMA,T_RP);
-            if(fp_match(p,T_ASSIGN)) stmt_add_default(s,fp_expr_until(p,T_COMMA,T_RP));
+            if(fp_match(p,T_POWER)){ Tok *a=fp_need(p,T_NAME); if(a){ s->dstar_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } }
+            else if(fp_match(p,T_STAR)){ Tok *a=fp_need(p,T_NAME); if(a){ s->star_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } }
+            else {
+                Tok *a=fp_need(p,T_NAME); if(a) name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text);
+                if(fp_match(p,T_COLON)) fp_skip_balanced_to(p,T_COMMA,T_RP);
+                if(fp_match(p,T_ASSIGN)) stmt_add_default(s,fp_expr_until(p,T_COMMA,T_RP));
+            }
             if(!fp_match(p,T_COMMA)) break;
         }
         fp_need(p,T_RP); fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s;
@@ -99,12 +115,10 @@ static Stmt *fp_parse_stmt(FrontParser *p){
     }
     if(fp_peek(p)->kind==T_MATCH||fp_peek(p)->kind==T_ASYNC){ Stmt *s=stmt_new(STMT_UNSUPPORTED,fp_peek(p)->text,line,start); fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
 
-    if(fp_peek(p)->kind==T_NAME){
-        int namepos=p->pos; Tok *n=&p->tv->v[p->pos++];
-        if(fp_peek(p)->kind==T_COLON||is_assign_op(fp_peek(p)->kind)){
-            Stmt *s=stmt_new(STMT_ASSIGN,n->text,line,start); if(fp_match(p,T_COLON)) fp_skip_balanced_to(p,T_ASSIGN,T_NEWLINE); if(is_assign_op(fp_peek(p)->kind)){ p->pos++; s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); } fp_need(p,T_NEWLINE); s->end=p->pos; return s;
-        }
-        p->pos=namepos;
+    if(fp_stmt_has_assign(p)){
+        Stmt *s=stmt_new(STMT_ASSIGN,(fp_peek(p)->kind==T_NAME?fp_peek(p)->text:NULL),line,start);
+        while(fp_peek(p)->kind!=T_EOF && fp_peek(p)->kind!=T_NEWLINE) p->pos++;
+        fp_need(p,T_NEWLINE); s->end=p->pos; return s;
     }
     Stmt *s=stmt_new(STMT_EXPR,NULL,line,start); s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s;
 }

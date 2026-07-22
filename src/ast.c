@@ -15,7 +15,7 @@ Expr *expr_new_range(int start,int end,int line){
 }
 Stmt *stmt_new(StmtKind k,const char *name,int line,int start){
     Stmt *s=(Stmt*)xmalloc(sizeof(Stmt)); memset(s,0,sizeof(Stmt));
-    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; return s;
+    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; s->star_index=-1; s->dstar_index=-1; return s;
 }
 void stmt_add_body(Stmt *s,Stmt *child){
     if(!child) return;
@@ -65,4 +65,4 @@ const char *stmt_kind_name(StmtKind k){
 const char *scope_kind_name(SymScopeKind k){ return k==SYM_MODULE?"module":k==SYM_FUNCTION?"function":"class"; }
 
 int is_expr_name_token(TokKind k){ return k==T_NAME; }
-int is_assign_op(TokKind k){ return k==T_ASSIGN||k==T_PLUS_ASSIGN||k==T_MINUS_ASSIGN||k==T_STAR_ASSIGN||k==T_SLASH_ASSIGN; }
+int is_assign_op(TokKind k){ return k==T_ASSIGN||k==T_PLUS_ASSIGN||k==T_MINUS_ASSIGN||k==T_STAR_ASSIGN||k==T_SLASH_ASSIGN||k==T_PERCENT_ASSIGN||k==T_FLOOR_DIV_ASSIGN||k==T_POWER_ASSIGN||k==T_AMP_ASSIGN||k==T_PIPE_ASSIGN||k==T_CARET_ASSIGN||k==T_SHL_ASSIGN||k==T_SHR_ASSIGN; }

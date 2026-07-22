@@ -7,6 +7,9 @@ static void addtok(TokVec *tv,TokKind k,const char *s,int len,int64_t i,double f
     tv->v[tv->n].kind=k; tv->v[tv->n].text=s?xstrndup2(s,len):NULL; tv->v[tv->n].i=i; tv->v[tv->n].f=f; tv->v[tv->n].is_float=isf; tv->v[tv->n].line=line; tv->n++;
 }
 
+static void lex_line(TokVec *tv,const char *p,int line);
+static void lex_fstring(TokVec *tv,const char **pp,int line);
+
 static int my_isalpha(int c){ return (c>='a'&&c<='z')||(c>='A'&&c<='Z'); }
 static int my_isalnum(int c){ return my_isalpha(c)||(c>='0'&&c<='9'); }
 static int my_isdigit(int c){ return c>='0'&&c<='9'; }
@@ -71,10 +74,67 @@ static TokKind kw(const char *s,int n){
     return T_NAME;
 }
 
+/* f-string: transform  f"a{expr}b"  into token stream  ( "a" + ( expr ) + "b" ).
+   {{ }} are literal braces; {expr:spec} becomes ( "%spec" % ( expr ) );
+   the !r/!s/!a conversion is accepted and ignored. Embedded expressions are
+   lexed inline via lex_line (so nesting/operators work). */
+static void lex_fstring(TokVec *tv,const char **pp,int line){
+    const char *p=*pp;
+    p++;                      /* skip f/F */
+    char q=*p++;              /* opening quote */
+    addtok(tv,T_LP,"(",1,0,0,0,line);
+    char lit[8192]; int li=0; int emitted=0;
+    #define FLUSH_LIT() do{ lit[li]=0; if(emitted) addtok(tv,T_PLUS,"+",1,0,0,0,line); addtok(tv,T_STRING,lit,li,0,0,0,line); emitted=1; li=0; }while(0)
+    while(*p && *p!=q){
+        if(*p=='{' && p[1]=='{'){ lit[li++]='{'; p+=2; continue; }
+        if(*p=='}' && p[1]=='}'){ lit[li++]='}'; p+=2; continue; }
+        if(*p=='{'){
+            if(!emitted || li>0) FLUSH_LIT();
+            p++;
+            char ex[4096]; int xi=0; char sp[64]; int spi=0; int have_spec=0; int depth=0;
+            while(*p && !((*p=='}'||*p==':'||*p=='!') && depth==0)){
+                if(*p=='{'||*p=='('||*p=='[') depth++;
+                else if(*p=='}'||*p==')'||*p==']') depth--;
+                if(xi<4094) ex[xi++]=*p; p++;
+            }
+            ex[xi]=0;
+            if(*p=='!' && depth==0){ p++; if(*p) p++; }          /* !r / !s / !a : ignored */
+            if(*p==':' && depth==0){ have_spec=1; p++; while(*p && *p!='}'){ if(spi<62) sp[spi++]=*p; p++; } }
+            sp[spi]=0;
+            if(*p=='}') p++;
+            if(emitted) addtok(tv,T_PLUS,"+",1,0,0,0,line);
+            if(have_spec){
+                /* If the spec lacks a printf conversion letter (e.g. "5", ".2"),
+                   default to 's' so width/precision apply to the stringified value. */
+                if(spi>0 && !my_isalpha((unsigned char)sp[spi-1])){ if(spi<62){ sp[spi++]='s'; sp[spi]=0; } }
+                char fbuf[80]; snprintf(fbuf,sizeof(fbuf),"%%%s",sp);
+                addtok(tv,T_LP,"(",1,0,0,0,line);
+                addtok(tv,T_STRING,fbuf,(int)strlen(fbuf),0,0,0,line);
+                addtok(tv,T_PERCENT,"%",1,0,0,0,line);
+                addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
+                addtok(tv,T_RP,")",1,0,0,0,line);
+            } else {
+                addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
+            }
+            emitted=1;
+            continue;
+        }
+        if(*p=='\\' && p[1]){ p++; if(*p=='n')lit[li++]='\n'; else if(*p=='t')lit[li++]='\t'; else lit[li++]=*p; p++; continue; }
+        lit[li++]=*p++;
+        if(li>=8190) die("f-string too long");
+    }
+    if(!emitted || li>0) FLUSH_LIT();
+    if(*p==q) p++;
+    addtok(tv,T_RP,")",1,0,0,0,line);
+    *pp=p;
+    #undef FLUSH_LIT
+}
+
 static void lex_line(TokVec *tv,const char *p,int line){
     while(*p){
         if(*p==' '||*p=='\r'||*p=='\t'){p++;continue;}
         if(*p=='#')break; /* comment */
+        if((*p=='f'||*p=='F') && (p[1]=='"'||p[1]=='\'')){ lex_fstring(tv,&p,line); continue; }
         if(my_isdigit((unsigned char)*p)){
             const char *s=p; int isf=0; while(my_isdigit((unsigned char)*p))p++; if(*p=='.'){ isf=1; p++; while(my_isdigit((unsigned char)*p))p++; }
             char *tmp=xstrndup2(s,(int)(p-s)); if(isf){ double f=my_strtod(tmp,NULL); addtok(tv,T_NUMBER,tmp,(int)my_strlen(tmp),0,f,1,line); } else { int64_t i=my_strtoll(tmp,NULL,10); addtok(tv,T_NUMBER,tmp,(int)my_strlen(tmp),i,0,0,line); } free(tmp); continue;
@@ -92,12 +152,17 @@ static void lex_line(TokVec *tv,const char *p,int line){
             case ':':addtok(tv,T_COLON,p,1,0,0,0,line);p++;break; case ',':addtok(tv,T_COMMA,p,1,0,0,0,line);p++;break; case '.':addtok(tv,T_DOT,p,1,0,0,0,line);p++;break; case '@':addtok(tv,T_AT,p,1,0,0,0,line);p++;break;
             case '+': if(p[1]=='='){addtok(tv,T_PLUS_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_PLUS,p,1,0,0,0,line);p++;} break;
             case '-': if(p[1]=='='){addtok(tv,T_MINUS_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_MINUS,p,1,0,0,0,line);p++;} break;
-            case '*': if(p[1]=='*'){addtok(tv,T_POWER,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_STAR_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_STAR,p,1,0,0,0,line);p++;} break;
-            case '/': if(p[1]=='/'){addtok(tv,T_FLOOR_DIV,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_SLASH_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_SLASH,p,1,0,0,0,line);p++;} break;
+            case '*': if(p[1]=='*'&&p[2]=='='){addtok(tv,T_POWER_ASSIGN,p,3,0,0,0,line);p+=3;} else if(p[1]=='*'){addtok(tv,T_POWER,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_STAR_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_STAR,p,1,0,0,0,line);p++;} break;
+            case '/': if(p[1]=='/'&&p[2]=='='){addtok(tv,T_FLOOR_DIV_ASSIGN,p,3,0,0,0,line);p+=3;} else if(p[1]=='/'){addtok(tv,T_FLOOR_DIV,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_SLASH_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_SLASH,p,1,0,0,0,line);p++;} break;
+            case '%': if(p[1]=='='){addtok(tv,T_PERCENT_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_PERCENT,p,1,0,0,0,line);p++;} break;
+            case '&': if(p[1]=='='){addtok(tv,T_AMP_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_AMP,p,1,0,0,0,line);p++;} break;
+            case '|': if(p[1]=='='){addtok(tv,T_PIPE_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_PIPE,p,1,0,0,0,line);p++;} break;
+            case '^': if(p[1]=='='){addtok(tv,T_CARET_ASSIGN,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_CARET,p,1,0,0,0,line);p++;} break;
+            case '~': addtok(tv,T_TILDE,p,1,0,0,0,line);p++; break;
             case '=': if(p[1]=='='){addtok(tv,T_EQ,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_ASSIGN,p,1,0,0,0,line);p++;} break;
             case '!': if(p[1]=='='){addtok(tv,T_NE,p,2,0,0,0,line);p+=2;} else {fprintf(stderr,"bad token ! at line %d\n",line);exit(1);} break;
-            case '<': if(p[1]=='='){addtok(tv,T_LE,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_LT,p,1,0,0,0,line);p++;} break;
-            case '>': if(p[1]=='='){addtok(tv,T_GE,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_GT,p,1,0,0,0,line);p++;} break;
+            case '<': if(p[1]=='<'&&p[2]=='='){addtok(tv,T_SHL_ASSIGN,p,3,0,0,0,line);p+=3;} else if(p[1]=='<'){addtok(tv,T_SHL,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_LE,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_LT,p,1,0,0,0,line);p++;} break;
+            case '>': if(p[1]=='>'&&p[2]=='='){addtok(tv,T_SHR_ASSIGN,p,3,0,0,0,line);p+=3;} else if(p[1]=='>'){addtok(tv,T_SHR,p,2,0,0,0,line);p+=2;} else if(p[1]=='='){addtok(tv,T_GE,p,2,0,0,0,line);p+=2;} else {addtok(tv,T_GT,p,1,0,0,0,line);p++;} break;
             default: fprintf(stderr,"bad char '%c' at line %d\n",*p,line); exit(1);
         }
     }

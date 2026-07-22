@@ -13,11 +13,14 @@ static const char *op_name(int op){
     switch((Op)op){
         case OP_CONST: return "OP_CONST"; case OP_NONE: return "OP_NONE"; case OP_TRUE: return "OP_TRUE"; case OP_FALSE: return "OP_FALSE";
         case OP_LOAD: return "OP_LOAD"; case OP_STORE: return "OP_STORE"; case OP_STORE_GLOBAL: return "OP_STORE_GLOBAL"; case OP_POP: return "OP_POP";
-        case OP_ADD: return "OP_ADD"; case OP_SUB: return "OP_SUB"; case OP_MUL: return "OP_MUL"; case OP_DIV: return "OP_DIV"; case OP_FLOOR_DIV: return "OP_FLOOR_DIV"; case OP_NEG: return "OP_NEG";
+        case OP_ADD: return "OP_ADD"; case OP_SUB: return "OP_SUB"; case OP_MUL: return "OP_MUL"; case OP_DIV: return "OP_DIV"; case OP_FLOOR_DIV: return "OP_FLOOR_DIV"; case OP_MOD: return "OP_MOD"; case OP_NEG: return "OP_NEG";
+        case OP_BITAND: return "OP_BITAND"; case OP_BITOR: return "OP_BITOR"; case OP_BITXOR: return "OP_BITXOR"; case OP_SHL: return "OP_SHL"; case OP_SHR: return "OP_SHR"; case OP_BITNOT: return "OP_BITNOT";
         case OP_EQ: return "OP_EQ"; case OP_NE: return "OP_NE"; case OP_LT: return "OP_LT"; case OP_LE: return "OP_LE"; case OP_GT: return "OP_GT"; case OP_GE: return "OP_GE";
         case OP_IS: return "OP_IS"; case OP_IS_NOT: return "OP_IS_NOT"; case OP_CONTAINS: return "OP_CONTAINS"; case OP_RAISE: return "OP_RAISE"; case OP_SETUP_EXCEPT: return "OP_SETUP_EXCEPT"; case OP_POP_EXCEPT: return "OP_POP_EXCEPT";
         case OP_JUMP: return "OP_JUMP"; case OP_JUMP_IF_FALSE: return "OP_JUMP_IF_FALSE"; case OP_JUMP_IF_FALSE_KEEP: return "OP_JUMP_IF_FALSE_KEEP"; case OP_JUMP_IF_TRUE_KEEP: return "OP_JUMP_IF_TRUE_KEEP";
         case OP_PRINT: return "OP_PRINT"; case OP_CALL: return "OP_CALL"; case OP_RETURN: return "OP_RETURN"; case OP_YIELD: return "OP_YIELD"; case OP_NOT: return "OP_NOT"; case OP_ITER: return "OP_ITER"; case OP_FOR_NEXT: return "OP_FOR_NEXT";
+        case OP_DUP: return "OP_DUP"; case OP_DUP2: return "OP_DUP2"; case OP_UNPACK: return "OP_UNPACK";
+        case OP_LIST_APPEND: return "OP_LIST_APPEND"; case OP_LIST_EXTEND: return "OP_LIST_EXTEND"; case OP_DICT_SETNAME: return "OP_DICT_SETNAME"; case OP_DICT_MERGE: return "OP_DICT_MERGE"; case OP_CALL_EX: return "OP_CALL_EX";
         case OP_MAKE_LIST: return "OP_MAKE_LIST"; case OP_MAKE_TUPLE: return "OP_MAKE_TUPLE"; case OP_MAKE_SET: return "OP_MAKE_SET"; case OP_MAKE_DICT: return "OP_MAKE_DICT"; case OP_GET_INDEX: return "OP_GET_INDEX"; case OP_GET_SLICE: return "OP_GET_SLICE"; case OP_SET_INDEX: return "OP_SET_INDEX";
         case OP_GET_ATTR: return "OP_GET_ATTR"; case OP_SET_ATTR: return "OP_SET_ATTR"; case OP_DEF: return "OP_DEF"; case OP_CLASS: return "OP_CLASS"; case OP_IMPORT: return "OP_IMPORT";
         default: return "OP_?";
@@ -26,7 +29,7 @@ static const char *op_name(int op){
 static int op_has_arg(int op){
     switch((Op)op){
         case OP_CONST: case OP_LOAD: case OP_STORE: case OP_STORE_GLOBAL: case OP_SETUP_EXCEPT: case OP_JUMP: case OP_JUMP_IF_FALSE: case OP_JUMP_IF_FALSE_KEEP: case OP_JUMP_IF_TRUE_KEEP:
-        case OP_CALL: case OP_FOR_NEXT: case OP_MAKE_LIST: case OP_MAKE_TUPLE: case OP_MAKE_SET: case OP_MAKE_DICT: case OP_GET_ATTR: case OP_SET_ATTR: case OP_DEF: case OP_CLASS: case OP_IMPORT:
+        case OP_CALL: case OP_FOR_NEXT: case OP_UNPACK: case OP_DICT_SETNAME: case OP_MAKE_LIST: case OP_MAKE_TUPLE: case OP_MAKE_SET: case OP_MAKE_DICT: case OP_GET_ATTR: case OP_SET_ATTR: case OP_DEF: case OP_CLASS: case OP_IMPORT:
             return 1;
         default: return 0;
     }

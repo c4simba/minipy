@@ -32,7 +32,41 @@ Value binary_add(Value a,Value b){
     if(is_obj(a,O_STRING)||is_obj(b,O_STRING)){ char *sa=value_to_cstr(a); char *sb=value_to_cstr(b); int n=(int)(strlen(sa)+strlen(sb)); char *r=(char*)xmalloc((size_t)n+1); strcpy(r,sa); strcat(r,sb); Value v=stringv(r); free(sa); free(sb); free(r); return v; }
     runtime_error("unsupported operands for +"); return nonev();
 }
-Value binary_num(Value a,Value b,Op op){ if(!is_number(a)||!is_number(b)) runtime_error("numeric operator on non-number"); if(op==OP_DIV) return floatv(as_double(a)/as_double(b)); if(op==OP_FLOOR_DIV){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) runtime_error("float floor division by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv((double)t); } int64_t x=as_int(a),y=as_int(b); if(y==0) runtime_error("integer division or modulo by zero"); int64_t q=x/y; if((x%y!=0) && ((x<0)!=(y<0))) q--; return intv(q); } if(op==OP_POWER){ if((a.type==V_INT||a.type==V_BOOL)&&(b.type==V_INT||b.type==V_BOOL)&&as_int(b)>=0){ int64_t base=as_int(a),e=as_int(b),r=1; for(int64_t i=0;i<e;i++) r*=base; return intv(r); } double base=as_double(a); double exp=as_double(b); double r=1; int e_neg=0; if(exp<0){ e_neg=1; exp=-exp; } int ei=(int)exp; for(int i=0;i<ei;i++) r*=base; if(e_neg) r=1.0/r; return floatv(r); } if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(op==OP_SUB)return floatv(x-y); if(op==OP_MUL)return floatv(x*y); } int64_t x=as_int(a),y=as_int(b); if(op==OP_SUB)return intv(x-y); return intv(x*y); }
+/* printf-style string formatting for  "fmt" % args  (args: single value or tuple). */
+static Value str_format(Value fmtv, Value args){
+    const char *fmt=fmtv.as.obj->as.str.s;
+    Value single[1]; Value *av; int an, ai=0;
+    if(is_obj(args,O_TUPLE)){ av=args.as.obj->as.tuple.items; an=args.as.obj->as.tuple.count; }
+    else { single[0]=args; av=single; an=1; }
+    size_t cap=64, len=0; char *out=(char*)xmalloc(cap+1);
+    #define APPEND_CH(c) do{ if(len>=cap){ cap*=2; out=(char*)xrealloc(out,cap+1);} out[len++]=(c); }while(0)
+    #define APPEND_STR(s) do{ const char *_s=(s); while(*_s){ APPEND_CH(*_s); _s++; } }while(0)
+    for(const char *p=fmt; *p; p++){
+        if(*p!='%'){ APPEND_CH(*p); continue; }
+        p++;
+        if(*p=='%'){ APPEND_CH('%'); continue; }
+        char spec[32]; int si=0; spec[si++]='%';
+        while(*p && (*p=='-'||*p=='+'||*p==' '||*p=='0'||*p=='#'||(*p>='0'&&*p<='9')||*p=='.')){ if(si<28) spec[si++]=*p; p++; }
+        char conv=*p; if(!conv) break;
+        Value arg = (ai<an)?av[ai++]:nonev();
+        char tmp[128];
+        if(conv=='s'){ spec[si++]=conv; spec[si]=0; char *sv=value_to_cstr(arg); size_t need=strlen(sv)+64; char *buf=(char*)xmalloc(need); snprintf(buf,need,spec,sv); APPEND_STR(buf); free(buf); free(sv); }
+        else if(conv=='d'||conv=='i'||conv=='x'||conv=='X'||conv=='o'||conv=='u'){ spec[si++]='l'; spec[si++]='l'; spec[si++]=(conv=='i')?'d':conv; spec[si]=0; snprintf(tmp,sizeof(tmp),spec,(long long)as_int(arg)); APPEND_STR(tmp); }
+        else if(conv=='f'||conv=='F'||conv=='e'||conv=='E'||conv=='g'||conv=='G'){ spec[si++]=conv; spec[si]=0; snprintf(tmp,sizeof(tmp),spec,as_double(arg)); APPEND_STR(tmp); }
+        else if(conv=='c'){ APPEND_CH((char)as_int(arg)); }
+        else { APPEND_CH('%'); APPEND_CH(conv); }
+    }
+    out[len]=0;
+    Value r=stringv_len(out,(int)len); free(out); return r;
+    #undef APPEND_CH
+    #undef APPEND_STR
+}
+Value binary_num(Value a,Value b,Op op){
+    if(op==OP_MOD && is_obj(a,O_STRING)) return str_format(a,b);
+    if(!is_number(a)||!is_number(b)) runtime_error("numeric operator on non-number");
+    if(op==OP_BITAND||op==OP_BITOR||op==OP_BITXOR||op==OP_SHL||op==OP_SHR){ if(a.type==V_FLOAT||b.type==V_FLOAT) runtime_error("bitwise operator on float"); int64_t x=as_int(a),y=as_int(b); switch(op){ case OP_BITAND: return intv(x&y); case OP_BITOR: return intv(x|y); case OP_BITXOR: return intv(x^y); case OP_SHL: return intv(x<<y); case OP_SHR: return intv(x>>y); default: break; } }
+    if(op==OP_MOD){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) runtime_error("float modulo by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv(x-(double)t*y); } int64_t x=as_int(a),y=as_int(b); if(y==0) runtime_error("integer modulo by zero"); int64_t r=x%y; if(r!=0 && ((r<0)!=(y<0))) r+=y; return intv(r); }
+    if(op==OP_DIV) return floatv(as_double(a)/as_double(b)); if(op==OP_FLOOR_DIV){ if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(y==0.0) runtime_error("float floor division by zero"); double q=x/y; int64_t t=(int64_t)q; if((double)t>q) t--; return floatv((double)t); } int64_t x=as_int(a),y=as_int(b); if(y==0) runtime_error("integer division or modulo by zero"); int64_t q=x/y; if((x%y!=0) && ((x<0)!=(y<0))) q--; return intv(q); } if(op==OP_POWER){ if((a.type==V_INT||a.type==V_BOOL)&&(b.type==V_INT||b.type==V_BOOL)&&as_int(b)>=0){ int64_t base=as_int(a),e=as_int(b),r=1; for(int64_t i=0;i<e;i++) r*=base; return intv(r); } double base=as_double(a); double exp=as_double(b); double r=1; int e_neg=0; if(exp<0){ e_neg=1; exp=-exp; } int ei=(int)exp; for(int i=0;i<ei;i++) r*=base; if(e_neg) r=1.0/r; return floatv(r); } if(a.type==V_FLOAT||b.type==V_FLOAT){ double x=as_double(a),y=as_double(b); if(op==OP_SUB)return floatv(x-y); if(op==OP_MUL)return floatv(x*y); } int64_t x=as_int(a),y=as_int(b); if(op==OP_SUB)return intv(x-y); return intv(x*y); }
 Value compare(Value a,Value b,Op op){ int r=0; if(is_number(a)&&is_number(b)){ double x=as_double(a),y=as_double(b); r=(op==OP_LT?x<y:op==OP_LE?x<=y:op==OP_GT?x>y:x>=y); } else if(is_obj(a,O_STRING)&&is_obj(b,O_STRING)){ int c=strcmp(a.as.obj->as.str.s,b.as.obj->as.str.s); r=(op==OP_LT?c<0:op==OP_LE?c<=0:op==OP_GT?c>0:c>=0); } else runtime_error("comparison between unsupported types"); return boolv(r); }
 
 Value get_attr(Value obj,const char *name){
@@ -40,6 +74,7 @@ Value get_attr(Value obj,const char *name){
     if(is_obj(obj,O_CLASS)){ Value v; if(dict_get(obj.as.obj->as.klass.methods,name,&v)) return v; runtime_error("unknown class attribute"); }
     if(is_obj(obj,O_MODULE)){ Value v; if(dict_get(obj.as.obj->as.mod.dict,name,&v)) return v; runtime_error("unknown module attribute"); }
     if(is_obj(obj,O_LIST)&&strcmp(name,"append")==0){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2("append"); return objv(b); }
+    if(is_obj(obj,O_SET)&&strcmp(name,"add")==0){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2("add"); return objv(b); }
     runtime_error("attribute access on unsupported type"); return nonev();
 }
 void set_attr(Value obj,const char *name,Value val){ if(is_obj(obj,O_INSTANCE)){ dict_set(obj.as.obj->as.inst.fields,name,val); return; } if(is_obj(obj,O_MODULE)){ dict_set(obj.as.obj->as.mod.dict,name,val); return; } runtime_error("cannot set attribute on this object"); }

@@ -9,6 +9,10 @@ Value floatv(double f){ Value v; v.type=V_FLOAT; v.as.f=f; return v; }
 Value objv(Obj *o){ Value v; v.type=V_OBJ; v.as.obj=o; return v; }
 Value nativev(Native *n){ Value v; v.type=V_NATIVE; v.as.native=n; return v; }
 
+/* Format a double the way Python str()/repr() does: integral floats keep a
+   trailing ".0" (2.0 -> "2.0", not "2"). */
+static void fmt_float(char *buf, size_t n, double f){ snprintf(buf,n,"%.15g",f); if(!strpbrk(buf,".eEnN")){ size_t l=strlen(buf); if(l+2<n){ buf[l]='.'; buf[l+1]='0'; buf[l+2]=0; } } }
+
 Obj *new_obj(OType t){ Obj *o=(Obj*)xmalloc(sizeof(Obj)); memset(o,0,sizeof(Obj)); o->type=t; return o; }
 Value stringv_len(const char *s,int n){ Obj *o=new_obj(O_STRING); o->as.str.s=xstrndup2(s,n); o->as.str.len=n; return objv(o); }
 Value stringv(const char *s){ return stringv_len(s,(int)strlen(s)); }
@@ -41,20 +45,42 @@ char *value_to_cstr(Value v){
     if(v.type==V_NONE) return xstrdup2("None");
     if(v.type==V_BOOL) return xstrdup2(v.as.boolean?"True":"False");
     if(v.type==V_INT){ snprintf(buf,sizeof(buf),"%lld",(long long)v.as.i); return xstrdup2(buf); }
-    if(v.type==V_FLOAT){ snprintf(buf,sizeof(buf),"%.15g",v.as.f); return xstrdup2(buf); }
+    if(v.type==V_FLOAT){ fmt_float(buf,sizeof(buf),v.as.f); return xstrdup2(buf); }
     if(v.type==V_NATIVE) return xstrdup2(v.as.native->name);
     if(is_obj(v,O_STRING)) return xstrdup2(v.as.obj->as.str.s);
     if(is_obj(v,O_EXCEPTION)) return xstrdup2(v.as.obj->as.exc.message);
     snprintf(buf,sizeof(buf),"<object %p>",(void*)v.as.obj); return xstrdup2(buf);
 }
 
-void print_value(Value v){
-    switch(v.type){ case V_NONE: printf("None"); break; case V_BOOL: printf(v.as.boolean?"True":"False"); break; case V_INT: printf("%lld",(long long)v.as.i); break; case V_FLOAT: printf("%.15g",v.as.f); break; case V_NATIVE: printf("<native %s>",v.as.native->name); break; case V_OBJ:{ Obj *o=v.as.obj; switch(o->type){
-        case O_STRING: printf("%s",o->as.str.s); break;
-        case O_LIST: printf("["); for(int i=0;i<o->as.list.count;i++){ if(i)printf(", "); print_value(o->as.list.items[i]); } printf("]"); break;
-        case O_TUPLE: printf("("); for(int i=0;i<o->as.tuple.count;i++){ if(i)printf(", "); print_value(o->as.tuple.items[i]); } if(o->as.tuple.count==1) printf(","); printf(")"); break;
-        case O_SET: printf("{"); for(int i=0;i<o->as.set.count;i++){ if(i)printf(", "); print_value(o->as.set.items[i]); } printf("}"); break;
-        case O_DICT: printf("{"); for(int i=0;i<o->as.dict.count;i++){ if(i)printf(", "); printf("%s: ",o->as.dict.keys[i]); print_value(o->as.dict.vals[i]); } printf("}"); break;
-        case O_FUNCTION: printf("<function %s>",o->as.fn.name); break; case O_CLASS: printf("<class %s>",o->as.klass.name); break; case O_INSTANCE: printf("<%s instance>",o->as.inst.klass->name); break; case O_BOUND_METHOD: printf("<bound method %s>",o->as.bm.fn->name); break; case O_BOUND_NATIVE: printf("<bound native %s>",o->as.bn.name); break; case O_MODULE: printf("<module %s>",o->as.mod.name); break; case O_ITER: printf("<iterator>"); break; case O_GENERATOR: printf("<generator>"); break; case O_EXCEPTION: printf("%s",o->as.exc.message); break; } break; }
-    }
+/* print() uses str() semantics: bare strings unquoted, containers show the
+   repr of their elements - exactly value_repr(v, repr=0). */
+void print_value(Value v){ char *s=value_repr(v,0); printf("%s",s); free(s); }
+
+/* ---- value_repr: Python-style str()/repr() ---- */
+typedef struct { char *s; int len, cap; } RBuf;
+static void rb_ch(RBuf *b, char c){ if(b->len>=b->cap){ b->cap=b->cap?b->cap*2:64; b->s=(char*)xrealloc(b->s,(size_t)b->cap+1); } b->s[b->len++]=c; }
+static void rb_str(RBuf *b, const char *s){ while(*s) rb_ch(b,*s++); }
+static void repr_into(RBuf *b, Value v, int repr){
+    char tmp[128];
+    if(v.type==V_NONE){ rb_str(b,"None"); return; }
+    if(v.type==V_BOOL){ rb_str(b,v.as.boolean?"True":"False"); return; }
+    if(v.type==V_INT){ snprintf(tmp,sizeof(tmp),"%lld",(long long)v.as.i); rb_str(b,tmp); return; }
+    if(v.type==V_FLOAT){ fmt_float(tmp,sizeof(tmp),v.as.f); rb_str(b,tmp); return; }
+    if(v.type==V_NATIVE){ rb_str(b,"<built-in function "); rb_str(b,v.as.native->name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_STRING)){ if(repr){ rb_ch(b,'\''); rb_str(b,v.as.obj->as.str.s); rb_ch(b,'\''); } else rb_str(b,v.as.obj->as.str.s); return; }
+    if(is_obj(v,O_LIST)){ List *l=&v.as.obj->as.list; rb_ch(b,'['); for(int i=0;i<l->count;i++){ if(i) rb_str(b,", "); repr_into(b,l->items[i],1); } rb_ch(b,']'); return; }
+    if(is_obj(v,O_TUPLE)){ List *l=&v.as.obj->as.tuple; rb_ch(b,'('); for(int i=0;i<l->count;i++){ if(i) rb_str(b,", "); repr_into(b,l->items[i],1); } if(l->count==1) rb_ch(b,','); rb_ch(b,')'); return; }
+    if(is_obj(v,O_SET)){ List *l=&v.as.obj->as.set; if(l->count==0){ rb_str(b,"set()"); return; } rb_ch(b,'{'); for(int i=0;i<l->count;i++){ if(i) rb_str(b,", "); repr_into(b,l->items[i],1); } rb_ch(b,'}'); return; }
+    if(is_obj(v,O_DICT)){ Dict *d=&v.as.obj->as.dict; rb_ch(b,'{'); for(int i=0;i<d->count;i++){ if(i) rb_str(b,", "); rb_ch(b,'\''); rb_str(b,d->keys[i]); rb_str(b,"': "); repr_into(b,d->vals[i],1); } rb_ch(b,'}'); return; }
+    if(is_obj(v,O_FUNCTION)){ rb_str(b,"<function "); rb_str(b,v.as.obj->as.fn.name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_CLASS)){ rb_str(b,"<class "); rb_str(b,v.as.obj->as.klass.name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_INSTANCE)){ rb_ch(b,'<'); rb_str(b,v.as.obj->as.inst.klass->name); rb_str(b," instance>"); return; }
+    if(is_obj(v,O_BOUND_METHOD)){ rb_str(b,"<bound method "); rb_str(b,v.as.obj->as.bm.fn->name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_BOUND_NATIVE)){ rb_str(b,"<bound native "); rb_str(b,v.as.obj->as.bn.name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_MODULE)){ rb_str(b,"<module "); rb_str(b,v.as.obj->as.mod.name); rb_ch(b,'>'); return; }
+    if(is_obj(v,O_ITER)){ rb_str(b,"<iterator>"); return; }
+    if(is_obj(v,O_GENERATOR)){ rb_str(b,"<generator>"); return; }
+    if(is_obj(v,O_EXCEPTION)){ rb_str(b,v.as.obj->as.exc.message); return; }
+    { char *s=value_to_cstr(v); rb_str(b,s); free(s); }
 }
+char *value_repr(Value v, int repr){ RBuf b; b.s=NULL; b.len=0; b.cap=0; repr_into(&b,v,repr); rb_ch(&b,0); b.len--; return b.s?b.s:xstrdup2(""); }

@@ -19,7 +19,7 @@ typedef struct { char *s; int len; } String;
 typedef struct { Value *items; int count, cap; } List;
 typedef struct { char **keys; Value *vals; int count, cap; } Dict;
 
-struct Function { char *name; char **params; int arity; int min_arity; Value *defaults; int default_count; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Obj *owner; };
+struct Function { char *name; char **params; int arity; int min_arity; Value *defaults; int default_count; int star_index; int dstar_index; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Obj *owner; };
 typedef struct { char *name; Dict *methods; } Class;
 typedef struct { Class *klass; Dict *fields; } Instance;
 typedef struct { Value receiver; Function *fn; } BoundMethod;
@@ -61,5 +61,8 @@ char    *value_to_cstr(Value v);
    fundamentally a Value operation and is called from containers.c/vm. */
 void print_value(Value v);
 int  val_equal(Value a, Value b);
+/* Python-style textual form. repr!=0 quotes strings; containers always show the
+   repr of their elements. Returns a heap string the caller frees. */
+char *value_repr(Value v, int repr);
 
 #endif /* MPY_VALUE_H */

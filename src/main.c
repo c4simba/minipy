@@ -42,6 +42,11 @@ int main(int argc,char **argv){
     if(setjmp(vm.panic)){ print_traceback(is_obj(vm.pending_exception,O_EXCEPTION)?vm.pending_exception:exceptionv("RuntimeError",vm.error_msg?vm.error_msg:"error",nonev())); return 1; }
     vm.builtins=dict_new(); vm.modules=dict_new();
     dict_set(vm.builtins,"len",nativev(&N_LEN)); dict_set(vm.builtins,"range",nativev(&N_RANGE)); dict_set(vm.builtins,"next",nativev(&N_NEXT)); dict_set(vm.builtins,"iter",nativev(&N_ITER)); dict_set(vm.builtins,"input",nativev(&N_INPUT));
+    dict_set(vm.builtins,"str",nativev(&N_STR)); dict_set(vm.builtins,"repr",nativev(&N_REPR)); dict_set(vm.builtins,"int",nativev(&N_INT)); dict_set(vm.builtins,"float",nativev(&N_FLOAT)); dict_set(vm.builtins,"bool",nativev(&N_BOOL));
+    dict_set(vm.builtins,"list",nativev(&N_LIST)); dict_set(vm.builtins,"tuple",nativev(&N_TUPLE)); dict_set(vm.builtins,"set",nativev(&N_SET)); dict_set(vm.builtins,"dict",nativev(&N_DICT));
+    dict_set(vm.builtins,"abs",nativev(&N_ABS)); dict_set(vm.builtins,"min",nativev(&N_MIN)); dict_set(vm.builtins,"max",nativev(&N_MAX)); dict_set(vm.builtins,"sum",nativev(&N_SUM)); dict_set(vm.builtins,"sorted",nativev(&N_SORTED)); dict_set(vm.builtins,"reversed",nativev(&N_REVERSED));
+    dict_set(vm.builtins,"enumerate",nativev(&N_ENUMERATE)); dict_set(vm.builtins,"zip",nativev(&N_ZIP)); dict_set(vm.builtins,"map",nativev(&N_MAP)); dict_set(vm.builtins,"filter",nativev(&N_FILTER));
+    dict_set(vm.builtins,"type",nativev(&N_TYPE)); dict_set(vm.builtins,"isinstance",nativev(&N_ISINSTANCE)); dict_set(vm.builtins,"ord",nativev(&N_ORD)); dict_set(vm.builtins,"chr",nativev(&N_CHR)); dict_set(vm.builtins,"round",nativev(&N_ROUND)); dict_set(vm.builtins,"any",nativev(&N_ANY)); dict_set(vm.builtins,"all",nativev(&N_ALL));
     Obj *be=new_obj(O_CLASS); be->as.klass.name=xstrdup2("BaseException"); be->as.klass.methods=dict_new();
     Obj *re=new_obj(O_CLASS); re->as.klass.name=xstrdup2("RuntimeError"); re->as.klass.methods=dict_new();
     Obj *se=new_obj(O_CLASS); se->as.klass.name=xstrdup2("StopIteration"); se->as.klass.methods=dict_new();

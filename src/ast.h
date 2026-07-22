@@ -89,6 +89,7 @@ struct Stmt {
     char **decorators; int decorator_count, decorator_cap;
     Stmt **body; int body_count, body_cap;
     Stmt **orelse; int orelse_count, orelse_cap;
+    int star_index, dstar_index;   /* def params: index of *args / **kwargs, else -1 */
     SymScope *scope;
 };
 
