@@ -1,0 +1,17 @@
+MiniPy - Mini Python Interpreter
+Script: tests/for_bool_test.mpy
+
+for over list
+10
+for over string
+a-b-c-
+for over dict
+2
+bool ops
+False
+True
+True
+fallback
+123
+False
+True

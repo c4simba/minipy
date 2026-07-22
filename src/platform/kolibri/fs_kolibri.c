@@ -15,14 +15,14 @@
  *   +20: path string (null-terminated)
  */
 
-static const char *mpy_fs_backend_name(void){
+#include "fs.h"
+
+const char *mpy_fs_backend_name(void){
     return "kolibrios-native";
 }
 
-/* ----------------------------------------------------------------
- * Subfunction 0: Read file at position.
- *   Returns: eax = 0 on success (or 6=EOF), ebx = bytes read
- * ---------------------------------------------------------------- */
+/* Subfunction 0: Read file at position.
+ *   Returns: eax = 0 on success (or 6=EOF), ebx = bytes read */
 static int kos_read_file(const char *path, void *buf, int size, int pos_lo, int pos_hi){
     unsigned char bi[80] __attribute__((aligned(16))) = {0};
     *(int*)(bi + 0) = 0;          /* subfunction: read */
@@ -46,20 +46,7 @@ static int kos_read_file(const char *path, void *buf, int size, int pos_lo, int 
     return size; /* actual bytes read */
 }
 
-/* ----------------------------------------------------------------
- * Subfunction 5: Get file info.
- * BDVK returned without name (40 bytes):
- *   +0:  dword  attributes
- *   +4:  byte   codepage
- *   +5:  3*byte reserved
- *   +8:  dword  creation_time
- *   +12: dword  creation_date
- *   +16: dword  access_time
- *   +20: dword  access_date
- *   +24: dword  modify_time
- *   +28: dword  modify_date
- *   +32: qword  file_size
- * ---------------------------------------------------------------- */
+/* Subfunction 5: Get file info (BDVK, file_size at +32). */
 static int kos_file_size(const char *path, int *lo32, int *hi32){
     unsigned char bi[80] __attribute__((aligned(16))) = {0};
     unsigned char bdvk[40] __attribute__((aligned(16))) = {0};
@@ -94,10 +81,8 @@ static int kos_file_size(const char *path, int *lo32, int *hi32){
     return result;
 }
 
-/* ----------------------------------------------------------------
- * Read entire file into a heap-allocated buffer.
- * ---------------------------------------------------------------- */
-static char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message){
+/* Read entire file into a heap-allocated buffer. */
+char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message){
     /* First, try to get file size */
     int lo, hi;
     int st = kos_file_size(normalized_path, &lo, &hi);

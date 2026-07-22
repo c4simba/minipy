@@ -1,40 +1,6 @@
-/* ========================= FILE SYSTEM ABSTRACTION =========================
+/* ========================= Filesystem abstraction (platform-independent) ========================= */
 
-   MiniPy talks to the outside filesystem only through this layer.
-
-   Public functions used by the VM/import code:
-
-       mpy_fs_read_file(path)
-       mpy_fs_try_read_file(path, &error_message)
-       mpy_fs_dirname(path)
-       mpy_fs_module_path(importer_dir, module_name)
-       mpy_fs_backend_name()
-
-   Porting rule:
-   - keep the common path/module logic here;
-   - put actual platform I/O in a small backend file;
-   - for ROM/flash/RTOS ports, add another backend that implements
-     mpy_fs_backend_read_file(path, &error_message).
-
-   Current backends:
-   - src/08_fs_host.c      default hosted stdio backend;
-   - src/08_fs_kolibri.c   KolibriOS/newlib backend selected with MPY_FS_KOLIBRI.
-
-   Contract:
-   - returned strings are heap-allocated with xmalloc/xstrdup2 and must be free()d
-     by the caller;
-   - read buffers are NUL-terminated;
-   - mpy_fs_try_read_file returns NULL and fills *error_message on I/O errors;
-   - mpy_fs_read_file is a convenience for startup/diagnostic paths and calls die()
-     on I/O errors.
-*/
-
-#if defined(MPY_PLATFORM_KOLIBRIOS) && !defined(MPY_FS_KOLIBRI)
-#define MPY_FS_KOLIBRI 1
-#endif
-#if defined(MPY_TARGET_KOLIBRIOS) && !defined(MPY_FS_KOLIBRI)
-#define MPY_FS_KOLIBRI 1
-#endif
+#include "fs.h"
 
 #ifndef MPY_FS_PATH_SEP
 #define MPY_FS_PATH_SEP '/'
@@ -77,7 +43,7 @@ static char *mpy_fs_normalize_path(const char *path){
     return r;
 }
 
-static char *mpy_fs_dirname(const char *path){
+char *mpy_fs_dirname(const char *path){
     char *norm=mpy_fs_normalize_path(path);
     const char *last=NULL;
     for(const char *p=norm; *p; p++) if(*p==MPY_FS_PATH_SEP) last=p;
@@ -114,7 +80,7 @@ static char *mpy_fs_module_relpath(const char *module_name){
     return r;
 }
 
-static char *mpy_fs_module_path(const char *importer_dir,const char *module_name){
+char *mpy_fs_module_path(const char *importer_dir,const char *module_name){
     char *rel=mpy_fs_module_relpath(module_name);
     const char *base=(importer_dir && importer_dir[0]) ? importer_dir : ".";
     if(strcmp(base,".")==0 && strcmp(MPY_FS_DEFAULT_IMPORT_DIR,".")!=0){
@@ -133,7 +99,7 @@ static char *mpy_fs_format_error(const char *prefix,const char *path){
     return msg;
 }
 
-static char *mpy_fs_read_file_stdio_path(const char *path,char **error_message){
+char *mpy_fs_read_file_stdio_path(const char *path,char **error_message){
     errno=0;
     FILE *f=fopen(path,"rb");
     if(!f){
@@ -165,16 +131,7 @@ static char *mpy_fs_read_file_stdio_path(const char *path,char **error_message){
     return buf;
 }
 
-static const char *mpy_fs_backend_name(void);
-static char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message);
-
-#if defined(MPY_FS_KOLIBRI)
-#include "08_fs_kolibri.c"
-#else
-#include "08_fs_host.c"
-#endif
-
-static char *mpy_fs_try_read_file(const char *path,char **error_message){
+char *mpy_fs_try_read_file(const char *path,char **error_message){
     if(error_message) *error_message=NULL;
     char *norm=mpy_fs_normalize_path(path);
     char *data=mpy_fs_backend_read_file(norm,error_message);
@@ -200,7 +157,7 @@ static char *mpy_fs_try_read_file(const char *path,char **error_message){
     return data;
 }
 
-static char *mpy_fs_read_file(const char *path){
+char *mpy_fs_read_file(const char *path){
     char *err=NULL;
     char *data=mpy_fs_try_read_file(path,&err);
     if(!data){

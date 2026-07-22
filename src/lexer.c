@@ -1,14 +1,6 @@
 /* ========================= Lexer ========================= */
 
-typedef enum {
-    T_EOF,T_NEWLINE,T_INDENT,T_DEDENT,T_NUMBER,T_STRING,T_NAME,
-    T_IF,T_ELIF,T_ELSE,T_WHILE,T_FOR,T_IN,T_DEF,T_RETURN,T_PRINT,T_CLASS,T_IMPORT,T_FROM,T_AS,T_TRUE,T_FALSE,T_NONE,T_AND,T_OR,T_NOT,T_IS,T_BREAK,T_CONTINUE,T_PASS,T_RAISE,T_WITH,T_TRY,T_EXCEPT,T_FINALLY,T_GLOBAL,T_NONLOCAL,T_DEL,T_LAMBDA,T_YIELD,T_ASYNC,T_AWAIT,T_MATCH,T_CASE,
-    T_LP,T_RP,T_LB,T_RB,T_LC,T_RC,T_COLON,T_COMMA,T_DOT,T_AT,T_ASSIGN,
-    T_PLUS,T_MINUS,T_STAR,T_SLASH,T_POWER,T_FLOOR_DIV,T_PLUS_ASSIGN,T_MINUS_ASSIGN,T_STAR_ASSIGN,T_SLASH_ASSIGN,T_EQ,T_NE,T_LT,T_LE,T_GT,T_GE
-} TokKind;
-
-typedef struct { TokKind kind; char *text; int64_t i; double f; int is_float; int line; } Tok;
-typedef struct { Tok *v; int n,cap; } TokVec;
+#include "lexer.h"
 
 static void addtok(TokVec *tv,TokKind k,const char *s,int len,int64_t i,double f,int isf,int line){
     if(tv->n==tv->cap){ tv->cap=tv->cap?tv->cap*2:256; tv->v=(Tok*)xrealloc(tv->v,sizeof(Tok)*(size_t)tv->cap); }
@@ -111,7 +103,7 @@ static void lex_line(TokVec *tv,const char *p,int line){
     }
 }
 
-static TokVec lex(const char *src){
+TokVec lex(const char *src){
     TokVec tv={0}; int ind[256]; int top=0; ind[0]=0; int line=1; const char *p=src;
     while(*p){
         const char *ls=p; const char *e=my_strchr(p,'\n'); int len=e?(int)(e-p):(int)my_strlen(p); p=e?e+1:p+len; int i=0,spaces=0; while(i<len&&ls[i]==' '){spaces++;i++;} int j=i; while(j<len&&(ls[j]==' '||ls[j]=='\t'||ls[j]=='\r'))j++; if(j>=len||ls[j]=='#'){line++;continue;}

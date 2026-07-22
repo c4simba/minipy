@@ -1,0 +1,18 @@
+MiniPy - Mini Python Interpreter
+Script: tests/syntax_test.mpy
+
+5
+five
+0
+2
+for else
+2
+True
+True
+True
+(2, 3)
+[2, 3]
+{1, 2}
+12
+resource
+None

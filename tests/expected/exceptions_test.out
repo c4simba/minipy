@@ -1,0 +1,11 @@
+MiniPy - Mini Python Interpreter
+Script: tests/exceptions_test.mpy
+
+exceptions
+boom
+finally explicit
+list index out of range
+finally vm
+1
+stop
+unsupported operands for +

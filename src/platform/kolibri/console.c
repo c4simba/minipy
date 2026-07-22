@@ -1,18 +1,10 @@
 /* ========================= KolibriOS Console via Shared Memory =========================
  * Uses named buffer "{PID}-SHELL" (f68.22/f68.23).
- * Correct shell command codes from the example:
- *   SC_EXIT=1  SC_PUTC=2  SC_PUTS=3  SC_GETC=4  SC_GETS=5  SC_CLS=6
+ * Shell command codes: SC_EXIT=1 SC_PUTC=2 SC_PUTS=3 SC_GETC=4 SC_GETS=5 SC_CLS=6
  * All output echoed to stderr AND written to console buffer.
  */
 
-#if defined(MPY_PLATFORM_KOLIBRI) || defined(MPY_TARGET_KOLIBRIOS) || defined(MPY_FS_KOLIBRI)
-
-int  kol_console_init(void);
-void kol_console_deinit(void);
-void kol_console_puts(const char *s);
-void kol_console_gets(char *buf, int maxlen);
-void kol_console_cls(void);
-void kol_console_printf(const char *fmt, ...);
+#include "platform/platform.h"
 
 static char *g_cbuf = NULL;
 static char  g_cname[32];
@@ -119,4 +111,39 @@ void kol_console_printf(const char *fmt,...){
     va_end(args);
 }
 
-#endif /* KOLIBRI */
+/* Dual printf: format to a buffer, echo to stderr AND the console.
+   Handles %s, %d, %lld, %.15g, %c, %p, %%. Backs the `#define printf` in
+   platform.h so all core printf() output reaches the KolibriOS console. */
+void _dual_printf(const char *fmt, ...){
+    char buf[256]; int pos=0;
+    va_list args; va_start(args, fmt);
+    for(const char *p=fmt;*p&&pos<(int)sizeof(buf)-32;p++){
+        if(*p!='%'){buf[pos++]=*p;continue;}
+        p++; if(*p==0)break;
+        if(*p=='s'){const char *s=va_arg(args,const char*);if(!s)s="(null)";
+            int sl=(int)strlen(s),rm=(int)sizeof(buf)-32-pos;if(sl>rm)sl=rm;memcpy(buf+pos,s,(size_t)sl);pos+=sl;}
+        else if(*p=='d'||*p=='i'){int v=va_arg(args,int);int neg=0;if(v<0){neg=1;v=-v;}
+            char t[16];int ti=0;if(v==0)t[ti++]='0';while(v>0){t[ti++]=(char)('0'+v%10);v/=10;}
+            if(neg)buf[pos++]='-';while(ti>0)buf[pos++]=t[--ti];}
+        else if(*p=='l'){p++;if(*p=='l'){p++;long long v=va_arg(args,long long);int neg=0;if(v<0){neg=1;v=-v;}
+            char t[32];int ti=0;if(v==0)t[ti++]='0';while(v>0){t[ti++]=(char)('0'+v%10);v/=10;}
+            if(neg)buf[pos++]='-';while(ti>0)buf[pos++]=t[--ti];}}
+        else if(*p=='.'){p++;int prec=0;while(*p>='0'&&*p<='9'){prec=prec*10+(*p-'0');p++;}
+            if(*p=='g'){double d=va_arg(args,double);int neg=0;
+                if(d<0){neg=1;d=-d;}long long ip=(long long)d;double fp=d-(double)ip;
+                char t2[32];int ti=0;long long iv=ip;if(iv==0)t2[ti++]='0';while(iv>0){t2[ti++]=(char)('0'+iv%10);iv/=10;}
+                if(neg)buf[pos++]='-';while(ti>0)buf[pos++]=t2[--ti];
+                if(prec>0){buf[pos++]='.';for(int i=0;i<prec;i++){fp*=10.0;int dg=(int)fp;fp-=dg;buf[pos++]=(char)('0'+dg);}}}}
+        else if(*p=='c'){buf[pos++]=(char)va_arg(args,int);}
+        else if(*p=='p'){buf[pos++]='0';buf[pos++]='x';
+            unsigned long long a=(unsigned long long)(uintptr_t)va_arg(args,void*);
+            char t[32];int ti=0;if(a==0)t[ti++]='0';while(a>0){int d=(int)(a%16);t[ti++]=(char)(d<10?'0'+d:'a'+d-10);a/=16;}
+            while(ti>0)buf[pos++]=t[--ti];}
+        else if(*p=='%')buf[pos++]='%';
+        else buf[pos++]='?';
+    }
+    buf[pos]=0;
+    fprintf(stderr,"%s",buf);
+    kol_console_puts(buf);
+    va_end(args);
+}

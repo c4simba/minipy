@@ -1,0 +1,25 @@
+MiniPy - Mini Python Interpreter
+Script: tests/cpythonish_test.mpy
+
+defaults
+15
+7
+decorator
+5
+global
+9
+nonlocal
+2
+3
+try
+boom
+finally
+iter
+7
+8
+stop
+object protocol
+3
+7
+8
+True

@@ -1,166 +1,7 @@
-/* ========================= Frontend AST + Symbol Table =========================
-   This module owns the typed frontend tree. The VM compiler still reuses the
-   token stream for bytecode generation, but every source file now gets a real
-   statement AST plus a symbol table produced by AST traversal.
-*/
+/* ========================= Frontend parser + symbol table ========================= */
 
-typedef enum {
-    EXPR_TOKEN_RANGE,
-    EXPR_LITERAL,
-    EXPR_NAME,
-    EXPR_UNARY,
-    EXPR_BINARY,
-    EXPR_BOOL,
-    EXPR_CALL,
-    EXPR_ATTRIBUTE,
-    EXPR_INDEX,
-    EXPR_SLICE,
-    EXPR_LIST,
-    EXPR_TUPLE,
-    EXPR_SET,
-    EXPR_DICT,
-    EXPR_LAMBDA
-} ExprKind;
-
-typedef struct Expr Expr;
-struct Expr {
-    ExprKind kind;
-    char *name;
-    int line;
-    int start, end;
-    Expr **items;
-    int count, cap;
-};
-
-typedef enum {
-    STMT_MODULE,
-    STMT_BLOCK,
-    STMT_IF,
-    STMT_WHILE,
-    STMT_FOR,
-    STMT_FUNCTION_DEF,
-    STMT_CLASS_DEF,
-    STMT_RETURN,
-    STMT_ASSIGN,
-    STMT_IMPORT,
-    STMT_FROM_IMPORT,
-    STMT_RAISE,
-    STMT_TRY,
-    STMT_WITH,
-    STMT_BREAK,
-    STMT_CONTINUE,
-    STMT_PASS,
-    STMT_DEL,
-    STMT_GLOBAL,
-    STMT_NONLOCAL,
-    STMT_EXPR,
-    STMT_YIELD,
-    STMT_UNSUPPORTED
-} StmtKind;
-
-typedef enum { SYM_MODULE, SYM_FUNCTION, SYM_CLASS } SymScopeKind;
-
-typedef struct SymScope SymScope;
-struct SymScope {
-    SymScopeKind kind;
-    char *name;
-    int line;
-    char **defs; int def_count, def_cap;
-    char **uses; int use_count, use_cap;
-    char **globals; int global_count, global_cap;
-    char **nonlocals; int nonlocal_count, nonlocal_cap;
-    SymScope **children; int child_count, child_cap;
-};
-
-typedef struct Stmt Stmt;
-struct Stmt {
-    StmtKind kind;
-    char *name;
-    char *name2;
-    int line;
-    int start, end;
-    Expr *expr;
-    Expr *expr2;
-    char **params; int param_count, param_cap;
-    Expr **defaults; int default_count, default_cap;
-    char **decorators; int decorator_count, decorator_cap;
-    Stmt **body; int body_count, body_cap;
-    Stmt **orelse; int orelse_count, orelse_cap;
-    SymScope *scope;
-};
-
-typedef Stmt Ast;
-
-typedef struct {
-    char **defs; int def_count, def_cap;
-    char **uses; int use_count, use_cap;
-    SymScope *root_scope;
-} SymTable;
-
-static void name_add_unique(char ***arr,int *cnt,int *cap,const char *name){
-    if(!name || !*name) return;
-    for(int i=0;i<*cnt;i++) if(strcmp((*arr)[i],name)==0) return;
-    if(*cnt==*cap){ *cap=*cap?*cap*2:8; *arr=(char**)xrealloc(*arr,sizeof(char*)*(size_t)*cap); }
-    (*arr)[(*cnt)++]=xstrdup2(name);
-}
-
-static Expr *expr_new_range(int start,int end,int line){
-    Expr *e=(Expr*)xmalloc(sizeof(Expr)); memset(e,0,sizeof(Expr));
-    e->kind=EXPR_TOKEN_RANGE; e->start=start; e->end=end; e->line=line; return e;
-}
-static Stmt *stmt_new(StmtKind k,const char *name,int line,int start){
-    Stmt *s=(Stmt*)xmalloc(sizeof(Stmt)); memset(s,0,sizeof(Stmt));
-    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; return s;
-}
-static void stmt_add_body(Stmt *s,Stmt *child){
-    if(!child) return;
-    if(s->body_count==s->body_cap){ s->body_cap=s->body_cap?s->body_cap*2:8; s->body=(Stmt**)xrealloc(s->body,sizeof(Stmt*)*(size_t)s->body_cap); }
-    s->body[s->body_count++]=child;
-}
-static void stmt_add_orelse(Stmt *s,Stmt *child){
-    if(!child) return;
-    if(s->orelse_count==s->orelse_cap){ s->orelse_cap=s->orelse_cap?s->orelse_cap*2:4; s->orelse=(Stmt**)xrealloc(s->orelse,sizeof(Stmt*)*(size_t)s->orelse_cap); }
-    s->orelse[s->orelse_count++]=child;
-}
-static void stmt_add_default(Stmt *s,Expr *e){
-    if(s->default_count==s->default_cap){ s->default_cap=s->default_cap?s->default_cap*2:4; s->defaults=(Expr**)xrealloc(s->defaults,sizeof(Expr*)*(size_t)s->default_cap); }
-    s->defaults[s->default_count++]=e;
-}
-static void stmt_add_decorator(Stmt *s,const char *name){
-    if(!name) return;
-    if(s->decorator_count==s->decorator_cap){ s->decorator_cap=s->decorator_cap?s->decorator_cap*2:4; s->decorators=(char**)xrealloc(s->decorators,sizeof(char*)*(size_t)s->decorator_cap); }
-    s->decorators[s->decorator_count++]=xstrdup2(name);
-}
-static SymScope *scope_new(SymScopeKind k,const char *name,int line){
-    SymScope *sc=(SymScope*)xmalloc(sizeof(SymScope)); memset(sc,0,sizeof(SymScope));
-    sc->kind=k; sc->name=xstrdup2(name?name:"<scope>"); sc->line=line; return sc;
-}
-static void scope_add_child(SymScope *p,SymScope *c){
-    if(!p||!c) return;
-    if(p->child_count==p->child_cap){ p->child_cap=p->child_cap?p->child_cap*2:4; p->children=(SymScope**)xrealloc(p->children,sizeof(SymScope*)*(size_t)p->child_cap); }
-    p->children[p->child_count++]=c;
-}
-static void scope_def(SymScope *s,const char *name){ name_add_unique(&s->defs,&s->def_count,&s->def_cap,name); }
-static void scope_use(SymScope *s,const char *name){ name_add_unique(&s->uses,&s->use_count,&s->use_cap,name); }
-static void scope_global(SymScope *s,const char *name){ name_add_unique(&s->globals,&s->global_count,&s->global_cap,name); }
-static void scope_nonlocal(SymScope *s,const char *name){ name_add_unique(&s->nonlocals,&s->nonlocal_count,&s->nonlocal_cap,name); }
-
-static const char *stmt_kind_name(StmtKind k){
-    switch(k){
-        case STMT_MODULE: return "Module"; case STMT_BLOCK: return "Block"; case STMT_IF: return "IfStmt";
-        case STMT_WHILE: return "WhileStmt"; case STMT_FOR: return "ForStmt"; case STMT_FUNCTION_DEF: return "FunctionDef";
-        case STMT_CLASS_DEF: return "ClassDef"; case STMT_RETURN: return "ReturnStmt"; case STMT_ASSIGN: return "AssignStmt";
-        case STMT_IMPORT: return "ImportStmt"; case STMT_FROM_IMPORT: return "FromImportStmt"; case STMT_RAISE: return "RaiseStmt"; case STMT_TRY: return "TryStmt";
-        case STMT_WITH: return "WithStmt"; case STMT_BREAK: return "BreakStmt"; case STMT_CONTINUE: return "ContinueStmt";
-        case STMT_PASS: return "PassStmt"; case STMT_DEL: return "DelStmt"; case STMT_GLOBAL: return "GlobalStmt";
-        case STMT_NONLOCAL: return "NonlocalStmt"; case STMT_EXPR: return "ExprStmt"; case STMT_YIELD: return "YieldStmt";
-        default: return "UnsupportedStmt";
-    }
-}
-static const char *scope_kind_name(SymScopeKind k){ return k==SYM_MODULE?"module":k==SYM_FUNCTION?"function":"class"; }
-
-static int is_expr_name_token(TokKind k){ return k==T_NAME; }
-static int is_assign_op(TokKind k){ return k==T_ASSIGN||k==T_PLUS_ASSIGN||k==T_MINUS_ASSIGN||k==T_STAR_ASSIGN||k==T_SLASH_ASSIGN; }
+#include "frontparser.h"
+#include "lexer.h"
 
 typedef struct { TokVec *tv; int pos; } FrontParser;
 static Tok *fp_peek(FrontParser *p){ return &p->tv->v[p->pos]; }
@@ -319,7 +160,7 @@ static void flatten_scope_into_table(SymScope *sc,SymTable *st){
     for(int i=0;i<sc->use_count;i++) name_add_unique(&st->uses,&st->use_count,&st->use_cap,sc->uses[i]);
     for(int i=0;i<sc->child_count;i++) flatten_scope_into_table(sc->children[i],st);
 }
-static Ast *build_ast_and_symbols(TokVec *tv, SymTable *st){
+Ast *build_ast_and_symbols(TokVec *tv, SymTable *st){
     FrontParser p={0}; p.tv=tv; p.pos=0;
     Stmt *root=stmt_new(STMT_MODULE,"<module>",1,0);
     fp_skip_nl(&p);
@@ -364,13 +205,13 @@ static Ast *parse_ast_for_source(const char *src, TokVec *out_tv, SymTable *out_
     memset(out_st,0,sizeof(*out_st));
     return build_ast_and_symbols(out_tv,out_st);
 }
-static void dump_ast_for_source(const char *src){
+void dump_ast_for_source(const char *src){
     TokVec tv; SymTable st; Ast *root=parse_ast_for_source(src,&tv,&st);
     (void)st;
     printf("AST:\n");
     dump_ast_with_tokens(&tv,root,1);
 }
-static void dump_symbols_for_source(const char *src){
+void dump_symbols_for_source(const char *src){
     TokVec tv; SymTable st; Ast *root=parse_ast_for_source(src,&tv,&st);
     (void)root;
     printf("Symbol table:\n"); if(st.root_scope) dump_scope(st.root_scope,1);

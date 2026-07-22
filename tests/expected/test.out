@@ -1,0 +1,15 @@
+MiniPy - Mini Python Interpreter
+Script: tests/test.mpy
+
+string concat: hello world
+42
+42
+True
+False
+None
+[10, 2, 3, 4]
+4
+mini 7
+6
+7
+10

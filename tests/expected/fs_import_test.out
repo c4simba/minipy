@@ -1,0 +1,6 @@
+MiniPy - Mini Python Interpreter
+Script: tests/fs_import_test.mpy
+
+fs import
+42
+missing caught
