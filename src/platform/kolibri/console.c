@@ -83,10 +83,20 @@ static int kol_send(unsigned char cmd, const void *payload, unsigned len){
         total = SC_RING_SIZE - 1;
     }
 
-    int tries = CONSOLE_OP_TIMEOUT_MS / POLL_MS;
-    while(kol_ring_free() < total){
-        if(--tries < 0) return 0;
-        kol_poll_delay();
+    /* Wait for room. Normally the shell drains within a few scheduler yields,
+       so yield (fn 68.1, ~immediate) instead of sleeping - this is what keeps
+       bulk output fast. Only if the ring stays full for a long time (no shell
+       draining) fall back to bounded sleeps and eventually drop the frame. */
+    {
+        int slow = CONSOLE_OP_TIMEOUT_MS / POLL_MS;
+        while(kol_ring_free() < total){
+            int k;
+            for(k = 0; k < 1024 && kol_ring_free() < total; k++)
+                mpy_thread_yield();
+            if(kol_ring_free() >= total) break;
+            if(--slow < 0) return 0;
+            kol_poll_delay();
+        }
     }
 
     unsigned char *ring = (unsigned char*)g_cbuf + SC_DATA_OFF;
