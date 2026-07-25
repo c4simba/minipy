@@ -1,27 +1,121 @@
 /* ========================= KolibriOS console via shared memory =========================
- * The console is a named shared buffer "{PID}-SHELL" (opened with f68.22, freed
- * with f68.23). The protocol is just command + data: write a command code into
- * byte 0 (with any payload after it), then wait until the shell zeroes byte 0
- * to signal it consumed the command.
- *   SC_EXIT=1  SC_PUTC=2  SC_PUTS=3  SC_GETC=4  SC_GETS=5  SC_CLS=6
+ * The console is a named shared buffer "{PID}-SHELL" (created with f68.22, freed
+ * with f68.23). The buffer is a header followed by a byte-oriented ring buffer:
+ *
+ *   +0    write_ptr   next byte we (client) will write   (we own)
+ *   +4    read_ptr    next byte the shell will read       (shell owns)
+ *   +8    resp_ready  shell sets 1 when a reply is ready
+ *   +12   resp_len    length of the reply payload
+ *   +16   resp[1024]  reply payload (shell -> us)
+ *   +1040 ring[]       command stream (us -> shell)
+ *
+ * The command stream is a sequence of variable-length frames:
+ *
+ *   [cmd:1][len_lo:1][len_hi:1][payload:len]
+ *
+ * We append output frames (SC_PUTS/SC_CLS) into the ring and only publish
+ * write_ptr once a whole frame is written; the shell drains every pending frame
+ * on each poll. This means many puts() calls no longer block one-at-a-time -- we
+ * only wait if the ring is full. Commands that need an answer (SC_GETS, SC_EXIT)
+ * clear resp_ready, queue the request and wait for the shell to fill resp[].
+ *   SC_EXIT=1  SC_PUTC=2  SC_PUTS=3  SC_GETC=4  SC_GETS=5  SC_CLS=6  SC_PID=7  SC_PING=8
  * All output is also echoed to stderr (the debug board).
  */
 
 #include "platform/platform.h"
 
-static char *g_cbuf = NULL;    /* shared buffer: [0]=command byte, [1..]=payload */
+/* ---- protocol constants (must match the shell's program_console.h) -------- */
+#define SC_EXIT 1
+#define SC_PUTC 2
+#define SC_PUTS 3
+#define SC_GETC 4
+#define SC_GETS 5
+#define SC_CLS  6
+#define SC_PID  7
+#define SC_PING 8
+
+#define SC_SHM_SIZE  (1024*16)
+#define SC_RESP_MAX  1024
+#define SC_OFF_WRITE 0
+#define SC_OFF_READ  4
+#define SC_OFF_RESP  8
+#define SC_OFF_RLEN  12
+#define SC_OFF_RDATA 16
+#define SC_DATA_OFF  (SC_OFF_RDATA + SC_RESP_MAX)   /* 1040 */
+#define SC_RING_SIZE (SC_SHM_SIZE - SC_DATA_OFF)    /* 15344 */
+#define SC_FRAME_HDR 3
+
+/* poll granularity and bounded waits. Output/exit are bounded so a shell that
+   stops draining can't hang us; interactive input waits far longer for a human. */
+#define POLL_MS                   50
+#define CONSOLE_OP_TIMEOUT_MS     10000    /* queue room + exit ack */
+#define CONSOLE_INPUT_TIMEOUT_MS  300000   /* input(): up to 5 min for the user */
+
+static char *g_cbuf = NULL;    /* shared buffer base (header + ring) */
 static char  g_cname[32];      /* "{PID}-SHELL" */
 static int   g_cok = 0;
 
-/* ---- protocol primitive -------------------------------------------------- */
+/* ---- ring transport primitives ------------------------------------------- */
 
-/* Issue the command already written to g_cbuf[0] and block until the shell
-   consumes it (it zeroes byte 0). Bounded so a missing shell can't hang us.
-   Returns 1 if consumed, 0 on timeout (and force-clears the byte). */
-static int kol_wait_shell(void){
-    for(int i=0; i<200 && g_cbuf[0]; i++)
-        __asm__ __volatile__("int $0x40" :: "a"(5), "b"(5) : "memory");   /* fn 5: delay 50 ms */
-    if(g_cbuf[0]){ g_cbuf[0]=0; return 0; }
+#define HDR_U32(off) (*(volatile unsigned*)(g_cbuf + (off)))
+
+static void kol_poll_delay(void){
+    __asm__ __volatile__("int $0x40" :: "a"(5), "b"(POLL_MS/10) : "memory");   /* fn 5: delay */
+}
+
+/* free space in the ring (one byte is kept unused to tell full from empty) */
+static unsigned kol_ring_free(void){
+    unsigned wp = HDR_U32(SC_OFF_WRITE);
+    unsigned rp = HDR_U32(SC_OFF_READ);
+    unsigned used = (wp - rp + SC_RING_SIZE) % SC_RING_SIZE;
+    return SC_RING_SIZE - 1 - used;
+}
+
+/* Queue one [cmd][len][payload] frame. Blocks while the ring is full, but only
+   up to CONSOLE_OP_TIMEOUT_MS -- if the shell never drains we drop the frame
+   instead of hanging. Returns 1 if written, 0 otherwise. */
+static int kol_send(unsigned char cmd, const void *payload, unsigned len){
+    if(!g_cok || !g_cbuf) return 0;
+
+    unsigned total = SC_FRAME_HDR + len;
+    if(total > SC_RING_SIZE - 1){                 /* never fits: truncate */
+        len = SC_RING_SIZE - 1 - SC_FRAME_HDR;
+        total = SC_RING_SIZE - 1;
+    }
+
+    int tries = CONSOLE_OP_TIMEOUT_MS / POLL_MS;
+    while(kol_ring_free() < total){
+        if(--tries < 0) return 0;
+        kol_poll_delay();
+    }
+
+    unsigned char *ring = (unsigned char*)g_cbuf + SC_DATA_OFF;
+    const unsigned char *p = (const unsigned char*)payload;
+    unsigned wp = HDR_U32(SC_OFF_WRITE);
+
+    ring[wp] = cmd;                                wp++; if(wp==SC_RING_SIZE) wp=0;
+    ring[wp] = (unsigned char)(len & 0xff);        wp++; if(wp==SC_RING_SIZE) wp=0;
+    ring[wp] = (unsigned char)((len >> 8) & 0xff); wp++; if(wp==SC_RING_SIZE) wp=0;
+    for(unsigned i=0;i<len;i++){ ring[wp]=p[i];    wp++; if(wp==SC_RING_SIZE) wp=0; }
+
+    HDR_U32(SC_OFF_WRITE) = wp;                   /* publish the whole frame */
+    return 1;
+}
+
+/* Queue a request frame and wait for the shell to place a reply in resp[].
+   timeout_ms <= 0 means wait indefinitely. Returns 1 on reply, 0 on timeout. */
+static int kol_request(unsigned char cmd, const void *payload, unsigned len, int timeout_ms){
+    if(!g_cok || !g_cbuf) return 0;
+
+    HDR_U32(SC_OFF_RESP) = 0;
+    if(!kol_send(cmd, payload, len)) return 0;
+
+    int tries = timeout_ms > 0 ? timeout_ms / POLL_MS : -1;   /* -1 => forever */
+    while(!HDR_U32(SC_OFF_RESP)){
+        if(tries == 0) return 0;
+        if(tries > 0) tries--;
+        kol_poll_delay();
+    }
     return 1;
 }
 
@@ -117,11 +211,14 @@ int kol_console_init(void){
     int ptr_val, edx_result;
     __asm__ __volatile__("int $0x40"
         : "=a"(ptr_val), "=d"(edx_result)
-        : "a"(68), "b"(22), "c"((int)g_cname), "d"(1024*16), "S"(0x04|0x01)   /* fn 68.22: open shared */
+        : "a"(68), "b"(22), "c"((int)g_cname), "d"(SC_SHM_SIZE), "S"(0x04|0x01)   /* fn 68.22: open shared */
         : "memory");
     if(ptr_val > 0 && (int)ptr_val > 0x1000){
         g_cbuf = (char*)ptr_val;
-        g_cbuf[0] = 0;
+        HDR_U32(SC_OFF_WRITE) = 0;      /* start with an empty ring, no pending reply */
+        HDR_U32(SC_OFF_READ)  = 0;
+        HDR_U32(SC_OFF_RESP)  = 0;
+        HDR_U32(SC_OFF_RLEN)  = 0;
         g_cok = 1;
     }
     return g_cok ? 0 : -1;
@@ -129,8 +226,7 @@ int kol_console_init(void){
 
 void kol_console_deinit(void){
     if(!g_cok||!g_cbuf)return;
-    g_cbuf[0]=1; /* SC_EXIT */
-    kol_wait_shell();
+    kol_request(SC_EXIT, NULL, 0, CONSOLE_OP_TIMEOUT_MS);   /* wait for the shell to drain & ack */
     __asm__ __volatile__("int $0x40" : : "a"(68),"b"(23),"c"((int)g_cname) : "memory");   /* fn 68.23: free shared */
     g_cok=0; g_cbuf=NULL;
 }
@@ -139,23 +235,21 @@ void kol_console_puts(const char *s){
     if(!s)return;
     fprintf(stderr,"%s",s);                        /* always echo to the debug board */
     if(!g_cok||!g_cbuf)return;
-    size_t max=1024*16-2, n=strlen(s); if(n>max)n=max;
-    g_cbuf[0]=3; /* SC_PUTS */
-    memcpy(g_cbuf+1,s,n); g_cbuf[1+n]=0;
-    kol_wait_shell();
+    /* send the string together with its terminating '\0' so the shell can print
+       the frame payload directly */
+    kol_send(SC_PUTS, s, (unsigned)strlen(s) + 1);
 }
 
 void kol_console_gets(char *buf,int maxlen){
     if(!g_cok||!g_cbuf||!buf||maxlen<=0){ if(buf)buf[0]=0; return; }
-    g_cbuf[0]=5; /* SC_GETS */
-    if(!kol_wait_shell()){ buf[0]=0; return; }
-    { char *d=buf, *end=buf+maxlen-1; const char *src=g_cbuf+1; while(*src && d<end)*d++=*src++; *d=0; }
+    unsigned max = (unsigned)maxlen;               /* tell the shell our capacity */
+    if(!kol_request(SC_GETS, &max, sizeof(max), CONSOLE_INPUT_TIMEOUT_MS)){ buf[0]=0; return; }
+    { char *d=buf, *end=buf+maxlen-1; const char *src=g_cbuf+SC_OFF_RDATA; while(*src && d<end)*d++=*src++; *d=0; }
 }
 
 void kol_console_cls(void){
     if(!g_cok||!g_cbuf)return;
-    g_cbuf[0]=6; /* SC_CLS */
-    kol_wait_shell();
+    kol_send(SC_CLS, NULL, 0);
 }
 
 /* Both of these format once (via kfmt) and route through kol_console_puts, so

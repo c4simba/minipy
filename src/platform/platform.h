@@ -84,4 +84,19 @@ const char *mpy_platform_exe_path(void);
 int         mpy_platform_has_syscall(void);
 int         mpy_platform_syscall(const uint32_t in[6], uint32_t out[6]);
 
+/* ---- threading (host: pthreads; KolibriOS: int 0x40 fn 51) ----
+   spawn runs `entry(arg)` on a new OS thread; returns 0 on success.
+   yield hints the scheduler (used to back off on lock contention). */
+int         mpy_thread_spawn(void (*entry)(void *), void *arg);
+void        mpy_thread_yield(void);
+void        mpy_thread_sleep_ms(int ms);
+
+/* Portable lock over compiler atomics; only the back-off (yield) is
+   platform-specific. Backs the interpreter lock (GIL) and user locks. */
+typedef struct { volatile int held; } mpy_lock;
+static inline void mpy_lock_init(mpy_lock *l){ l->held = 0; }
+static inline int  mpy_lock_try(mpy_lock *l){ return __atomic_exchange_n(&l->held, 1, __ATOMIC_ACQUIRE) == 0; }
+static inline void mpy_lock_acquire(mpy_lock *l){ while(!mpy_lock_try(l)) mpy_thread_yield(); }
+static inline void mpy_lock_release(mpy_lock *l){ __atomic_store_n(&l->held, 0, __ATOMIC_RELEASE); }
+
 #endif /* MPY_PLATFORM_H */

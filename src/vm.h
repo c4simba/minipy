@@ -9,9 +9,20 @@
 typedef struct { int ip; int sp; } Handler;
 typedef struct { Function *fn; int ip; Dict *locals; Handler handlers[32]; int hcount; } Frame;
 typedef struct { jmp_buf buf; } ExcJump;
-typedef struct { Value stack[4096]; int sp; Frame frames[256]; int fcount; Dict *builtins; Dict *modules; jmp_buf panic; ExcJump exc_jumps[256]; int exc_depth; Value pending_exception; char *error_msg; struct { Function *fn; int ip; } tb[256]; int tb_count; } VM;
+typedef struct { Value stack[4096]; int sp; Frame frames[256]; int fcount; Dict *builtins; Dict *modules; jmp_buf panic; ExcJump exc_jumps[256]; int exc_depth; Value pending_exception; char *error_msg; struct { Function *fn; int ip; } tb[256]; int tb_count; void *cstack_base; } VM;
 
-extern VM vm;
+/* Threads share the object heap + builtins/modules but each has its own VM
+   execution state (stack, frames, exceptions). `vm` resolves to whichever
+   thread currently holds the GIL, so all `vm.<field>` code is thread-agnostic. */
+extern VM *mpy_cur_vm;
+#define vm (*mpy_cur_vm)
+
+#define MPY_MAX_THREADS 64
+extern VM  *mpy_vm_threads[MPY_MAX_THREADS];   /* registry, for GC to scan every thread's roots */
+extern int  mpy_vm_thread_count;
+extern mpy_lock mpy_gil;                        /* the global interpreter lock */
+void mpy_vm_thread_register(VM *v);
+void mpy_vm_thread_unregister(VM *v);
 
 /* Stack primitives (vm.c) */
 void  push(Value v);
@@ -57,6 +68,7 @@ extern Native N_STR, N_REPR, N_INT, N_FLOAT, N_BOOL, N_LIST, N_TUPLE, N_SET, N_D
 extern Native N_ABS, N_MIN, N_MAX, N_SUM, N_SORTED, N_REVERSED, N_ENUMERATE, N_ZIP, N_MAP, N_FILTER;
 extern Native N_TYPE, N_ISINSTANCE, N_ORD, N_CHR, N_ROUND, N_ANY, N_ALL;
 extern Native N_SUPER, N_STATICMETHOD, N_CLASSMETHOD, N_PROPERTY;
+extern Native N_THREAD_START, N_THREAD_JOIN, N_THREAD_SLEEP, N_THREAD_LOCK, N_THREAD_ACQUIRE, N_THREAD_RELEASE;
 
 /* Core dispatch / calling convention / generators (vm.c) */
 Value run_function(Function *fn, int argc, Value *args);

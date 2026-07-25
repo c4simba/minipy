@@ -1,0 +1,6 @@
+MiniPy - Mini Python Interpreter
+Script: tests/thread_test.mpy
+
+4000
+answer=42
+done

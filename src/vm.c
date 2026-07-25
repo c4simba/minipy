@@ -6,7 +6,20 @@
 #include "fs.h"
 #include "gc.h"
 
-VM vm;
+static VM mpy_main_vm;
+VM *mpy_cur_vm = &mpy_main_vm;
+mpy_lock mpy_gil;
+VM  *mpy_vm_threads[MPY_MAX_THREADS];
+int  mpy_vm_thread_count = 0;
+
+/* Register/unregister a thread's VM so the GC scans its roots. Always called
+   while holding the GIL, so no extra locking is needed here. */
+void mpy_vm_thread_register(VM *v){ if(mpy_vm_thread_count<MPY_MAX_THREADS) mpy_vm_threads[mpy_vm_thread_count++]=v; }
+void mpy_vm_thread_unregister(VM *v){ for(int i=0;i<mpy_vm_thread_count;i++) if(mpy_vm_threads[i]==v){ mpy_vm_threads[i]=mpy_vm_threads[--mpy_vm_thread_count]; return; } }
+
+/* Interval (in bytecode steps) between GIL hand-off checks. Only consulted when
+   more than one thread exists, so single-threaded runs pay ~nothing. */
+#define MPY_GIL_INTERVAL 1000
 
 void push(Value v){ if(vm.sp>=4096) die("stack overflow"); vm.stack[vm.sp++]=v; }
 Value popv(void){ if(vm.sp<=0) die("stack underflow"); return vm.stack[--vm.sp]; }
@@ -127,7 +140,17 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             longjmp(vm.panic,1);                          /* uncaught: to top level */
         }
     }
-    for(;;){ gc_maybe_collect(); Op op=(Op)c->code[fr->ip++];
+    unsigned gil_tick=0;
+    for(;;){
+        /* GIL hand-off point: only when other threads exist. State is fully
+           consistent here (nothing half-pushed), so a parked thread's roots are
+           exactly its VM stack/frames -- which is what makes multi-thread GC safe. */
+        if(mpy_vm_thread_count>1 && ++gil_tick>=MPY_GIL_INTERVAL){
+            gil_tick=0; VM *self=mpy_cur_vm;
+            mpy_lock_release(&mpy_gil); mpy_thread_yield(); mpy_lock_acquire(&mpy_gil);
+            mpy_cur_vm=self;
+        }
+        gc_maybe_collect(); Op op=(Op)c->code[fr->ip++];
         switch(op){
             case OP_CONST: push(c->consts[c->code[fr->ip++]]); break; case OP_NONE: push(nonev()); break; case OP_TRUE: push(boolv(1)); break; case OP_FALSE: push(boolv(0)); break;
             case OP_LOAD:{ Value namev=c->consts[c->code[fr->ip++]]; char *name=namev.as.obj->as.str.s; Value v; if(function_declares(fn->global_names,fn->global_count,name)){ if(dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } } else if(dict_get(fr->locals,name,&v)||dict_get(fn->globals,name,&v)||dict_get(vm.builtins,name,&v)) push(v); else { char b[256]; snprintf(b,sizeof(b),"name '%s' is not defined",name); raise_named("NameError",b); } break; }

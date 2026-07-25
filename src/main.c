@@ -69,7 +69,8 @@ static int mpy_run(int argc,char **argv){
 
     mpy_repr_hook = mpy_instance_repr;
     mpy_platform_banner(script_path);
-    memset(&vm,0,sizeof(vm));
+    /* mpy_main_vm is zero-initialized (static) and cstack_base is already set,
+       so no memset here -- it would wipe the C-stack base the GC needs. */
     if(setjmp(vm.panic)){ print_traceback(is_obj(vm.pending_exception,O_EXCEPTION)?vm.pending_exception:exceptionv("RuntimeError",vm.error_msg?vm.error_msg:"error",nonev())); return 1; }
     vm.builtins=dict_new(); vm.modules=dict_new();
     dict_set(vm.builtins,"len",nativev(&N_LEN)); dict_set(vm.builtins,"range",nativev(&N_RANGE)); dict_set(vm.builtins,"next",nativev(&N_NEXT)); dict_set(vm.builtins,"iter",nativev(&N_ITER)); dict_set(vm.builtins,"input",nativev(&N_INPUT));
@@ -98,6 +99,18 @@ static int mpy_run(int argc,char **argv){
         dict_set(sysd,"addr",nativev(&N_ADDR));
         dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
     }
+    /* Built-in `thread` module: OS threads under a GIL (see vm_thread.c). */
+    {
+        Dict *thd=dict_new();
+        dict_set(thd,"__name__",stringv("thread"));
+        dict_set(thd,"start",nativev(&N_THREAD_START));
+        dict_set(thd,"join",nativev(&N_THREAD_JOIN));
+        dict_set(thd,"sleep",nativev(&N_THREAD_SLEEP));
+        dict_set(thd,"lock",nativev(&N_THREAD_LOCK));
+        dict_set(thd,"acquire",nativev(&N_THREAD_ACQUIRE));
+        dict_set(thd,"release",nativev(&N_THREAD_RELEASE));
+        dict_set(vm.modules,"thread",objv(new_module("thread",thd)));
+    }
     char *src=mpy_fs_read_file(script_path);
     if(!src) return 1;
     char *dir=mpy_fs_dirname(script_path);
@@ -112,6 +125,9 @@ int main(int argc,char **argv){
     gc_set_stack_base(&argc);
     mpy_platform_init();
     atexit(mpy_platform_shutdown);   /* closes the console on exit() paths (lexer/parser/die) */
+    mpy_lock_init(&mpy_gil);
+    mpy_vm_thread_register(mpy_cur_vm);   /* main thread's VM is a GC root */
+    mpy_lock_acquire(&mpy_gil);           /* main holds the GIL while it runs */
 
     /* KolibriOS delivers the launch arguments as one header string, not argv;
        rebuild argc/argv from it so all the option handling just works. */

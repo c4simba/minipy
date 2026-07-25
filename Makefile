@@ -18,9 +18,9 @@ HOST_TARGET ?= minipy
 # ---------------------------------------------------------------------------
 
 CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
-           compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods main
-HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host
-KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall
+           compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread main
+HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
+KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
 
 HEADERS  = $(wildcard src/*.h) $(wildcard src/platform/*.h)
 INCLUDES = -Isrc
@@ -40,10 +40,10 @@ HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLAT
 
 $(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) -pthread $(INCLUDES) -c $< -o $@
 
 $(HOST_TARGET): $(HOST_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) -pthread $^ -o $@
 
 # ---------------------------- Tests -----------------------------------------
 test: $(HOST_TARGET)

@@ -20,8 +20,9 @@ static int  gc_threshold = 512;
 
 void gc_track(Obj *o){ o->gc_next=gc_all; o->gc_mark=0; gc_all=o; gc_count++; }
 
-static void *gc_stack_base = NULL;
-void gc_set_stack_base(void *p){ gc_stack_base=p; }
+/* Recorded per-thread (in the VM) so each thread's C stack is scanned against
+   its own base -- the running thread is the only one that needs a C-stack scan. */
+void gc_set_stack_base(void *p){ vm.cstack_base=p; }
 
 static Obj *class_obj(Class *k){ return class_to_value(k).as.obj; }
 static void gc_mark_value(Value v);
@@ -107,17 +108,20 @@ void gc_collect(void){
     gc_sorted=(Obj**)xrealloc(gc_sorted,sizeof(Obj*)*(size_t)(gc_count>0?gc_count:1)); gc_sorted_n=0;
     for(Obj *o=gc_all;o;o=o->gc_next){ o->gc_mark=0; gc_sorted[gc_sorted_n++]=o; }
     qsort(gc_sorted,(size_t)gc_sorted_n,sizeof(Obj*),gc_ptrcmp);
-    /* precise roots: VM stack, frames, namespaces, pending exception */
-    for(int i=0;i<vm.sp;i++) gc_mark_value(vm.stack[i]);
-    for(int i=0;i<vm.fcount;i++){ Frame *fr=&vm.frames[i]; if(fr->fn) gc_mark_obj(fr->fn->owner); gc_mark_dict(fr->locals); }
-    gc_mark_dict(vm.builtins);
+    /* precise roots: every live thread's VM stack, frames, exception, traceback */
+    for(int t=0;t<mpy_vm_thread_count;t++){ VM *v=mpy_vm_threads[t];
+        for(int i=0;i<v->sp;i++) gc_mark_value(v->stack[i]);
+        for(int i=0;i<v->fcount;i++){ Frame *fr=&v->frames[i]; if(fr->fn) gc_mark_obj(fr->fn->owner); gc_mark_dict(fr->locals); }
+        gc_mark_value(v->pending_exception);
+        for(int i=0;i<v->tb_count;i++) if(v->tb[i].fn) gc_mark_obj(v->tb[i].fn->owner);
+    }
+    gc_mark_dict(vm.builtins);   /* builtins + modules are shared across threads */
     gc_mark_dict(vm.modules);
-    gc_mark_value(vm.pending_exception);
     /* conservative roots: callee-saved registers + the C stack */
     jmp_buf regs; memset(&regs,0,sizeof(regs)); (void)setjmp(regs);
     gc_scan_range((void**)&regs,(void**)((char*)&regs+sizeof(regs)));
     void *sp_local; void *sp=(void*)&sp_local;
-    if(gc_stack_base && (void**)sp<(void**)gc_stack_base) gc_scan_range((void**)sp,(void**)gc_stack_base);
+    if(vm.cstack_base && (void**)sp<(void**)vm.cstack_base) gc_scan_range((void**)sp,(void**)vm.cstack_base);
     /* sweep */
     Obj **link=&gc_all;
     while(*link){ Obj *o=*link; if(o->gc_mark){ link=&o->gc_next; } else { *link=o->gc_next; gc_free_obj(o); gc_count--; } }
