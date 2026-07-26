@@ -51,6 +51,13 @@
 #define CONSOLE_OP_TIMEOUT_MS     10000    /* queue room + exit ack */
 #define CONSOLE_INPUT_TIMEOUT_MS  300000   /* input(): up to 5 min for the user */
 
+/* Echoing every line to the debug board is an unbuffered, per-character syscall
+   path that badly throttles bulk output, so it's off by default. Build with
+   -DMPY_CONSOLE_ECHO_STDERR=1 to re-enable it for debugging. */
+#ifndef MPY_CONSOLE_ECHO_STDERR
+#define MPY_CONSOLE_ECHO_STDERR 0
+#endif
+
 static char *g_cbuf = NULL;    /* shared buffer base (header + ring) */
 static char  g_cname[32];      /* "{PID}-SHELL" */
 static int   g_cok = 0;
@@ -243,7 +250,9 @@ void kol_console_deinit(void){
 
 void kol_console_puts(const char *s){
     if(!s)return;
-    fprintf(stderr,"%s",s);                        /* always echo to the debug board */
+#if MPY_CONSOLE_ECHO_STDERR
+    fprintf(stderr,"%s",s);                        /* debug-board echo (slow; off by default) */
+#endif
     if(!g_cok||!g_cbuf)return;
     /* send the string together with its terminating '\0' so the shell can print
        the frame payload directly */
