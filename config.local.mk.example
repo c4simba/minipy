@@ -6,3 +6,11 @@
 
 # newlib libc dir (must contain crt/pseudo-reloc.o):
 # KOS_SDK_LIBDIR = /path/to/kolibrios-sdk/libraries/newlib/libc
+
+# Compiler for the Linux i386 runtime of compiled programs (make rt-linux):
+# RT_LINUX_CC = gcc -m32
+
+# Where the KolibriOS runtime image and fasm live on KolibriOS (used by the
+# KolibriOS minipy for --compile):
+# KOS_AOT_RT   = /sys/lib/minipy-rt.bin
+# KOS_AOT_FASM = /sys/develop/fasm

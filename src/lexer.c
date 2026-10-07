@@ -145,15 +145,25 @@ static void lex_fstring(TokVec *tv,const char **pp,int line){
             if(*p=='!' && depth==0){ p++; if(*p) p++; }          /* !r / !s / !a : ignored */
             if(*p==':' && depth==0){ have_spec=1; p++; while(*p && *p!='}'){ if(spi<62) sp[spi++]=*p; p++; } }
             sp[spi]=0;
+            char orig[64]; memcpy(orig,sp,(size_t)spi+1);         /* the spec as written (the compiler's) */
+            /* Python alignment -> printf: "<5" left ("-5"), ">5" right ("5") */
+            if(spi>0 && (sp[0]=='<'||sp[0]=='>')){
+                int left=sp[0]=='<';
+                memmove(sp,sp+1,(size_t)spi); spi--;
+                if(left && spi<62){ memmove(sp+1,sp,(size_t)spi+1); sp[0]='-'; spi++; }
+            }
             if(*p=='}') p++;
             if(emitted) addtok(tv,T_PLUS,"+",1,0,0,0,line);
             if(have_spec){
                 /* If the spec lacks a printf conversion letter (e.g. "5", ".2"),
                    default to 's' so width/precision apply to the stringified value. */
                 if(spi>0 && !my_isalpha((unsigned char)sp[spi-1])){ if(spi<62){ sp[spi++]='s'; sp[spi]=0; } }
-                char fbuf[80]; snprintf(fbuf,sizeof(fbuf),"%%%s",sp);
+                /* "%<printf spec>" for the interpreter, then a NUL and "%<Python spec>" for
+                   the compiler (i=1 marks it): one token carries both */
+                char fbuf[160]; int fl=snprintf(fbuf,80,"%%%s",sp);
+                fl+=1+snprintf(fbuf+fl+1,sizeof(fbuf)-(size_t)fl-1,"%%%s",orig);
                 addtok(tv,T_LP,"(",1,0,0,0,line);
-                addtok(tv,T_STRING,fbuf,(int)strlen(fbuf),0,0,0,line);
+                addtok(tv,T_STRING,fbuf,fl,1,0,0,line);
                 addtok(tv,T_PERCENT,"%",1,0,0,0,line);
                 addtok(tv,T_LP,"(",1,0,0,0,line); lex_line(tv,ex,line); addtok(tv,T_RP,")",1,0,0,0,line);
                 addtok(tv,T_RP,")",1,0,0,0,line);

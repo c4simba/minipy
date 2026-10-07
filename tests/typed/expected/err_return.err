@@ -1,0 +1,1 @@
+err_return.mpy:4: error: type mismatch: the return value of name() is str, cannot take int

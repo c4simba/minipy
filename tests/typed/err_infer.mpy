@@ -1,0 +1,4 @@
+def ident(v):
+    return v
+
+print(ident(None))

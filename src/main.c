@@ -8,6 +8,7 @@
 #include "containers.h"
 #include "fs.h"
 #include "gc.h"
+#include "aot.h"
 
 #ifndef MPY_VERSION
 #define MPY_VERSION "0.1"
@@ -43,10 +44,14 @@ static int mpy_run(int argc,char **argv){
         return 0;
     }
 
+    /* Typed ahead-of-time compilation to a standalone executable (fasm). */
+    if(argc>=2 && strcmp(argv[1],"--compile")==0) return aot_main(argc-2,argv+2,program);
+
     if(argc<2){
         script_path = mpy_platform_default_script();
         if(!script_path){
             fprintf(stderr,"usage: %s [-v|--version] [--dump-ast|--dump-symbols|--dump-bytecode|--fs-info] file.mpy\n",program);
+            fprintf(stderr,"       %s --compile [options] file.mpy   (see --compile --help)\n",program);
             return 2;
         }
     }

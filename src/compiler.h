@@ -33,6 +33,7 @@ Function *compile_source(const char *src, const char *name, const char *dir, Dic
 
 /* Expression compiler + token-range statement helpers (expr_compiler.c). */
 void      expr(Parser *p);
+Expr     *parse_expression(Parser *p);   /* parse one expression tree at p->pos (no code emitted) */
 void      assign_stmt(Parser *p);
 void      from_import_stmt(Parser *p);
 void      print_stmt(Parser *p);

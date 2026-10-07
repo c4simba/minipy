@@ -1,0 +1,12 @@
+[gui] redraw begin
+[gui] window x=100 w=300 y=80 h=160 style=0x14223344 caption='Typed MiniPy'
+[gui] text x=20 y=40 color=0xffffff 'Hello from compiled Python'
+[gui] button x=20 w=120 y=90 h=30 id=2 color=0x5588cc
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=300 y=80 h=160 style=0x14223344 caption='Typed MiniPy'
+[gui] text x=20 y=40 color=0xffffff 'Hello from compiled Python'
+[gui] button x=20 w=120 y=90 h=30 id=2 color=0x5588cc
+[gui] redraw end
+button 1
+bye

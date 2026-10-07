@@ -1,0 +1,22 @@
+even 0
+even 2
+even 4
+even 6
+2 is prime
+3 is prime
+5 is prime
+7 is prime
+11 is prime
+13 is prime
+17 is prime
+19 is prime
+while done 3
+count 5
+0 1; 0 2; 1 0; 1 2; 2 0; 2 1; 
+10 7 4 1 
+5,4,3,2,1,
+vowels 2
+fizz buzz
+False True True
+21 [2, 5] [2, 6, 10]
+[False, False, True, True]

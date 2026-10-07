@@ -1,0 +1,10 @@
+11
+'first line\nsecond line\nthird line\n'
+'first line\n' 'second line\n'
+['third line\n']
+''
+1 first line
+2 second line
+3 third line
+['first line', 'second line', 'third line'] 3
+missing: [Errno 2] No such file or directory: 'build/no_such_file.txt'

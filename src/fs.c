@@ -166,3 +166,13 @@ char *mpy_fs_read_file(const char *path){
     free(err);
     return data;
 }
+
+int mpy_fs_write_file(const char *path,const char *data,size_t len,char **error_message){
+    if(error_message) *error_message=NULL;
+    char *norm=mpy_fs_normalize_path(path);
+    int rc=mpy_fs_backend_write_file(norm,data,len,error_message);
+    free(norm);
+    return rc;
+}
+int mpy_fs_remove(const char *path){ char *norm=mpy_fs_normalize_path(path); int rc=mpy_fs_backend_remove(norm); free(norm); return rc; }
+int mpy_fs_exists(const char *path){ char *norm=mpy_fs_normalize_path(path); int rc=mpy_fs_backend_exists(norm); free(norm); return rc; }

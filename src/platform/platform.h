@@ -76,6 +76,12 @@ void        mpy_platform_banner(const char *script_path);
 const char *mpy_platform_cmdline(void);
 const char *mpy_platform_exe_path(void);
 
+/* Run another program and wait for it to finish (used by `--compile` to start
+   fasm/the linker). `args` is the argument string, already quoted for the
+   platform. Returns the program's exit status (host: 127 when it cannot be
+   found); KolibriOS reports none, so there 0 only means it ran and ended. */
+int         mpy_platform_run(const char *program, const char *args);
+
 /* Raw syscall gateway (backs the built-in `sys.syscall`).
    mpy_platform_has_syscall(): 1 only on the KolibriOS build, 0 elsewhere.
    mpy_platform_syscall(): loads eax..edi from in[0..5], executes `int 0x40`,

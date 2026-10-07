@@ -1,0 +1,1 @@
+err_list_elem.mpy:2: error: type mismatch: a list element is int, cannot take str

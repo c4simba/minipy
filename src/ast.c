@@ -31,6 +31,14 @@ void stmt_add_default(Stmt *s,Expr *e){
     if(s->default_count==s->default_cap){ s->default_cap=s->default_cap?s->default_cap*2:4; s->defaults=(Expr**)xrealloc(s->defaults,sizeof(Expr*)*(size_t)s->default_cap); }
     s->defaults[s->default_count++]=e;
 }
+void stmt_set_annotation(Stmt *s,int param,Expr *e){
+    if(param<0) return;
+    if(param>=s->annotation_cap){ int n=s->annotation_cap?s->annotation_cap:4; while(n<=param) n*=2;
+        s->annotations=(Expr**)xrealloc(s->annotations,sizeof(Expr*)*(size_t)n);
+        for(int i=s->annotation_cap;i<n;i++) s->annotations[i]=NULL;
+        s->annotation_cap=n; }
+    s->annotations[param]=e;
+}
 void stmt_add_decorator(Stmt *s,const char *name){
     if(!name) return;
     if(s->decorator_count==s->decorator_cap){ s->decorator_cap=s->decorator_cap?s->decorator_cap*2:4; s->decorators=(char**)xrealloc(s->decorators,sizeof(char*)*(size_t)s->decorator_cap); }

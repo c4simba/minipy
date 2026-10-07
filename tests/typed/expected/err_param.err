@@ -1,0 +1,1 @@
+err_param.mpy:4: error: type mismatch: parameter 'n' of twice() is int, cannot take str

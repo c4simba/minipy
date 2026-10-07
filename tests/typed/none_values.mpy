@@ -1,0 +1,46 @@
+# None is the zero value of the type it meets (compiled-code semantics)
+def find(xs: list[str], key: str) -> str:
+    for x in xs:
+        if x.startswith(key):
+            return x
+    return None
+
+r = find(["apple", "banana"], "b")
+print(r, len(r))
+r = find(["apple"], "z")
+print("[" + r + "]", len(r), r is None, r == None, not r)
+
+count: int = None
+count += 5
+print(count)
+
+ratio: float = None
+print(ratio, ratio is None)
+
+items: list[int] = None
+print(items, len(items), items is None)
+items.append(1)
+print(items, items is None)
+
+table: dict[str, int] = None
+table["k"] = 1
+print(table)
+
+class Box:
+    def __init__(self):
+        self.label: str = None
+        self.size: int = None
+        self.inner: Box = None
+
+b = Box()
+print("[" + b.label + "]", b.size, b.inner is None)
+b.inner = Box()
+b.inner.size = 3
+print(b.inner is None, b.inner.size)
+
+def maybe_box(make: bool) -> Box:
+    if make:
+        return Box()
+    return None
+
+print(maybe_box(True) is None, maybe_box(False) is None)

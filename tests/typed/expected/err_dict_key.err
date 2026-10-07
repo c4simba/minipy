@@ -1,0 +1,1 @@
+err_dict_key.mpy:2: error: type mismatch: a dictionary key is str, cannot take int

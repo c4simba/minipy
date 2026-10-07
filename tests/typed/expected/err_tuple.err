@@ -1,0 +1,1 @@
+err_tuple.mpy:3: error: a tuple[int, str] can only be indexed by a constant

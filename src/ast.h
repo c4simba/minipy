@@ -24,14 +24,19 @@ typedef enum {
     EXPR_LIST, EXPR_TUPLE, EXPR_SET,   /* items */
     EXPR_DICT,          /* items = keys, vals = values */
     EXPR_COMPREHENSION, /* comp_kind 'L'/'S'/'D', a = element/key, b = dict value, clauses */
-    EXPR_LAMBDA         /* eparams, a = body */
+    EXPR_LAMBDA,        /* eparams, a = body */
+    EXPR_AWAIT          /* await a */
 } ExprKind;
+
+/* Comparison codes stored in EXPR_COMPARE operands (items[i>=1]->akind). */
+typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE, CMP_EQ, CMP_NE, CMP_IN, CMP_NOTIN, CMP_IS, CMP_ISNOT } CmpCode;
 
 typedef struct Expr Expr;
 typedef struct CompClause { char **vars; int nvars; Expr *iter; Expr **conds; int ncond; } CompClause;
 struct Expr {
     ExprKind kind;
-    char *name;              /* NAME / attribute / keyword-arg name */
+    char *name;              /* NAME / attribute name */
+    char *kw;                /* call argument: its keyword (akind 3), e.g. f(x=...) */
     int line;
     int start, end;          /* EXPR_TOKEN_RANGE */
     Tok *tok;                /* EXPR_LITERAL token */
@@ -43,6 +48,7 @@ struct Expr {
     char **eparams; int neparam;     /* lambda parameters */
     int comp_kind;                   /* comprehension accumulator kind */
     CompClause *clauses; int nclause, ccap;
+    void *ty;                        /* static type, filled in by the compiler (aot_types.c) */
 };
 
 typedef enum {
@@ -97,12 +103,16 @@ struct Stmt {
     Expr *expr2;
     char **params; int param_count, param_cap;
     Expr **defaults; int default_count, default_cap;
+    Expr **annotations; int annotation_cap;   /* def: per-parameter type annotation (token range) or NULL */
+    Expr *returns;                            /* def: `-> type` annotation (token range) or NULL */
     char **decorators; int decorator_count, decorator_cap;
     Stmt **body; int body_count, body_cap;
     Stmt **orelse; int orelse_count, orelse_cap;
     int star_index, dstar_index;   /* def params: index of *args / **kwargs, else -1 */
     int block_tag;                 /* try-clause blocks: 0 normal, 1 except, 2 else, 3 finally */
+    int is_async;                  /* async def */
     SymScope *scope;
+    void *aux;                     /* statement parsed by the compiler (aot_types.c) */
 };
 
 typedef Stmt Ast;
@@ -122,6 +132,7 @@ Stmt    *stmt_new(StmtKind k, const char *name, int line, int start);
 void     stmt_add_body(Stmt *s, Stmt *child);
 void     stmt_add_orelse(Stmt *s, Stmt *child);
 void     stmt_add_default(Stmt *s, Expr *e);
+void     stmt_set_annotation(Stmt *s, int param, Expr *e);
 void     stmt_add_decorator(Stmt *s, const char *name);
 SymScope *scope_new(SymScopeKind k, const char *name, int line);
 void     scope_add_child(SymScope *p, SymScope *c);

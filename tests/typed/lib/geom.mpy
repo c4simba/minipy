@@ -1,0 +1,20 @@
+# helper module for imports.mpy
+PI = 3.14159
+calls = 0
+
+class Point:
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+
+    def dist2(self, other: "Point") -> float:
+        dx = self.x - other.x
+        dy = self.y - other.y
+        return dx * dx + dy * dy
+
+def circle_area(r: float) -> float:
+    global calls
+    calls += 1
+    return PI * r * r
+
+print("geom loaded")

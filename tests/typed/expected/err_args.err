@@ -1,0 +1,1 @@
+err_args.mpy:4: error: f() is missing argument 'b'

@@ -1,0 +1,1 @@
+err_field.mpy:6: error: type mismatch: field P.x is int, cannot take float

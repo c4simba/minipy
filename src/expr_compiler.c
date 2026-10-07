@@ -12,7 +12,6 @@
 #include "lexer.h"
 
 /* ---- node model ---- */
-enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE, CMP_EQ, CMP_NE, CMP_IN, CMP_NOTIN, CMP_IS, CMP_ISNOT };
 
 static Expr *enew(ExprKind k, int line){ Expr *e=MPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
 static void ep_push(Expr ***arr, int *cnt, int *cap, Expr *v){
@@ -67,8 +66,10 @@ static Expr *parse_call(Parser *p, Expr *callee, int line){
             Expr *arg;
             if(match(p,T_STAR)){ arg=parse_expr(p); arg->akind=1; }
             else if(match(p,T_POWER)){ arg=parse_expr(p); arg->akind=2; }
-            else if(peek(p)->kind==T_NAME && p->tv.v[p->pos+1].kind==T_ASSIGN){ Tok *n=need(p,T_NAME,"keyword name"); need(p,T_ASSIGN,"="); arg=parse_expr(p); arg->akind=3; arg->name=n->text; }
-            else { arg=parse_expr(p); arg->akind=0; }
+            else if(peek(p)->kind==T_NAME && p->tv.v[p->pos+1].kind==T_ASSIGN){ Tok *n=need(p,T_NAME,"keyword name"); need(p,T_ASSIGN,"="); arg=parse_expr(p); arg->akind=3; arg->kw=n->text; }
+            else { arg=parse_expr(p); arg->akind=0;
+                if(peek(p)->kind==T_FOR){                          /* f(x for x in xs): a generator argument, built as a list */
+                    Expr *g=enew(EXPR_COMPREHENSION,arg->line); g->comp_kind='L'; g->a=arg; parse_comp_tail(p,g); arg=g; } }
             ep_push(&e->items,&e->count,&e->cap,arg);
         }while(match(p,T_COMMA));
     }
@@ -148,6 +149,7 @@ static Expr *parse_unary(Parser *p){
     if(match(p,T_PLUS)) return parse_unary(p);                          /* unary plus: no-op */
     if(match(p,T_TILDE)){ int line=prev(p)->line; Expr *e=enew(EXPR_UNARY,line); e->op=T_TILDE; e->a=parse_unary(p); return e; }
     if(match(p,T_NOT)){ int line=prev(p)->line; Expr *e=enew(EXPR_UNARY,line); e->op=T_NOT; e->a=parse_unary(p); return e; }
+    if(match(p,T_AWAIT)){ int line=prev(p)->line; Expr *e=enew(EXPR_AWAIT,line); e->a=parse_primary(p); return e; }
     return parse_primary(p);
 }
 static Expr *bin_left(Parser *p, Expr *(*sub)(Parser*), const TokKind *ops, int nops){
@@ -272,7 +274,7 @@ static void emit_call(Parser *p, Expr *e){
     emit_arg(p->chunk,OP_MAKE_LIST,0,line);                            /* positional list */
     for(int i=0;i<e->count;i++){ int ak=e->items[i]->akind; if(ak==0||ak==1){ emit_expr(p,e->items[i]); emit_op(p->chunk,ak==1?OP_LIST_EXTEND:OP_LIST_APPEND,line); } }
     emit_arg(p->chunk,OP_MAKE_DICT,0,line);                            /* keyword dict */
-    for(int i=0;i<e->count;i++){ int ak=e->items[i]->akind; if(ak==2){ emit_expr(p,e->items[i]); emit_op(p->chunk,OP_DICT_MERGE,line); } else if(ak==3){ emit_expr(p,e->items[i]); emit_arg(p->chunk,OP_DICT_SETNAME,name_const(p,e->items[i]->name),line); } }
+    for(int i=0;i<e->count;i++){ int ak=e->items[i]->akind; if(ak==2){ emit_expr(p,e->items[i]); emit_op(p->chunk,OP_DICT_MERGE,line); } else if(ak==3){ emit_expr(p,e->items[i]); emit_arg(p->chunk,OP_DICT_SETNAME,name_const(p,e->items[i]->kw),line); } }
     emit_op(p->chunk,OP_CALL_EX,line);
 }
 static void emit_expr(Parser *p, Expr *e){
@@ -343,12 +345,14 @@ static void emit_expr(Parser *p, Expr *e){
             emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),line);
             break;
         }
+        case EXPR_AWAIT: fprintf(stderr,"parse error at line %d: await is supported by the compiler only (minipy --compile)\n",line); exit(1);
         default: fprintf(stderr,"internal error: cannot emit expr kind %d\n",e->kind); exit(1);
     }
 }
 
 /* Public entry: parse an expression to a tree, then emit it. */
 void expr(Parser *p){ Expr *t=parse_expr(p); emit_expr(p,t); }
+Expr *parse_expression(Parser *p){ return parse_expr(p); }
 
 /* ========================= Statement helpers for the AST compiler =========================
    compiler.c owns statement compilation; it re-enters this file only for the

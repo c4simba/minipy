@@ -1,0 +1,22 @@
+1
+caught not found: zz zz True
+safe_div done
+division by zero, using 0
+safe_div done
+3 0
+IndexError: list index out of range
+KeyError caught
+ValueError: invalid literal for int()
+parsed 42
+finally runs
+ok handled one handled two
+cleaning up
+outer got 'inner'
+count 24
+None has no attribute
+assert: math is broken
+1302
+bare class AppError() True
+end
+NotFound: not found: final
+[exit 1]

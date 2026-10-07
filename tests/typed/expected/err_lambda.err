@@ -1,0 +1,1 @@
+err_lambda.mpy:1: error: lambda is not supported in compiled code (define a function)

@@ -1,0 +1,1 @@
+err_reassign.mpy:2: error: type mismatch: variable 'x' is int, cannot take str

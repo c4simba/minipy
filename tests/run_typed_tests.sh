@@ -1,0 +1,58 @@
+#!/bin/sh
+# Tests of the typed compiler (minipy --compile).
+#
+#   tests/typed/<name>.mpy      compiled to an i386 Linux executable and run; its
+#                               output (stdout+stderr, plus "[exit N]" when N != 0)
+#                               must equal tests/typed/expected/<name>.out.
+#                               <name>.in, when present, is fed to stdin.
+#   tests/typed/err_<name>.mpy  must be rejected by the compiler with the
+#                               diagnostic in tests/typed/expected/err_<name>.err.
+#
+# Environment:
+#   MINIPY   compiler            (default ./minipy)
+#   FASM     fasm executable     (default fasm)
+#   RUN      prefix for running the i386 programs, e.g. an emulator (default none)
+#   TARGET   linux (default) or kolibri; tests named *_linux / *_kolibri run
+#            only for that target
+#   OUT      scratch directory   (default build/typed)
+#   UPDATE=1 rewrite the expected files from the current results
+#
+# usage: sh tests/run_typed_tests.sh [tests/typed/name.mpy ...]
+MINIPY=${MINIPY:-./minipy}
+FASM=${FASM:-fasm}
+TARGET=${TARGET:-linux}
+OUT=${OUT:-build/typed}
+DIR=tests/typed
+EXP=$DIR/expected
+mkdir -p "$OUT" "$EXP"
+pass=0; fail=0; failed=""
+files="$*"
+[ -n "$files" ] || files=$(ls $DIR/*.mpy)
+for f in $files; do
+    n=$(basename "$f" .mpy)
+    case "$n" in *_linux) [ "$TARGET" = linux ] || continue;; *_kolibri) [ "$TARGET" = kolibri ] || continue;; esac
+    case "$n" in
+    err_*)
+        "$MINIPY" --compile -S "$f" -o "$OUT/$n" >"$OUT/$n.err" 2>&1
+        rc=$?
+        sed -e "s|^$DIR/||" "$OUT/$n.err" > "$OUT/$n.got"
+        if [ "$UPDATE" = 1 ]; then cp "$OUT/$n.got" "$EXP/$n.err"; fi
+        if [ $rc -ne 0 ] && cmp -s "$OUT/$n.got" "$EXP/$n.err"; then pass=$((pass+1))
+        else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (compiler exit $rc)"; diff "$EXP/$n.err" "$OUT/$n.got" | head -10; fi
+        ;;
+    *)
+        if ! "$MINIPY" --compile --target "$TARGET" --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
+            fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (does not compile)"; head -10 "$OUT/$n.log"; continue
+        fi
+        inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"
+        $RUN "$OUT/$n" <"$inp" >"$OUT/$n.got" 2>&1
+        rc=$?
+        [ $rc -ne 0 ] && echo "[exit $rc]" >>"$OUT/$n.got"
+        if [ "$UPDATE" = 1 ]; then cp "$OUT/$n.got" "$EXP/$n.out"; fi
+        if cmp -s "$OUT/$n.got" "$EXP/$n.out"; then pass=$((pass+1))
+        else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n"; diff "$EXP/$n.out" "$OUT/$n.got" | head -20; fi
+        ;;
+    esac
+done
+echo "typed tests ($TARGET): $pass passed, $fail failed"
+[ $fail -eq 0 ] || { echo "failed:$failed"; exit 1; }

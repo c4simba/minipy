@@ -99,6 +99,7 @@ void compile_stmt_ast(Parser *p, Stmt *s){
         case STMT_WHILE: compile_while_ast(p,s); break;
         case STMT_FOR: compile_for_ast(p,s); break;
         case STMT_FUNCTION_DEF:{
+            if(s->is_async){ fprintf(stderr,"parse error at line %d: async def is supported by the compiler only (minipy --compile)\n",s->line); exit(1); }
             Function *fn=compile_function_from_ast(p,s->name,s->params,s->param_count,s->body,s->body_count,0);
             fn->default_count=s->default_count; fn->star_index=s->star_index; fn->dstar_index=s->dstar_index;
             int nreg=s->param_count-(s->star_index>=0?1:0)-(s->dstar_index>=0?1:0);

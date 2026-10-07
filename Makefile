@@ -18,16 +18,25 @@ HOST_TARGET ?= minipy
 # ---------------------------------------------------------------------------
 
 CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
-           compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread main
+           compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread \
+           aot_driver aot_types aot_codegen aot_rtlib main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
 
 HEADERS  = $(wildcard src/*.h) $(wildcard src/platform/*.h)
-INCLUDES = -Isrc
+INCLUDES = -Isrc -I$(BUILD_DIR)/gen
 
-.PHONY: all test test-update clean kolibrios kolibrios-debug clean-kolibri debug
+# The runtime routines of compiled programs are fasm source; minipy carries
+# them as a C string (src/aot_rtlib.c includes the generated file).
+RTLIB_INC = $(BUILD_DIR)/gen/aot_rtlib.inc
+
+.PHONY: all test test-update test-typed clean kolibrios kolibrios-debug clean-kolibri debug
 
 all: $(HOST_TARGET)
+
+$(RTLIB_INC): src/aot_rtlib.asm
+	@mkdir -p $(dir $@)
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
 
 # Verbose host build (same logging switches as kolibrios-debug), handy for
 # reproducing debug output on the development machine.
@@ -37,6 +46,8 @@ debug:
 
 # ---------------------------- Host build -----------------------------------
 HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLATFORM_SRC)))
+
+$(BUILD_DIR)/host/aot_rtlib.o: $(RTLIB_INC)
 
 $(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -48,6 +59,11 @@ $(HOST_TARGET): $(HOST_OBJ)
 # ---------------------------- Tests -----------------------------------------
 test: $(HOST_TARGET)
 	@sh tests/run_tests.sh
+
+# Typed compiler (minipy --compile): needs fasm, and an i386-capable Linux to
+# run the programs (TARGET=kolibri / RUN=<emulator> / FASM=... see the script).
+test-typed: $(HOST_TARGET)
+	@sh tests/run_typed_tests.sh
 
 test-update: $(HOST_TARGET)
 	@sh tests/run_tests.sh --update
@@ -77,6 +93,8 @@ KOS_CFLAGS += -I$(KOS_NEWLIB_INC)
 KOS_CFLAGS += $(EXTRA_KOS_CFLAGS)      # kolibrios-debug injects -DMPY_DEBUG / -DMPY_FS_DEBUG here
 
 KOS_OBJ = $(addprefix $(KOS_BUILD_DIR)/,$(addsuffix .o,$(CORE_SRC) $(KOLIBRI_PLATFORM_SRC)))
+
+$(KOS_BUILD_DIR)/aot_rtlib.o: $(RTLIB_INC)
 
 $(KOS_BUILD_DIR)/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)

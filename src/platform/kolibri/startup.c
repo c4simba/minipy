@@ -94,3 +94,24 @@ void mpy_platform_banner(const char *script_path){
     kol_console_puts(script_path ? script_path : "(default)");
     kol_console_puts("\n\r");
 }
+
+/* f70.7 starts the program; KolibriOS has no wait(), so poll fn 18.21 (slot of
+   a PID, 0 once the process is gone) until it exits. */
+int mpy_platform_run(const char *program, const char *args){
+    unsigned char bi[300] __attribute__((aligned(16)));
+    memset(bi, 0, sizeof bi);
+    *(int*)(bi + 0) = 7;               /* subfunction: start program */
+    *(int*)(bi + 8) = (int)args;       /* parameter string */
+    size_t plen = strlen(program);
+    if(plen > sizeof bi - 21) plen = sizeof bi - 21;
+    memcpy(bi + 20, program, plen);
+    int pid;
+    __asm__ __volatile__("int $0x40" : "=a"(pid) : "a"(70), "b"((int)bi) : "memory");
+    if(pid <= 0) return pid ? pid : -1;
+    for(;;){
+        int slot;
+        __asm__ __volatile__("int $0x40" : "=a"(slot) : "a"(18), "b"(21), "c"(pid) : "memory");
+        if(slot == 0) return 0;
+        __asm__ __volatile__("int $0x40" :: "a"(5), "b"(5) : "memory");   /* 50 ms */
+    }
+}

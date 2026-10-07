@@ -147,3 +147,33 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
     buf[total] = 0;
     return buf;
 }
+
+/* f70 with a path at +20; returns eax. */
+static int kos_f70(int sub, int a4, int a8, int size, const void *buf, const char *path){
+    unsigned char bi[KOS_F70_BUF] __attribute__((aligned(16))) = {0};
+    *(int*)(bi + 0) = sub;
+    *(int*)(bi + 4) = a4;
+    *(int*)(bi + 8) = a8;
+    *(int*)(bi + 12) = size;
+    *(int*)(bi + 16) = (int)buf;
+    size_t plen = strlen(path);
+    if(plen > KOS_PATH_MAX) plen = KOS_PATH_MAX;
+    memcpy(bi + 20, path, plen);
+    bi[20 + plen] = 0;
+    int result;
+    __asm__ __volatile__("int $0x40" : "=a"(result) : "a"(70), "b"((int)bi) : "memory");
+    return result;
+}
+
+/* Subfunction 2: create/overwrite a file with `len` bytes. */
+int mpy_fs_backend_write_file(const char *normalized_path,const char *data,size_t len,char **error_message){
+    int r = kos_f70(2, 0, 0, (int)len, data, normalized_path);
+    if(r != 0){
+        if(error_message){ size_t n=strlen(normalized_path)+48; *error_message=(char*)xmalloc(n); snprintf(*error_message,n,"cannot write %s (f70 error %d)",normalized_path,r); }
+        return 1;
+    }
+    return 0;
+}
+/* Subfunction 8: delete a file. */
+int mpy_fs_backend_remove(const char *normalized_path){ return kos_f70(8, 0, 0, 0, NULL, normalized_path); }
+int mpy_fs_backend_exists(const char *normalized_path){ int lo, hi; return kos_file_size(normalized_path, &lo, &hi) == 0; }
