@@ -45,6 +45,29 @@ static Value str_method(Value recv,const char *name,int argc,Value *argv){
     if(!strcmp(name,"isdigit")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!(s[i]>='0'&&s[i]<='9')) return boolv(0); return boolv(1); }
     if(!strcmp(name,"isalpha")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!isalpha((unsigned char)s[i])) return boolv(0); return boolv(1); }
     if(!strcmp(name,"isspace")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!is_ws((unsigned char)s[i])) return boolv(0); return boolv(1); }
+    if(!strcmp(name,"isalnum")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!isalnum((unsigned char)s[i])) return boolv(0); return boolv(1); }
+    if(!strcmp(name,"isupper")||!strcmp(name,"islower")){ int up=name[2]=='u', cased=0; for(int i=0;i<n;i++){ unsigned char c=(unsigned char)s[i]; if(up? islower(c) : isupper(c)) return boolv(0); if(isalpha(c)) cased=1; } return boolv(cased); }
+    if(!strcmp(name,"rfind")||!strcmp(name,"rindex")){ const char *sub=req_str(argv[0],"substring must be str"); int sl=(int)strlen(sub); for(int i=n-sl;i>=0;i--) if(memcmp(s+i,sub,(size_t)sl)==0) return intv(i); if(!strcmp(name,"rindex")) runtime_error("substring not found"); return intv(-1); }
+    if(!strcmp(name,"ljust")||!strcmp(name,"rjust")||!strcmp(name,"center")||!strcmp(name,"zfill")){
+        int w=argc>=1?(int)as_int(argv[0]):0; char fill=' ';
+        if(argc>=2){ const char *f=req_str(argv[1],"fill character must be str"); if(f[0]) fill=f[0]; }
+        if(w<=n) return stringv_len(s,n);
+        int pad=w-n, left=0; CBuf b={0};
+        if(!strcmp(name,"rjust")) left=pad; else if(!strcmp(name,"center")) left=pad/2+(pad&w&1);
+        if(!strcmp(name,"zfill")){ int sign=(n>0&&(s[0]=='-'||s[0]=='+')); if(sign) cb_ch(&b,s[0]); for(int i=0;i<pad;i++) cb_ch(&b,'0'); cb_mem(&b,s+sign,n-sign); return cb_take(&b); }
+        for(int i=0;i<left;i++) cb_ch(&b,fill); cb_mem(&b,s,n); for(int i=left;i<pad;i++) cb_ch(&b,fill); return cb_take(&b);
+    }
+    if(!strcmp(name,"partition")||!strcmp(name,"rpartition")){
+        const char *sep=req_str(argv[0],"separator must be str"); int sl=(int)strlen(sep); if(sl==0) runtime_error("empty separator");
+        int at=-1, rev=name[0]=='r';
+        if(rev){ for(int i=n-sl;i>=0;i--) if(memcmp(s+i,sep,(size_t)sl)==0){ at=i; break; } }
+        else { for(int i=0;i+sl<=n;i++) if(memcmp(s+i,sep,(size_t)sl)==0){ at=i; break; } }
+        Obj *t=new_tuple();
+        if(at<0){ list_push(&t->as.tuple,rev?stringv(""):stringv_len(s,n)); list_push(&t->as.tuple,stringv("")); list_push(&t->as.tuple,rev?stringv_len(s,n):stringv("")); }
+        else { list_push(&t->as.tuple,stringv_len(s,at)); list_push(&t->as.tuple,stringv_len(sep,sl)); list_push(&t->as.tuple,stringv_len(s+at+sl,n-at-sl)); }
+        return objv(t);
+    }
+    if(!strcmp(name,"splitlines")){ Obj *out=new_list(); int i=0,start=0; while(i<n){ if(s[i]=='\n'||s[i]=='\r'){ list_push(&out->as.list,stringv_len(s+start,i-start)); if(s[i]=='\r'&&i+1<n&&s[i+1]=='\n') i++; start=++i; } else i++; } if(start<n) list_push(&out->as.list,stringv_len(s+start,n-start)); return objv(out); }
     runtime_error("unknown string method"); return nonev();
 }
 

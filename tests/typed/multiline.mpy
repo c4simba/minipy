@@ -1,0 +1,43 @@
+"""Python's line joining: a statement continues while a bracket is open or
+after a backslash, and a triple-quoted string may span lines (this docstring).
+The interpreter runs this file too (tests/multiline_test.mpy)."""
+
+def area(width: int,
+         height: int,              # a comment inside the brackets
+         scale: int = 1) -> int:
+    """Docstrings may
+    span lines too."""
+    return (width *
+            height) * scale
+
+table = [
+    ("one", 1),
+    ("two", 2),   # trailing comma below
+    ("three", 3),
+]
+names = {
+    "a": area(2, 3),
+    "b": area(2,
+              3,
+              scale=10),
+}
+total = 1 + \
+    2 + \
+    3
+text = """first line
+  second line, "quoted" and 'quoted'
+# not a comment"""
+call = "-".join([
+    name.upper()
+    for name, _ in table
+    if len(name) > 3
+])
+print(area(4, 5))
+print(table[2][0] + " " + str(names["b"]) + " " + str(total))
+print(text)
+print(len(text.split("\n")))
+print(call)
+print([x * 2 for x in range(3)
+       if x != 1])
+print("a" "b"
+      if total > 5 else "c")

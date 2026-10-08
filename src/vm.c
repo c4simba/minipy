@@ -115,7 +115,15 @@ static void bind_arguments(Function *fn, Value *pos, int npos, Dict *kw, Dict *l
 static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
     if(vm.fcount>=256) runtime_error("call stack overflow");
     Frame *fr=&vm.frames[vm.fcount++]; fr->fn=fn;
-    if(gen_obj){ fr->ip=gen_obj->as.gen.ip; fr->locals=gen_obj->as.gen.locals; }
+    int base_sp=vm.sp;                  /* this frame's operands start here; return/yield restore it */
+    if(gen_obj){
+        Generator *g=&gen_obj->as.gen;
+        fr->ip=g->ip; fr->locals=g->locals; fr->hcount=0;
+        for(int i=0;i<g->nstack;i++) push(g->stack[i]);
+        for(int i=0;i<g->nhandlers;i++){ fr->handlers[i].ip=g->handlers[2*i]; fr->handlers[i].sp=base_sp+g->handlers[2*i+1]; }
+        fr->hcount=g->nhandlers;
+        free(g->stack); g->stack=NULL; g->nstack=0; free(g->handlers); g->handlers=NULL; g->nhandlers=0;
+    }
     else { fr->ip=0; fr->hcount=0; fr->locals=locals; }
     Chunk *c=fn->chunk;
     int exc_slot=vm.exc_depth++;
@@ -135,6 +143,7 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             fr=hf; fn=fr->fn; c=fr->fn->chunk;
         } else {
             vm.fcount--;                                  /* unwind our frame */
+            vm.sp=base_sp;
             vm.exc_depth=exc_slot;                        /* release our slot */
             if(vm.exc_depth>0) longjmp(vm.exc_jumps[vm.exc_depth-1].buf,1);   /* propagate */
             longjmp(vm.panic,1);                          /* uncaught: to top level */
@@ -178,8 +187,13 @@ static Value run_prepared(Function *fn, Dict *locals, Obj *gen_obj){
             case OP_DICT_MERGE:{ Value src=popv(); if(!is_obj(src,O_DICT)) runtime_error("argument after ** must be a dict"); Dict *sd=&src.as.obj->as.dict; Dict *dd=&vm.stack[vm.sp-1].as.obj->as.dict; for(int i=0;i<sd->count;i++) dict_set(dd,sd->keys[i],sd->vals[i]); break; }
             case OP_CALL_EX:{ Value kw=popv(),pos=popv(),cal=popv(); Value r=call_value_ex(cal,&pos.as.obj->as.list,&kw.as.obj->as.dict); push(r); fr=&vm.frames[vm.fcount-1]; fn=fr->fn; c=fr->fn->chunk; break; }
             case OP_EXC_MATCH:{ Value type=popv(); Value exc=popv(); push(boolv(exc_matches(exc,type))); break; }
-            case OP_YIELD:{ if(!gen_obj) runtime_error("yield outside generator"); Value r=popv(); gen_obj->as.gen.ip=fr->ip; gen_obj->as.gen.locals=fr->locals; vm.fcount--; vm.exc_depth=exc_slot; return r; }
-            case OP_RETURN:{ Value r=popv(); if(gen_obj) gen_obj->as.gen.done=1; vm.fcount--; vm.exc_depth=exc_slot; return r; }
+            case OP_YIELD:{ if(!gen_obj) runtime_error("yield outside generator"); Value r=popv(); Generator *g=&gen_obj->as.gen; g->ip=fr->ip; g->locals=fr->locals;
+                g->nstack=vm.sp-base_sp;
+                if(g->nstack>0){ g->stack=MPY_NEW_ARR(Value,g->nstack); memcpy(g->stack,&vm.stack[base_sp],sizeof(Value)*(size_t)g->nstack); }
+                g->nhandlers=fr->hcount;
+                if(fr->hcount>0){ g->handlers=MPY_NEW_ARR(int,2*fr->hcount); for(int i=0;i<fr->hcount;i++){ g->handlers[2*i]=fr->handlers[i].ip; g->handlers[2*i+1]=fr->handlers[i].sp-base_sp; } }
+                vm.sp=base_sp; vm.fcount--; vm.exc_depth=exc_slot; return r; }
+            case OP_RETURN:{ Value r=popv(); vm.sp=base_sp; if(gen_obj) gen_obj->as.gen.done=1; vm.fcount--; vm.exc_depth=exc_slot; return r; }
             case OP_DUP:{ Value v=vm.stack[vm.sp-1]; push(v); break; }
             case OP_DUP2:{ Value a=vm.stack[vm.sp-2],b=vm.stack[vm.sp-1]; push(a); push(b); break; }
             case OP_ROT2:{ Value t=vm.stack[vm.sp-1]; vm.stack[vm.sp-1]=vm.stack[vm.sp-2]; vm.stack[vm.sp-2]=t; break; }
@@ -260,10 +274,17 @@ Value call_value(Value callee,int argc,Value *args){
 }
 /* Call with an explicit positional list and keyword dict (OP_CALL_EX). */
 static Value call_value_ex(Value callee, List *pos, Dict *kw){
-    if(callee.type==V_NATIVE){ if(kw->count) runtime_error("this function takes no keyword arguments"); return callee.as.native->fn(pos->count,pos->items); }
+    if(callee.type==V_NATIVE){ if(kw->count){ Value r; if(native_call_kw(callee.as.native,pos,kw,&r)) return r; runtime_error("this function takes no keyword arguments"); } return callee.as.native->fn(pos->count,pos->items); }
     if(is_obj(callee,O_FUNCTION)){ Function *fn=&callee.as.obj->as.fn; if(fn->is_generator) return objv(new_generator_bind(fn,pos->items,pos->count,kw)); Dict *locals=dict_clone(fn->closure); bind_arguments(fn,pos->items,pos->count,kw,locals); return run_prepared(fn,locals,NULL); }
     if(is_obj(callee,O_BOUND_METHOD)){ BoundMethod *bm=&callee.as.obj->as.bm; int n=pos->count; Value *argv=MPY_NEW_ARR(Value,n+1); argv[0]=bm->receiver; for(int i=0;i<n;i++) argv[i+1]=pos->items[i]; Function *fn=bm->fn; Value r; if(fn->is_generator) r=objv(new_generator_bind(fn,argv,n+1,kw)); else { Dict *locals=dict_clone(fn->closure); bind_arguments(fn,argv,n+1,kw,locals); r=run_prepared(fn,locals,NULL); } free(argv); return r; }
-    if(is_obj(callee,O_BOUND_NATIVE)){ if(kw->count) runtime_error("this function takes no keyword arguments"); return call_value(callee,pos->count,pos->items); }
+    if(is_obj(callee,O_BOUND_NATIVE)){
+        if(kw->count){
+            BoundNative *bn=&callee.as.obj->as.bn; Value key=nonev(); int reverse=0, ok=is_obj(bn->receiver,O_LIST) && !strcmp(bn->name,"sort") && pos->count==0;
+            for(int i=0;ok && i<kw->count;i++){ if(!strcmp(kw->keys[i],"key")) key=kw->vals[i]; else if(!strcmp(kw->keys[i],"reverse")) reverse=truthy(kw->vals[i]); else ok=0; }
+            if(!ok) runtime_error("this function takes no keyword arguments");
+            mpy_sort_items(&bn->receiver.as.obj->as.list,key,reverse); return nonev();
+        }
+        return call_value(callee,pos->count,pos->items); }
     if(is_obj(callee,O_CLASS)){ Class *kl=&callee.as.obj->as.klass;
         if(is_builtin_exc_name(kl->name)){ if(kw->count) runtime_error("exception takes no keyword arguments"); return call_value(callee,pos->count,pos->items); }
         Obj *in=new_obj(O_INSTANCE); in->as.inst.klass=kl; in->as.inst.fields=dict_new(); Value self=objv(in); Value init;

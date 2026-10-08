@@ -102,6 +102,11 @@ static int mpy_run(int argc,char **argv){
         dict_set(sysd,"poke_str",nativev(&N_POKE_STR));
         dict_set(sysd,"peek_str",nativev(&N_PEEK_STR));
         dict_set(sysd,"addr",nativev(&N_ADDR));
+        dict_set(sysd,"peek_at",nativev(&N_PEEK_AT));     /* raw memory at an address */
+        dict_set(sysd,"poke_at",nativev(&N_POKE_AT));
+        dict_set(sysd,"peek_str_at",nativev(&N_PEEK_STR_AT));
+        dict_set(sysd,"poke_str_at",nativev(&N_POKE_STR_AT));
+        dict_set(sysd,"cstr_at",nativev(&N_CSTR_AT));
         dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
     }
     /* Built-in `thread` module: OS threads under a GIL (see vm_thread.c). */
@@ -115,6 +120,15 @@ static int mpy_run(int argc,char **argv){
         dict_set(thd,"acquire",nativev(&N_THREAD_ACQUIRE));
         dict_set(thd,"release",nativev(&N_THREAD_RELEASE));
         dict_set(vm.modules,"thread",objv(new_module("thread",thd)));
+    }
+    /* Built-in `typing` module: the names exist so annotated code imports
+       them; annotations themselves are not evaluated. */
+    {
+        Dict *tyd=dict_new();
+        const char *names[]={"Callable","Any","Optional","Union","List","Dict","Tuple","Set","Iterable","Iterator","Generator",NULL};
+        dict_set(tyd,"__name__",stringv("typing"));
+        for(int i=0;names[i];i++){ char full[64]; snprintf(full,sizeof full,"typing.%s",names[i]); dict_set(tyd,names[i],stringv(full)); }
+        dict_set(vm.modules,"typing",objv(new_module("typing",tyd)));
     }
     char *src=mpy_fs_read_file(script_path);
     if(!src) return 1;

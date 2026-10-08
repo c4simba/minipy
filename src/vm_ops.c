@@ -128,6 +128,7 @@ void set_attr(Value obj,const char *name,Value val){ if(is_obj(obj,O_INSTANCE)){
 Value get_index(Value obj,Value idx){
     Value r; if(call_instance_method1(obj,"__getitem__",idx,&r)) return r;
     if(is_obj(obj,O_LIST)){ if(!is_number(idx)) runtime_error("list index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.list; if(i<0) i+=l->count; if(i<0||i>=l->count) raise_named("IndexError","list index out of range"); return l->items[i]; }
+    if(is_obj(obj,O_TUPLE)){ if(!is_number(idx)) runtime_error("tuple index must be int"); int64_t i=as_int(idx); List *l=&obj.as.obj->as.tuple; if(i<0) i+=l->count; if(i<0||i>=l->count) raise_named("IndexError","tuple index out of range"); return l->items[i]; }
     if(is_obj(obj,O_DICT)){ char *k=value_to_cstr(idx); Value v; int ok=dict_get(&obj.as.obj->as.dict,k,&v); free(k); if(!ok) raise_named("KeyError","dict key not found"); return v; }
     if(is_obj(obj,O_STRING)){ if(!is_number(idx)) runtime_error("string index must be int"); int64_t i=as_int(idx); String *s=&obj.as.obj->as.str; if(i<0)i+=s->len; if(i<0||i>=s->len) raise_named("IndexError","string index out of range"); return stringv_len(&s->s[i],1); }
     runtime_error("indexing unsupported type"); return nonev();

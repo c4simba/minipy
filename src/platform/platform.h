@@ -84,11 +84,11 @@ int         mpy_platform_run(const char *program, const char *args);
 
 /* Raw syscall gateway (backs the built-in `sys.syscall`).
    mpy_platform_has_syscall(): 1 only on the KolibriOS build, 0 elsewhere.
-   mpy_platform_syscall(): loads eax..edi from in[0..5], executes `int 0x40`,
-   and stores the resulting eax..edi into out[0..5]. (ebp is not exposed --
-   GCC owns it as the frame pointer -- which covers the normal KolibriOS ABI.) */
+   mpy_platform_syscall(): loads eax..edi from in[0..5] and ebp from in[6]
+   (0 unless given: only a few functions read it, e.g. 65's row offset),
+   executes `int 0x40`, and stores the resulting eax..edi into out[0..5]. */
 int         mpy_platform_has_syscall(void);
-int         mpy_platform_syscall(const uint32_t in[6], uint32_t out[6]);
+int         mpy_platform_syscall(const uint32_t in[7], uint32_t out[6]);
 
 /* ---- threading (host: pthreads; KolibriOS: int 0x40 fn 51) ----
    spawn runs `entry(arg)` on a new OS thread; returns 0 on success.

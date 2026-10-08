@@ -1,0 +1,18 @@
+MiniPy - Mini Python Interpreter
+Script: tests/loop_stack_test.mpy
+
+[1, 'C', '-', 2]
+['at', [1, 1], None]
+0
+10
+20
+[0, [0, 10, 20], ['00', '01', '10', '11']]
+0/00
+0/01
+10/00
+10/01
+0
+1
+100
+2
+[1, 1]

@@ -1,0 +1,3 @@
+# multi-line statements and strings in the interpreter: the same program as the
+# compiled test tests/typed/multiline.mpy (expected output there, from CPython).
+import typed.multiline

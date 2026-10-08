@@ -1,5 +1,6 @@
-# examples/counter.mpy: a window described with decorators, run on a scripted
-# desktop (ui_kolibri.events: redraw, +1 twice, Reset, +1, the key q)
+# examples/counter.mpy in kui's older form (win = Window(...), @win.on_paint),
+# run on a scripted desktop (ui_kolibri.events: redraw, +1 twice, Reset, +1,
+# the key q)
 from lib.kui import Window   # a copy of examples/kui.mpy
 
 win = Window("Counter", 100, 100, 260, 160)

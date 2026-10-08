@@ -1,0 +1,103 @@
+# The decoding half of examples/kolibri.mpy (no system calls): register
+# values and structures built by hand. The interpreter runs this file too
+# (tests/kolibri_lib_test.mpy): both must decode the same way, although the
+# interpreter's registers are unsigned and compiled ones signed 32-bit.
+import sys
+import lib.kolibri as k   # a copy of examples/kolibri.mpy
+
+def show(label: str, value: str) -> None:
+    print(label + ": " + value)
+
+show("s32", str([k._s32(0xFFFFFFFF), k._s32(0x7FFFFFFF), k._s32(-5), k._s16(0xFFFE), k._s16(0x12345)]))
+show("pk", k.hex32(k._pk(-1, 5)) + " " + k.hex32(k._pk(0x12345, -2)) + " " + str([k._hi(k._pk(300, 7)), k._lo(k._pk(300, 7))]))
+show("hex32", k.hex32(-1) + " " + k.hex32(0) + " " + k.hex32(0xf26d5b28) + " " + k.hex32(k._s32(0x80000001)))
+show("bcd", str([k._bcd(0x59), k._to_bcd(47), k._bcd(k._to_bcd(9))]))
+show("ascii", str([k._ascii("/sys/file.txt"), k._ascii("/tmp0/1/файл")]))
+ip = k.ip_from_str("192.168.0.200")
+show("ip", str(ip) + " " + k.ip_to_str(ip) + " " + k.ip_to_str(0x0100007F) + " " + str(k.ip_from_str("1.2.3")))
+show("mac", k.mac_to_str([0x52, 0x54, 0, 0xAB, 0xCD, 0xEF]))
+show("u32 float", str(k._u32_float(-1)) + " " + str(k._u32_float(5)))
+
+key = k.Key(0x1E6100)
+show("key", str([key.code, key.scancode, key.controls]) + " " + str(key.hotkey))
+hot = k.Key(2 | (0x3B << 8) | (0x110 << 16))
+show("hotkey", str([hot.code, hot.scancode, hot.controls]) + " " + str(hot.hotkey))
+
+b = sys.buffer(1024)
+sys.poke(b, 0, 1234, 4)
+sys.poke(b, 4, 3, 2)
+sys.poke(b, 6, 5, 2)
+sys.poke_str(b, 10, "EDITOR     ")
+sys.poke(b, 22, 0x1000, 4)
+sys.poke(b, 26, 0xFFFF, 4)
+sys.poke(b, 30, 4242, 4)
+sys.poke(b, 34, -20, 4)
+sys.poke(b, 38, 30, 4)
+sys.poke(b, 42, 640, 4)
+sys.poke(b, 46, 480, 4)
+sys.poke(b, 50, 5, 2)
+sys.poke(b, 54, 5, 4)
+sys.poke(b, 58, 24, 4)
+sys.poke(b, 62, 631, 4)
+sys.poke(b, 66, 451, 4)
+sys.poke(b, 70, 2, 1)
+sys.poke(b, 71, 0x80000027, 4)
+sys.poke(b, 75, 1, 1)
+t = k.ThreadInfo(b)
+show("thread", t.name + " " + str([t.cpu_usage, t.window_stack_pos, t.slot_at_stack_pos, t.memory_address, t.memory_size, t.pid]))
+show("thread window", str([t.window_x, t.window_y, t.window_w, t.window_h, t.status, t.client_x, t.client_y, t.client_w, t.client_h]))
+show("thread state", str([t.window_state, t.keyboard_mode]) + " " + str(t.event_mask == k.EVM_MOUSE_ACTIVE_ONLY | 0x27) + " " + k.hex32(t.event_mask))
+
+f = sys.buffer(40)
+sys.poke(f, 0, k.ATTR_FOLDER | k.ATTR_HIDDEN, 4)
+sys.poke(f, 8, 0x00173B3A, 4)            # created 23:59:58
+sys.poke(f, 12, 0x07BB0B19, 4)           # 25.11.1979
+sys.poke(f, 24, 0x00010203, 4)           # modified 01:02:03
+sys.poke(f, 28, 0x07EA0C1F, 4)           # 31.12.2026
+sys.poke(f, 32, -1, 4)
+sys.poke(f, 36, 2, 4)
+fi = k.FileInfo(f, 0, "name")
+show("file", fi.name + " " + str([fi.attributes, fi.size, fi.size_high]) + " " + str(fi.is_folder()))
+show("file times", str(fi.created) + " " + str(fi.modified))
+
+v = sys.buffer(16)
+sys.poke(v, 0, 0x00070700, 4)
+sys.poke(v, 4, ord("d") | (1 << 8) | (40 << 16), 4)
+sys.poke(v, 8, 0xf26d5b28, 4)
+sys.poke(v, 14, 1675, 2)
+kv = k.KernelVersion(v)
+show("kernel", str(kv) + " " + str([kv.debug_tag, kv.abi_major, kv.abi_minor, kv.commits_since_release]) + " " + k.hex32(kv.commit))
+
+r = sys.buffer(36)
+for i in range(9):
+    sys.poke(r, 4 * i, 1000 * (i + 1), 4)
+sys.poke(r, 8, -1, 4)
+ram = k.RamInfo(r)
+show("ram", str([ram.total_pages, ram.free_pages, ram.page_faults, ram.kernel_heap, ram.max_alloc_block]))
+
+c = sys.buffer(40)
+for i in range(10):
+    sys.poke(c, 4 * i, 0xFF000000 | (0x111111 * i), 4)
+sc = k.SystemColors(c)
+show("colors", str([sc.frame, sc.grab, sc.work_dark, sc.work_text, sc.graph]))
+
+a = sys.buffer(14)
+sys.poke(a, 0, k.ip_from_str("10.0.0.1"), 4)
+for i in range(6):
+    sys.poke(a, 4 + i, 0xA0 + i, 1)
+sys.poke(a, 10, 1, 2)
+sys.poke(a, 12, 65535, 2)
+e = k.ArpEntry(a)
+show("arp", k.ip_to_str(e.ip) + " " + k.mac_to_str(e.mac) + " " + str([e.status, e.ttl]))
+
+sa = k.sockaddr_in("93.184.216.34", 8080)
+show("sockaddr", k.sockaddr_ip(sa) + ":" + str(k.sockaddr_port(sa)) + " " + str([sys.peek(sa, 0, 2), sys.peek(sa, 2, 1), sys.peek(sa, 3, 1)]))
+
+area = k.ipc_area(64)
+sys.poke(area, 8, 77, 4)
+sys.poke(area, 12, 3, 4)
+sys.poke_str(area, 16, "abc")
+sys.poke(area, 19, 4300, 4)
+sys.poke(area, 23, 0, 4)
+sys.poke(area, 4, 8 + 11 + 8, 4)
+show("ipc", str(k.ipc_receive(area)) + " " + str(sys.peek(area, 4, 4)) + " " + str(k.ipc_receive(area)))

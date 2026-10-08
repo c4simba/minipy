@@ -48,7 +48,7 @@ static void gc_mark_obj(Obj *o){
         case O_BOUND_NATIVE: gc_mark_value(o->as.bn.receiver); break;
         case O_MODULE: gc_mark_dict(o->as.mod.dict); break;
         case O_ITER: gc_mark_value(o->as.iter.iterable); break;
-        case O_GENERATOR: if(o->as.gen.fn) gc_mark_obj(o->as.gen.fn->owner); gc_mark_dict(o->as.gen.locals); break;
+        case O_GENERATOR: if(o->as.gen.fn) gc_mark_obj(o->as.gen.fn->owner); gc_mark_dict(o->as.gen.locals); for(int i=0;i<o->as.gen.nstack;i++) gc_mark_value(o->as.gen.stack[i]); break;
         case O_EXCEPTION: gc_mark_value(o->as.exc.payload); break;
         case O_SUPER: gc_mark_value(o->as.super.self); if(o->as.super.start) gc_mark_obj(class_obj(o->as.super.start)); break;
         case O_METHWRAP: gc_mark_value(o->as.mw.fn); break;
@@ -67,7 +67,7 @@ static void gc_free_obj(Obj *o){
         case O_SET:   free(o->as.set.items); break;
         case O_DICT:  free(o->as.dict.keys); free(o->as.dict.vals); break;
         case O_INSTANCE: if(o->as.inst.fields){ free(o->as.inst.fields->keys); free(o->as.inst.fields->vals); free(o->as.inst.fields); } break;
-        case O_GENERATOR: if(o->as.gen.locals){ free(o->as.gen.locals->keys); free(o->as.gen.locals->vals); free(o->as.gen.locals); } break;
+        case O_GENERATOR: if(o->as.gen.locals){ free(o->as.gen.locals->keys); free(o->as.gen.locals->vals); free(o->as.gen.locals); } free(o->as.gen.stack); free(o->as.gen.handlers); break;
         case O_EXCEPTION: free(o->as.exc.type_name); free(o->as.exc.message); break;
         case O_BOUND_NATIVE: free(o->as.bn.name); break;
         case O_MODULE: free(o->as.mod.name); break;

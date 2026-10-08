@@ -1,0 +1,3 @@
+# examples/kolibri.mpy decoding in the interpreter: the same program as the
+# compiled test tests/typed/kos_decode.mpy (expected output there).
+import typed.kos_decode

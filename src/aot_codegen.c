@@ -808,24 +808,30 @@ static void unpack_tuple_slot(F *f, int slot, Ty *tt, Expr **targets, int n, int
 }
 
 /* ---- indexing ---- */
-static void gen_syscall_regs(F *f, Expr *e){       /* registers after the call: [esp] eax .. [esp+20] edi */
-    E(f,"sub esp,24");
-    for(int i=e->count;i<6;i++) E(f,"mov dword [esp+%d],0",4*i);      /* registers no argument sets */
+/* the registers of sys.syscall(...): eax..edi, ebp (0 unless given; ebp itself
+   is kept around the call) -> after the call [esp] eax .. [esp+20] edi; 28 bytes */
+static void gen_syscall_regs(F *f, Expr *e){
+    E(f,"sub esp,28");
+    for(int i=e->count;i<7;i++) E(f,"mov dword [esp+%d],0",4*i);      /* registers no argument sets */
     for(int i=0;i<e->count;i++){
         Ty *t=TY(e->items[i]);
         gen_borrow(f,e->items[i]);
-        if(t->k==TY_STR||t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
+        if(t->k==TY_STR){ int l=new_label(), l2=new_label();            /* its bytes, NUL-terminated ("" too) */
+            E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
+        else if(t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
         E(f,"mov [esp+%d],eax",4*i);
     }
     static const char *regs[6]={"eax","ebx","ecx","edx","esi","edi"};
-    for(int i=5;i>=0;i--) E(f,"mov %s,[esp+%d]",regs[i],4*i);
+    E(f,"push ebp"); E(f,"mov ebp,[esp+28]");                         /* (on Linux: the 6th argument) */
+    for(int i=5;i>=0;i--) E(f,"mov %s,[esp+%d]",regs[i],4+4*i);
     E(f,gg->target==AOT_TARGET_KOLIBRI?"int 0x40":"int 0x80");
-    for(int i=0;i<6;i++) E(f,"mov [esp+%d],%s",4*i,regs[i]);
+    for(int i=0;i<6;i++) E(f,"mov [esp+%d],%s",4+4*i,regs[i]);
+    E(f,"pop ebp");
 }
 static int gen_index(F *f, Expr *e){
     if(e->a->kind==EXPR_CALL && xinfo(e->a)->kind==X_SYSCALL && e->b->kind==EXPR_LITERAL && e->b->tok->kind==T_NUMBER
        && !e->b->tok->is_float && e->b->tok->i>=0 && e->b->tok->i<6){        /* sys.syscall(...)[k]: just register k */
-        gen_syscall_regs(f,e->a); E(f,"mov eax,[esp+%d]",4*(int)e->b->tok->i); E(f,"add esp,24"); return 0;
+        gen_syscall_regs(f,e->a); E(f,"mov eax,[esp+%d]",4*(int)e->b->tok->i); E(f,"add esp,28"); return 0;
     }
     Ty *ct=TY(e->a);
     if(ct->k==TY_OBJ) return gen_op_call(f,aot_find_method(ct->cls,"__getitem__"),e->a,e->b);   /* obj[key] */
@@ -1544,6 +1550,16 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
     if(!strcmp(m,"buffer")){ Ty *t0=TY(e->items[0]); gen_borrow(f,e->items[0]); CALLRT(f,t0->k==TY_STR?"rt_buf_from_str":"rt_buf_new"); return 1; }
     if(!strcmp(m,"addr")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); return 0; }
     if(!strcmp(m,"exit")){ if(e->count) gen(f,e->items[0]); else E(f,"xor eax,eax"); E(f,"mov ebx,eax"); CALLRT(f,"rt_exit"); return 0; }
+    if(!strcmp(m,"peek_at")||!strcmp(m,"peek_str_at")||!strcmp(m,"cstr_at")||!strcmp(m,"poke_str_at")){   /* raw memory: (address, n | str) */
+        gen(f,e->items[0]); E(f,"push eax");
+        if(m[1]=='o') gen_borrow(f,e->items[1]); else gen(f,e->items[1]);
+        E(f,"mov edx,eax"); E(f,"pop eax");
+        if(!strcmp(m,"peek_at")){ CALLRT(f,"rt_mem_peek"); return 0; }
+        if(!strcmp(m,"poke_str_at")){ CALLRT(f,"rt_mem_poke_str"); return 0; }
+        CALLRT(f,m[0]=='c'?"rt_mem_cstr":"rt_mem_peek_str"); return 1;
+    }
+    if(!strcmp(m,"poke_at")){ gen(f,e->items[0]); E(f,"push eax"); gen(f,e->items[1]); E(f,"push eax"); gen(f,e->items[2]);
+        E(f,"mov ecx,eax"); E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,"rt_mem_poke"); return 0; }
     int n=e->count;
     E(f,"sub esp,%d",4*n);
     for(int i=0;i<n;i++){ gen_borrow(f,e->items[i]); E(f,"mov [esp+%d],eax",4*i); }
@@ -1573,7 +1589,7 @@ static int gen_call(F *f, Expr *e){
         case X_CTOR: return gen_ctor(f,e,xi);
         case X_BUILTIN: return gen_builtin(f,e,xi);
         case X_TMETHOD: return gen_tmethod(f,e,xi);
-        case X_SYSCALL: gen_syscall_regs(f,e); E(f,"mov eax,esp"); CALLRT(f,"rt_syscall_list"); E(f,"add esp,24"); return 1;
+        case X_SYSCALL: gen_syscall_regs(f,e); E(f,"mov eax,esp"); CALLRT(f,"rt_syscall_list"); E(f,"add esp,28"); return 1;
         case X_SYS: return gen_sys(f,e,xi);
         case X_ASYNC: return gen_asyncio(f,e,xi);
         case X_BMOD: return gen_bmod(f,e,xi);
@@ -2464,7 +2480,7 @@ static void gen_stmt(F *f, Stmt *s){
             if(aot_is_annotation_only(u,s)){ gen_assign(f,s,aot_assign(u,s)); break; }
             Expr *e=aot_expr(u,&s->expr);
             if(is_str_lit(e)) break;                          /* docstring */
-            if(e->kind==EXPR_CALL && xinfo(e)->kind==X_SYSCALL){ gen_syscall_regs(f,e); E(f,"add esp,24"); break; }   /* result unused: no list */
+            if(e->kind==EXPR_CALL && xinfo(e)->kind==X_SYSCALL){ gen_syscall_regs(f,e); E(f,"add esp,28"); break; }   /* result unused: no list */
             int o=gen(f,e); drop_value(f,TY(e),o);
             break; }
         case STMT_ASSIGN: gen_assign(f,s,aot_assign(u,s)); break;

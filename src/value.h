@@ -26,7 +26,9 @@ typedef struct { Value receiver; Function *fn; } BoundMethod;
 typedef struct { Value receiver; char *name; } BoundNative;
 typedef struct { char *name; Dict *dict; } Module;
 typedef struct { Value iterable; int index; } Iter;
-typedef struct { Function *fn; Dict *locals; int ip; int done; } Generator;
+/* A suspended generator keeps its frame's operand stack (for-loop iterators
+   live there) and its try handlers as (ip, sp - base) pairs until resumed. */
+typedef struct { Function *fn; Dict *locals; int ip; int done; Value *stack; int nstack; int *handlers; int nhandlers; } Generator;
 typedef struct { char *type_name; char *message; Value payload; } ExceptionObj;
 typedef struct { Value self; Class *start; } Super;   /* super() proxy */
 typedef struct { int kind; Value fn; } MethWrap;      /* 0 static, 1 class, 2 property */

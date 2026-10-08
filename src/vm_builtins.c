@@ -3,7 +3,7 @@
 #include "vm.h"
 #include "containers.h"
 
-static Value native_len(int argc,Value *argv){ if(argc!=1) runtime_error("len() expects 1 argument"); Value v=argv[0]; Value mr; if(call_instance_method0(v,"__len__",&mr)) return mr; if(is_obj(v,O_STRING)) return intv(v.as.obj->as.str.len); if(is_obj(v,O_LIST)) return intv(v.as.obj->as.list.count); if(is_obj(v,O_TUPLE)) return intv(v.as.obj->as.tuple.count); if(is_obj(v,O_SET)) return intv(v.as.obj->as.set.count); if(is_obj(v,O_DICT)) return intv(v.as.obj->as.dict.count); runtime_error("len() unsupported type"); return nonev(); }
+static Value native_len(int argc,Value *argv){ if(argc!=1) runtime_error("len() expects 1 argument"); Value v=argv[0]; Value mr; if(call_instance_method0(v,"__len__",&mr)) return mr; if(is_obj(v,O_STRING)) return intv(v.as.obj->as.str.len); if(is_obj(v,O_LIST)) return intv(v.as.obj->as.list.count); if(is_obj(v,O_TUPLE)) return intv(v.as.obj->as.tuple.count); if(is_obj(v,O_SET)) return intv(v.as.obj->as.set.count); if(is_obj(v,O_DICT)) return intv(v.as.obj->as.dict.count); if(is_obj(v,O_BUFFER)) return intv(v.as.obj->as.buf.len); runtime_error("len() unsupported type"); return nonev(); }
 static Value native_range(int argc,Value *argv){
     if(argc<1||argc>3) runtime_error("range() expects 1 to 3 arguments");
     for(int i=0;i<argc;i++) if(!is_number(argv[i])) runtime_error("range() arguments must be numbers");
@@ -46,22 +46,23 @@ static Value native_input(int argc,Value *argv){
 }
 Native N_INPUT={"input",-1,native_input};
 
-/* sys.syscall(eax, ebx=0, ecx=0, edx=0, esi=0, edi=0) -> [eax,ebx,ecx,edx,esi,edi]
+/* sys.syscall(eax, ebx=0, ecx=0, edx=0, esi=0, edi=0, ebp=0) -> [eax,ebx,ecx,edx,esi,edi]
    The low-level KolibriOS gateway. Each argument is an int (a register value)
    or a str (its buffer address is passed -- e.g. an ASCIIZ string for fn 4).
    Returns the six general-purpose registers after `int 0x40`. Raises on any
    non-KolibriOS build (wrong platform). */
 static Value native_syscall(int argc,Value *argv){
     if(!mpy_platform_has_syscall()) raise_exception(exceptionv("RuntimeError","sys.syscall is only available on the KolibriOS build (wrong platform)",nonev()));
-    if(argc<1||argc>6) runtime_error("syscall() takes 1 to 6 register arguments (eax..edi)");
-    uint32_t in[6]={0}, out[6]={0};
+    if(argc<1||argc>7) runtime_error("syscall() takes 1 to 7 register arguments (eax..edi, ebp)");
+    uint32_t in[7]={0}, out[6]={0};
     for(int i=0;i<argc;i++){
         Value a=argv[i];
         if(a.type==V_INT) in[i]=(uint32_t)a.as.i;
         else if(a.type==V_BOOL) in[i]=(uint32_t)a.as.boolean;
         else if(is_obj(a,O_STRING)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.str.s;   /* ASCIIZ string address */
         else if(is_obj(a,O_BUFFER)) in[i]=(uint32_t)(uintptr_t)a.as.obj->as.buf.data; /* struct address */
-        else runtime_error("syscall() arguments must be int, str, or buffer");
+        else if(a.type==V_NONE) in[i]=0;                                               /* NULL, as compiled code passes it */
+        else runtime_error("syscall() arguments must be int, str, buffer or None");
     }
     MPY_LOG("[minipy] syscall  eax=%u ebx=%u ecx=%u edx=%u esi=%u edi=%u\n",in[0],in[1],in[2],in[3],in[4],in[5]);
     mpy_platform_syscall(in,out);
@@ -126,6 +127,47 @@ static Value native_addr(int argc,Value *argv){
     Buffer *b=arg_buffer(argv[0],"addr()");
     return intv((int64_t)(uintptr_t)b->data);
 }
+/* ---- raw memory at an address (memory a system call returned: a clipboard
+   slot, a loaded file, a shared area...). Nothing is checked: a wrong address
+   crashes the program, as in assembler. */
+static unsigned char *arg_addr(Value v){ return (unsigned char*)(uintptr_t)(uint64_t)as_int(v); }
+static Value native_peek_at(int argc,Value *argv){
+    if(argc!=2) runtime_error("peek_at(address, nbytes) expects 2 arguments");
+    unsigned char *p=arg_addr(argv[0]); int nb=(int)as_int(argv[1]);
+    if(nb!=1&&nb!=2&&nb!=4) runtime_error("peek_at() nbytes must be 1, 2, or 4");
+    uint32_t v=0; for(int i=0;i<nb;i++) v|=((uint32_t)p[i])<<(8*i);
+    return intv((int64_t)v);
+}
+static Value native_poke_at(int argc,Value *argv){
+    if(argc!=3) runtime_error("poke_at(address, value, nbytes) expects 3 arguments");
+    unsigned char *p=arg_addr(argv[0]); uint32_t val=(uint32_t)as_int(argv[1]); int nb=(int)as_int(argv[2]);
+    if(nb!=1&&nb!=2&&nb!=4) runtime_error("poke_at() nbytes must be 1, 2, or 4");
+    for(int i=0;i<nb;i++) p[i]=(unsigned char)((val>>(8*i))&0xFF);
+    return nonev();
+}
+static Value native_peek_str_at(int argc,Value *argv){
+    if(argc!=2) runtime_error("peek_str_at(address, length) expects 2 arguments");
+    int n=(int)as_int(argv[1]); if(n<0) runtime_error("peek_str_at() length must not be negative");
+    return stringv_len((const char*)arg_addr(argv[0]),n);
+}
+static Value native_poke_str_at(int argc,Value *argv){
+    if(argc!=2) runtime_error("poke_str_at(address, s) expects 2 arguments");
+    if(!is_obj(argv[1],O_STRING)) runtime_error("poke_str_at() second argument must be a str");
+    String *s=&argv[1].as.obj->as.str;
+    memcpy(arg_addr(argv[0]),s->s,(size_t)s->len);
+    return nonev();
+}
+static Value native_cstr_at(int argc,Value *argv){
+    if(argc!=2) runtime_error("cstr_at(address, maxlen) expects 2 arguments");
+    const char *p=(const char*)arg_addr(argv[0]); int max=(int)as_int(argv[1]), n=0;
+    while(n<max && p[n]) n++;
+    return stringv_len(p,n);
+}
+Native N_PEEK_AT={"peek_at",2,native_peek_at};
+Native N_POKE_AT={"poke_at",3,native_poke_at};
+Native N_PEEK_STR_AT={"peek_str_at",2,native_peek_str_at};
+Native N_POKE_STR_AT={"poke_str_at",2,native_poke_str_at};
+Native N_CSTR_AT={"cstr_at",2,native_cstr_at};
 Native N_BUFFER={"buffer",1,native_buffer};
 Native N_POKE={"poke",4,native_poke};
 Native N_PEEK={"peek",3,native_peek};
@@ -216,6 +258,43 @@ static Value native_min(int argc,Value*argv){ List tmp; memset(&tmp,0,sizeof(tmp
 static Value native_max(int argc,Value*argv){ List tmp; memset(&tmp,0,sizeof(tmp)); Value *xs; int n; if(argc==1){ collect_iterable(argv[0],&tmp); xs=tmp.items; n=tmp.count; } else { xs=argv; n=argc; } if(n==0) runtime_error("max() arg is an empty sequence"); Value best=xs[0]; for(int i=1;i<n;i++) if(truthy(compare(xs[i],best,OP_GT))) best=xs[i]; return best; }
 static Value native_sum(int argc,Value*argv){ if(argc<1||argc>2) runtime_error("sum() expects 1 or 2 arguments"); List tmp; memset(&tmp,0,sizeof(tmp)); collect_iterable(argv[0],&tmp); Value acc=argc==2?argv[1]:intv(0); for(int i=0;i<tmp.count;i++) acc=binary_add(acc,tmp.items[i]); return acc; }
 static Value native_sorted(int argc,Value*argv){ (void)argc; Obj*o=new_list(); collect_iterable(argv[0],&o->as.list); List *l=&o->as.list; for(int i=1;i<l->count;i++){ Value key=l->items[i]; int j=i-1; while(j>=0 && truthy(compare(key,l->items[j],OP_LT))){ l->items[j+1]=l->items[j]; j--; } l->items[j+1]=key; } return objv(o); }
+/* sorted(xs, key=, reverse=), list.sort(key=, reverse=), min/max(..., key=):
+   a stable insertion sort on the keys (key(x) once per item). The keys live in
+   a list object so the collector sees them while key() runs. */
+void mpy_sort_items(List *l, Value key, int reverse){
+    if(l->count<2) return;
+    Obj *ko=new_list(); List *ks=&ko->as.list;
+    for(int i=0;i<l->count;i++){ Value it=l->items[i]; list_push(ks,key.type==V_NONE?it:call_value(key,1,&it)); }
+    for(int i=1;i<l->count;i++){
+        Value item=l->items[i], k=ks->items[i]; int j=i-1;
+        while(j>=0 && truthy(compare(k,ks->items[j],reverse?OP_GT:OP_LT))){ l->items[j+1]=l->items[j]; ks->items[j+1]=ks->items[j]; j--; }
+        l->items[j+1]=item; ks->items[j+1]=k;
+    }
+}
+static int kw_key_reverse(Dict *kw, Value *key, int *reverse, int allow_reverse){
+    *key=nonev(); *reverse=0;
+    for(int i=0;i<kw->count;i++){
+        if(!strcmp(kw->keys[i],"key")) *key=kw->vals[i];
+        else if(allow_reverse && !strcmp(kw->keys[i],"reverse")) *reverse=truthy(kw->vals[i]);
+        else return 0;
+    }
+    return 1;
+}
+/* A built-in called with keyword arguments: the ones that take any. */
+int native_call_kw(Native *n, List *pos, Dict *kw, Value *out){
+    Value key; int reverse;
+    if(n==&N_SORTED && pos->count==1 && kw_key_reverse(kw,&key,&reverse,1)){
+        Obj *o=new_list(); collect_iterable(pos->items[0],&o->as.list); mpy_sort_items(&o->as.list,key,reverse); *out=objv(o); return 1;
+    }
+    if((n==&N_MIN||n==&N_MAX) && pos->count>=1 && kw_key_reverse(kw,&key,&reverse,0)){
+        Obj *o=new_list(); if(pos->count==1) collect_iterable(pos->items[0],&o->as.list); else for(int i=0;i<pos->count;i++) list_push(&o->as.list,pos->items[i]);
+        List *l=&o->as.list; if(l->count==0) runtime_error(n==&N_MIN?"min() arg is an empty sequence":"max() arg is an empty sequence");
+        Value best=l->items[0], bk=key.type==V_NONE?best:call_value(key,1,&best);
+        for(int i=1;i<l->count;i++){ Value it=l->items[i], k=key.type==V_NONE?it:call_value(key,1,&it); if(truthy(compare(k,bk,n==&N_MIN?OP_LT:OP_GT))){ best=it; bk=k; } }
+        *out=best; return 1;
+    }
+    return 0;
+}
 static Value native_reversed(int argc,Value*argv){ (void)argc; List tmp; memset(&tmp,0,sizeof(tmp)); collect_iterable(argv[0],&tmp); Obj*o=new_list(); for(int i=tmp.count-1;i>=0;i--) list_push(&o->as.list,tmp.items[i]); return objv(o); }
 static Value native_enumerate(int argc,Value*argv){ int64_t start=argc>=2?as_int(argv[1]):0; List tmp; memset(&tmp,0,sizeof(tmp)); collect_iterable(argv[0],&tmp); Obj*o=new_list(); for(int i=0;i<tmp.count;i++){ Obj*pr=new_tuple(); list_push(&pr->as.tuple,intv(start+i)); list_push(&pr->as.tuple,tmp.items[i]); list_push(&o->as.list,objv(pr)); } return objv(o); }
 static Value native_zip(int argc,Value*argv){ if(argc==0) return objv(new_list()); List *cols=(List*)xmalloc(sizeof(List)*(size_t)argc); int minlen=-1; for(int i=0;i<argc;i++){ memset(&cols[i],0,sizeof(List)); collect_iterable(argv[i],&cols[i]); if(minlen<0||cols[i].count<minlen) minlen=cols[i].count; } Obj*o=new_list(); for(int r=0;r<minlen;r++){ Obj*pr=new_tuple(); for(int cI=0;cI<argc;cI++) list_push(&pr->as.tuple,cols[cI].items[r]); list_push(&o->as.list,objv(pr)); } free(cols); return objv(o); }

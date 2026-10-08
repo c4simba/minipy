@@ -27,6 +27,12 @@ DIR=tests/typed
 EXP=$DIR/expected
 mkdir -p "$OUT" "$EXP"
 pass=0; fail=0; failed=""
+# tests/typed/lib holds verbatim copies of the example modules the tests import
+for m in kolibri kui files; do
+    if ! cmp -s "examples/$m.mpy" "$DIR/lib/$m.mpy"; then
+        fail=$((fail+1)); failed="$failed lib/$m"; echo "FAIL $DIR/lib/$m.mpy is not a copy of examples/$m.mpy"
+    fi
+done
 files="$*"
 [ -n "$files" ] || files=$(ls $DIR/*.mpy)
 for f in $files; do

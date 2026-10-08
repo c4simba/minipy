@@ -1983,7 +1983,7 @@ static Ty *ck_sys(Ck *c, Expr *e, const char *m){
     XInfo *xi=xinfo(e); xi->kind=X_SYS; xi->name=m; int line=e->line;
     if(!strcmp(m,"syscall")){
         xi->kind=X_SYSCALL;
-        ck_positional(c,e,1,6,"syscall");
+        ck_positional(c,e,1,7,"syscall");
         for(int i=0;i<e->count;i++){ Ty *t=ty_find(arg(c,e,i));
             if(t->k==TY_VAR){ pending(c,line,"a syscall argument"); continue; }
             if(t->k!=TY_INT&&t->k!=TY_BOOL&&t->k!=TY_STR&&t->k!=TY_BUF) err(c,line,"syscall() arguments are int, str or buffer, not %s",ty_name(t)); }
@@ -1996,6 +1996,11 @@ static Ty *ck_sys(Ck *c, Expr *e, const char *m){
     if(!strcmp(m,"peek_str")){ ck_positional(c,e,3,3,m); expect(c,TY_BUF_T,arg(c,e,0),line,"the buffer"); expect(c,TY_INT_T,arg(c,e,1),line,"the offset"); expect(c,TY_INT_T,arg(c,e,2),line,"the length"); return TY_STR_T; }
     if(!strcmp(m,"addr")){ ck_positional(c,e,1,1,m); expect(c,TY_BUF_T,arg(c,e,0),line,"the buffer"); return TY_INT_T; }
     if(!strcmp(m,"exit")){ ck_positional(c,e,0,1,m); if(e->count) expect(c,TY_INT_T,arg(c,e,0),line,"the exit code"); return TY_VOID_T; }
+    /* raw memory at an address a system call gave (nothing is checked) */
+    if(!strcmp(m,"peek_at")){ ck_positional(c,e,2,2,m); expect(c,TY_INT_T,arg(c,e,0),line,"the address"); expect(c,TY_INT_T,arg(c,e,1),line,"the size"); return TY_INT_T; }
+    if(!strcmp(m,"poke_at")){ ck_positional(c,e,3,3,m); for(int i=0;i<3;i++) expect(c,TY_INT_T,arg(c,e,i),line,"a poke_at() argument"); return TY_VOID_T; }
+    if(!strcmp(m,"peek_str_at")||!strcmp(m,"cstr_at")){ ck_positional(c,e,2,2,m); expect(c,TY_INT_T,arg(c,e,0),line,"the address"); expect(c,TY_INT_T,arg(c,e,1),line,"the length"); return TY_STR_T; }
+    if(!strcmp(m,"poke_str_at")){ ck_positional(c,e,2,2,m); expect(c,TY_INT_T,arg(c,e,0),line,"the address"); expect(c,TY_STR_T,arg(c,e,1),line,"the string"); return TY_VOID_T; }
     err(c,line,"sys.%s is not available in compiled code",m);
 }
 

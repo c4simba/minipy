@@ -17,7 +17,9 @@ source code
 
 - `global` / `nonlocal` declarations backed by shared closure dictionaries
 - Function default arguments (literal defaults)
-- Simple `@name` decorators
+- Decorators: `@name`, `@obj.attr`, factories with arguments (`@win.button("OK", x=10)`), stacked
+- Python's line joining: statements continue inside brackets and after a `\`; triple-quoted strings may span lines; adjacent string literals are joined
+- `sorted` / `min` / `max` / `list.sort` with `key=` and `reverse=`; `from typing import ...` and annotated attributes (`self.items: list[str] = []`) are accepted (annotations are not evaluated)
 - Exception objects: `BaseException`, `RuntimeError`, `StopIteration`
 - `try` / `except` / `finally` with protected bytecode regions
 - `iter()` / `next()` builtins and `for` loops via iterator objects
@@ -27,7 +29,6 @@ source code
 ## Limitations
 
 - Default arguments are literal-only
-- Decorators are simple-name only (no arbitrary decorator expressions)
 - Closures use shared dictionaries rather than CPython-style cell objects
 - Cross-frame exception unwind relies on the recursive VM stack (a future trampoline VM would improve this)
 
@@ -220,23 +221,26 @@ decorated value): plain ones (`@trace`), factories with arguments
 written the usual way with `*args, **kwargs` (`@functools.wraps` is accepted).
 A decorator function with unannotated parameters is generic: every use gets an
 instance of its own, so one `@trace` can wrap functions of different
-signatures. `examples/kui.mpy` is a small KolibriOS UI toolkit built on
-decorators and `examples/counter.mpy` a window made with it:
+signatures. A decorator may return something other than a function:
+`examples/kui.mpy`, a small KolibriOS UI toolkit, turns a paint function into
+the window itself (see [KolibriOS API](#kolibrios-api-exampleskolibrimpy)):
 
 ```python
-win = Window("Counter", 100, 100, 260, 160)
+@window("Counter", 100, 100, 260, 160)
+def counter(win: Window) -> None:          # paints the window; `counter` is the Window
+    win.text(24, 36, "Count: " + str(count))
 
-@win.button("+1", x=20, y=80)
+@counter.button("+1", x=20, y=80)
 def increment() -> None:
     global count
     count += 1
-    win.redraw()
+    counter.redraw()
 
-@win.on_key("q")
+@counter.on_key("q")
 def leave() -> None:
-    win.close()
+    counter.close()
 
-win.run()
+counter.run()
 ```
 
 ### Generators
@@ -298,17 +302,21 @@ Therefore every `import` / `from ... import` must be at the top of its module
 ### System calls: the `sys` module
 
 `sys.platform` is a constant (`"linux"` / `"kolibrios"`).
-`sys.syscall(eax, ebx, ...)` (up to 6 integers, `str` or buffers - passed as
-the address of their bytes) issues `int 0x80` on Linux or `int 0x40` on
-KolibriOS and returns the registers `[eax, ebx, ecx, edx, esi, edi]` after the
-call; `sys.syscall(...)[0]` reads just `eax` without building the list.
-`examples/window.mpy` (with the unannotated `examples/kolibri.mpy` wrappers)
-compiles unchanged: `minipy --compile --target kolibri examples/window.mpy`
-gives a 1.9 KB KolibriOS application.
-`sys.buffer(n | str)`, `sys.poke(buf, offset, value, size)`,
-`sys.peek(buf, offset, size)`, `sys.poke_str`, `sys.peek_str` and
-`sys.addr(buf)` build the structures system calls take, and `sys.exit(code)`
-ends the program.
+`sys.syscall(eax, ebx, ecx, edx, esi, edi, ebp)` (1 to 7 values: integers,
+`str` or buffers - passed as the address of their bytes, always followed by a
+0 byte - or `None`, a null pointer; `ebp` is 0 unless given) issues `int 0x80`
+on Linux or `int 0x40` on KolibriOS and returns the registers `[eax, ebx, ecx,
+edx, esi, edi]` after the call; `sys.syscall(...)[0]` reads just `eax` without
+building the list. `sys.buffer(n | str)`, `sys.poke(buf, offset, value,
+size)`, `sys.peek(buf, offset, size)`, `sys.poke_str`, `sys.peek_str` and
+`sys.addr(buf)` build the structures system calls take; `sys.peek_at(address,
+size)`, `sys.poke_at(address, value, size)`, `sys.peek_str_at(address, n)`,
+`sys.poke_str_at(address, s)` and `sys.cstr_at(address, max)` (a
+zero-terminated string) read and write memory the system hands out by address.
+`sys.exit(code)` ends the program. The same functions exist in the KolibriOS
+build of the interpreter, which returns the registers as unsigned numbers
+(compiled code: signed 32-bit ones). `examples/kolibri.mpy` wraps the
+KolibriOS system functions with them (next section).
 
 ### Building and testing
 
@@ -331,8 +339,15 @@ programs - and the Linux fasm itself - in a small emulator built on
 KolibriOS applications: it plays the shell's side of the console, maps system
 function 70 to host files, and fakes a headless desktop (window calls are
 logged; events come from `X86RUN_EVENTS`, by default "redraw, then the close
-button"; `3:2` presses button 2, `2:113` the key `q`; a test's
-`tests/typed/<name>.events` file sets them):
+button"; `3:2` presses button 2, `2:113` the key `q`, `6:x/y/bits[/wheel]`
+moves the mouse to (x, y) in the window with those function 37.3 bits; a
+test's `tests/typed/<name>.events` file sets them). Behind
+`examples/kolibri.mpy` it is a small deterministic KolibriOS written from the
+system function documentation: a 1024x768 screen, a fixed clock, a few
+processes, a network card, a clipboard, IPC, pipes, a RAM disk `/tmp0/1` with
+a few files (other paths are host files); calls that change something are
+logged as `[kos] ...`, drawing as `[gui] ...`
+(`tests/typed/kos_api_kolibri.mpy` checks both directions):
 
 ```sh
 X="python3 tests/x86run.py"
@@ -347,6 +362,54 @@ still allocated and how many allocations, `incref` and `decref` calls it made
 On KolibriOS itself the KolibriOS build of `minipy` compiles the same way,
 running `/sys/develop/fasm` with KolibriOS fasm's `infile,outfile,path`
 arguments; nothing else has to be installed.
+
+## KolibriOS API: `examples/kolibri.mpy`
+
+`examples/kolibri.mpy` is the KolibriOS system interface written in MiniPy on
+top of `sys.syscall`, after the kernel's `docs/sysfuncs.txt`; each wrapper
+names its function (`fn 18.20` is function 18, subfunction 20). The same file
+works compiled and in the interpreter. It covers windows and drawing (styles,
+captions, text in the 6x9/8x16/UTF-8 fonts with scaling and backgrounds,
+canvases, numbers, lines, pixels, images with palettes, blitting, window
+shapes, moving, z-order, minimizing), events and their mask, buttons,
+keyboard (keys decoded, scancode mode, modifiers, hotkeys, layouts,
+languages), mouse (positions, buttons, events, wheel, cursors, settings),
+screen and video parameters, skins, system colors and fonts, the desktop
+background, time and date (BCD decoded) and setting them, uptime, CPU, RAM
+and kernel information, processes and threads (`thread_info`, `threads()`,
+priorities, killing), memory (heap, shared memory, `load_file`), drivers and
+DLLs, the clipboard, IPC, the debug board and debugging, the speaker, PCI,
+ports, MSRs, files (fn 70 for ASCII paths, fn 80 with UTF-8 otherwise: read,
+write, append, info, attributes, folders with `FileInfo` entries, rename,
+delete, symlinks, running programs, the current folder), network devices and
+protocols (IP/DNS/gateway, ARP), sockets, futexes and pipes. Left out: what
+the documentation marks outdated (18.11, 24.4/24.5, 64) and what needs the
+address of machine code (51.1, 68.24).
+
+What makes the two modes agree: register values are normalized with
+`_s32()` and masked after shifts; constants with bit 31 set are written
+negative (`-0x80000000`), since `0x80000000` is positive in the interpreter
+and negative compiled; structures are built in buffers (a `str` cannot hold a
+0 byte) and decoded into small classes (`ThreadInfo`, `FileInfo`,
+`KernelVersion`, `RamInfo`, `SystemColors`, ...). `tests/typed/kos_decode.mpy`
+runs compiled and, as `tests/kolibri_lib_test.mpy`, in the interpreter with
+the same expected output.
+
+```python
+import kolibri as k
+
+for e in k.list_folder("/sys"):
+    print(e.name + (" <dir>" if e.is_folder() else " " + str(e.size)))
+print("kernel " + str(k.kernel_version()) + ", " + str(k.free_ram_kb()) + " KB free")
+k.clipboard_put_text("hello")
+```
+
+`examples/kui.mpy` builds a decorator UI on it (buttons, keys, clicks, double
+clicks, the wheel, UTF-8 text); `examples/counter.mpy` and
+`examples/files.mpy` - a file browser: a list with keyboard, mouse and wheel
+navigation, and a panel with the entry's size, dates, attributes and the
+first lines (or bytes) of a file - declare their windows with `@window(...)`.
+`tests/typed/files_kolibri.mpy` runs the browser on the emulator's desktop.
 
 ## KolibriOS build
 

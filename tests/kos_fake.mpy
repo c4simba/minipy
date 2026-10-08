@@ -1,0 +1,168 @@
+# A fake KolibriOS for the host interpreter: replaces sys.syscall (and wraps
+# sys.buffer so that pointers stored in structures can be found again: on a
+# 64-bit host they are cut to 32 bits). It answers the functions the browser
+# example (examples/files.mpy) and kui use and logs drawing in the format of
+# tests/x86run.py's fake desktop, so the interpreter's run of the browser can
+# be compared with the compiled one (tests/typed/expected/files_kolibri.out).
+import sys
+
+real_buffer = sys.buffer
+buffers = {}
+
+def tracked_buffer(n):
+    b = real_buffer(n)
+    buffers[sys.addr(b) & 0xFFFFFFFF] = b
+    return b
+
+sys.buffer = tracked_buffer
+
+def hexs(v):
+    v = v & 0xFFFFFFFF
+    if v == 0:
+        return "0x0"
+    out = ""
+    while v > 0:
+        out = "0123456789abcdef"[v & 15] + out
+        v = v >> 4
+    return "0x" + out
+
+def log(text):
+    print("[gui] " + text)
+
+# the RAM disk of tests/x86run.py: name -> bytes (None: a folder)
+ROOT = "/tmp0/1"
+FILES = {
+    "/tmp0/1/hello.txt": "Hello from the RAM disk!\nSecond line.\n",
+    "/tmp0/1/docs/readme.txt": "MiniPy on KolibriOS\n\nA file browser example.\n",
+    "/tmp0/1/docs/notes.txt": "notes",
+    "/tmp0/1/kernel.mnt": "",
+}
+FOLDERS = ["/tmp0/1", "/tmp0/1/docs", "/tmp0/1/docs/old", "/tmp0/1/pics"]
+
+def file_bytes(path):
+    if path == "/tmp0/1/kernel.mnt":
+        return [i % 256 for i in range(3072)]
+    return [ord(ch) for ch in FILES[path]]
+
+def children(folder):
+    names = []
+    for p in FOLDERS + list(FILES.keys()):
+        if p.startswith(folder + "/") and p.rfind("/") == len(folder):
+            names.append(p[len(folder) + 1:])
+    return sorted(names)
+
+def bdfe(b, off, path, name):
+    is_dir = path in FOLDERS
+    sys.poke(b, off, 0x10 if is_dir else 0x20, 4)
+    sys.poke(b, off + 4, 3, 4)
+    for t in [8, 16, 24]:                            # 2026-01-02 03:04:05
+        sys.poke(b, off + t, 5 | (4 << 8) | (3 << 16), 4)
+        sys.poke(b, off + t + 4, 2 | (1 << 8) | (2026 << 16), 4)
+    sys.poke(b, off + 32, 0 if is_dir else len(file_bytes(path)), 4)
+    sys.poke(b, off + 36, 0, 4)
+    if name != "":
+        sys.poke_str(b, off + 40, name)
+        sys.poke(b, off + 40 + len(name), 0, 1)
+
+events = [(1, 0), (2, 177), (2, 177), (2, 13), (2, 181), (2, 13), (6, 0), (2, 177), (2, 177), (2, 177),
+          (2, 13), (6, 1), (6, 2), (2, 8), (3, 3), (2, 113)]
+mice = [(20, 63, 0x1000101, 0), (20, 100, 0x101, 0), (20, 100, 0x8000, -1)]
+state = {"key": 0, "button": 1, "mouse": 0, "wheel": 0}
+
+def f70(info):
+    sub = sys.peek(info, 0, 4)
+    off = sys.peek(info, 4, 4)
+    size = sys.peek(info, 12, 4)
+    data = buffers[sys.peek(info, 16, 4)] if sys.peek(info, 16, 4) != 0 else None
+    path = sys.cstr_at(sys.addr(info) + 20, 1024)
+    if sub == 1:
+        if not path in FOLDERS:
+            return [5, 0, 0, 0, 0, 0]
+        names = children(path)
+        if path != ROOT:
+            names = [".", ".."] + names
+        part = names[off:off + size]
+        sys.poke(data, 0, 1, 4)
+        sys.poke(data, 4, len(part), 4)
+        sys.poke(data, 8, len(names), 4)
+        for i in range(len(part)):
+            n = part[i]
+            full = path if n == "." or n == ".." else path + "/" + n
+            bdfe(data, 32 + 560 * i, full, n)
+        return [0 if len(part) == size else 6, len(part), 0, 0, 0, 0]
+    if sub == 5:
+        if not (path in FOLDERS or path in FILES):
+            return [5, 0, 0, 0, 0, 0]
+        bdfe(data, 0, path, "")
+        return [0, 0, 0, 0, 0, 0]
+    if sub == 0:
+        if not path in FILES:
+            return [5, 0, 0, 0, 0, 0]
+        content = file_bytes(path)
+        got = content[off:off + size]
+        for i in range(len(got)):
+            sys.poke(data, i, got[i], 1)
+        return [0 if len(got) == size else 6, len(got), 0, 0, 0, 0]
+    return [2, 0, 0, 0, 0, 0]
+
+def fake_syscall(*r):
+    a = r[0]
+    b = r[1] if len(r) > 1 else 0
+    c = r[2] if len(r) > 2 else 0
+    d = r[3] if len(r) > 3 else 0
+    si = r[4] if len(r) > 4 else 0
+    if a == 12:
+        log("redraw " + ("begin" if b == 1 else "end"))
+    elif a == 0:
+        log("window x=" + str(b >> 16) + " w=" + str(b & 0xFFFF) + " y=" + str(c >> 16) + " h=" + str(c & 0xFFFF) + " style=" + hexs(d) + " caption=" + repr(r[5]))
+    elif a == 8:
+        log("button x=" + str(b >> 16) + " w=" + str(b & 0xFFFF) + " y=" + str(c >> 16) + " h=" + str(c & 0xFFFF) + " id=" + str(d) + " color=" + hexs(si))
+    elif a == 4:
+        text = d if (c & 0x80000000) else d[:si]
+        extra = ""
+        if (c >> 24) & 255:
+            extra = " flags=" + hexs((c >> 24) & 255)
+        log("text x=" + str(b >> 16) + " y=" + str(b & 0xFFFF) + " color=" + hexs(c & 0xFFFFFF) + " " + repr(text) + extra)
+    elif a == 13:
+        log("bar x=" + str(b >> 16) + " w=" + str(b & 0xFFFF) + " y=" + str(c >> 16) + " h=" + str(c & 0xFFFF) + " color=" + hexs(d))
+    elif a == 38:
+        log("line " + str(b >> 16) + "," + str(c >> 16) + " - " + str(b & 0xFFFF) + "," + str(c & 0xFFFF) + " color=" + hexs(d))
+    elif a == 40:
+        print("[kos] event mask " + hexs(b))
+        return [7, 0, 0, 0, 0, 0]
+    elif a == 10 or a == 11 or a == 23:
+        if len(events) == 0:
+            raise RuntimeError("out of scripted events")
+        e = events.pop(0)
+        if e[0] == 2:
+            state["key"] = e[1]
+        elif e[0] == 3:
+            state["button"] = e[1]
+        elif e[0] == 6:
+            state["mouse"] = e[1]
+        return [e[0], 0, 0, 0, 0, 0]
+    elif a == 2:
+        k = state["key"]
+        state["key"] = 0
+        return [1 if k == 0 else k << 8, 0, 0, 0, 0, 0]
+    elif a == 17:
+        return [state["button"] << 8, 0, 0, 0, 0, 0]
+    elif a == 37:
+        m = mice[state["mouse"]]
+        if b == 1:
+            return [(m[0] * 65536 + m[1]) & 0xFFFFFFFF, 0, 0, 0, 0, 0]
+        if b == 3:
+            return [m[2], 0, 0, 0, 0, 0]
+        if b == 7:
+            return [m[3] & 0xFFFF, 0, 0, 0, 0, 0]
+    elif a == 30 and b == 5:
+        sys.poke_str(c, 0, ROOT)
+        sys.poke(c, len(ROOT), 0, 1)
+        return [len(ROOT) + 1, 0, 0, 0, 0, 0]
+    elif a == 70:
+        return f70(b)
+    else:
+        raise RuntimeError("kos_fake: function " + str(a) + "." + str(b))
+    return [0, 0, 0, 0, 0, 0]
+
+sys.syscall = fake_syscall

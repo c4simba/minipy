@@ -1,0 +1,6 @@
+# The browser example (tests/typed/lib/files.mpy, a copy of examples/files.mpy)
+# with kui and kolibri.mpy in the interpreter, on the fake KolibriOS of
+# tests/kos_fake.mpy: the drawing log must be the compiled run's
+# (tests/typed/expected/files_kolibri.out), the same scripted events.
+import kos_fake
+import typed.lib.files

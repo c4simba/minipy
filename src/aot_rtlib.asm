@@ -3820,6 +3820,77 @@ rt_buf_peek_str:                ; eax = buffer, edx = offset, ecx = length -> ea
         pop     edi esi
         ret
 
+;;; code rt_mem_peek
+rt_mem_peek:                    ; eax = address, edx = size (bytes) -> eax = little-endian value
+        mov     ecx,edx
+        xor     edx,edx
+        jecxz   .out
+        add     eax,ecx
+@@:     dec     eax
+        shl     edx,8
+        mov     dl,[eax]
+        dec     ecx
+        jnz     @b
+.out:   mov     eax,edx
+        ret
+
+;;; code rt_mem_poke
+rt_mem_poke:                    ; eax = address, edx = value, ecx = size (bytes): store little-endian
+        jecxz   .out
+@@:     mov     [eax],dl
+        inc     eax
+        shr     edx,8
+        dec     ecx
+        jnz     @b
+.out:   ret
+
+;;; code rt_mem_peek_str : rt_str_new
+rt_mem_peek_str:                ; eax = address, edx = length -> eax = new str of those bytes
+        push    esi edi
+        mov     esi,eax
+        test    edx,edx
+        jns     @f
+        xor     edx,edx
+@@:     push    edx
+        mov     eax,edx
+        call    rt_str_new
+        pop     ecx
+        lea     edi,[eax+12]
+        rep     movsb
+        pop     edi esi
+        ret
+
+;;; code rt_mem_cstr : rt_mem_peek_str
+rt_mem_cstr:                    ; eax = address, edx = most bytes -> eax = new str of the bytes before the first 0
+        push    edi
+        mov     edi,eax
+        mov     ecx,edx
+        xor     edx,edx
+        test    ecx,ecx
+        jle     .take
+        push    eax
+        xor     eax,eax
+        repne   scasb           ; edi: one past the 0, or past the last byte looked at
+        jne     @f
+        dec     edi
+@@:     pop     eax
+        mov     edx,edi
+        sub     edx,eax
+.take:  pop     edi
+        jmp     rt_mem_peek_str
+
+;;; code rt_mem_poke_str
+rt_mem_poke_str:                ; eax = address, edx = str: its bytes there
+        test    edx,edx
+        jz      .out
+        push    esi edi
+        mov     edi,eax
+        lea     esi,[edx+12]
+        mov     ecx,[edx+8]
+        rep     movsb
+        pop     edi esi
+.out:   ret
+
 ;;; code rt_syscall_list : rt_list_new rt_list_push rt_list_destroy
 rt_syscall_list:                ; eax = address of 6 dwords (eax..edi after the call) -> eax = list[int]
         push    ebx esi

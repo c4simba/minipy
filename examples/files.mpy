@@ -1,0 +1,320 @@
+# A small file browser for KolibriOS; the window is declared with a decorator.
+#
+#   minipy --compile --target kolibri examples/files.mpy -o files   (or: minipy files.mpy)
+#
+# Up/Down/PgUp/PgDn/Home/End or the wheel move, Enter or a double click opens
+# a folder / shows a file, Backspace goes up, a click selects, q or Esc quits.
+# The panel on the right shows the selected entry: size, date, attributes and
+# the first lines of a text file (or the first bytes of a binary one).
+import sys
+import kolibri as k
+from kui import Window, window
+
+ROWS = 18                    # visible lines of the list
+ROW_H = 18
+LIST_X = 10
+LIST_Y = 62
+LIST_W = 300
+PANEL_X = 320
+PANEL_W = 290
+TEXT = 0xE8E8E8
+DIM = 0x8899AA
+FOLDER = 0xFFD75E
+SELECTED = 0x2F5F8F
+
+class Browser:
+    def __init__(self, path: str):
+        self.path = path
+        self.entries: list[k.FileInfo] = []
+        self.selected = 0
+        self.top = 0
+        self.status = ""
+        self.preview: list[str] = []
+        self.preview_for = ""
+
+    def load(self, path: str) -> None:
+        found = k.list_folder(path)
+        if len(found) == 0 and not k.file_exists(path):
+            self.status = "cannot open " + path
+            return
+        folders: list[k.FileInfo] = []
+        files: list[k.FileInfo] = []
+        for e in found:
+            if e.name == ".":
+                continue
+            if e.is_folder():
+                folders.append(e)
+            else:
+                files.append(e)
+        self.entries = sorted(folders, key=lambda e: e.name.lower()) + sorted(files, key=lambda e: e.name.lower())
+        self.path = path
+        self.selected = 0
+        self.top = 0
+        self.preview = []
+        self.preview_for = ""
+        shown = 0
+        for e in folders:
+            if e.name != "..":
+                shown += 1
+        self.status = str(shown) + " folders, " + str(len(files)) + " files"
+
+    def full(self, name: str) -> str:
+        if self.path == "/":
+            return "/" + name
+        return self.path + "/" + name
+
+    def current(self) -> k.FileInfo:
+        if self.selected < len(self.entries):
+            return self.entries[self.selected]
+        return None
+
+    def move(self, delta: int) -> None:
+        if len(self.entries) == 0:
+            return
+        self.selected = max(0, min(len(self.entries) - 1, self.selected + delta))
+        if self.selected < self.top:
+            self.top = self.selected
+        if self.selected >= self.top + ROWS:
+            self.top = self.selected - ROWS + 1
+
+    def up(self) -> None:
+        if self.path == "/":
+            return
+        cut = self.path.rfind("/")
+        parent = self.path[:cut]
+        if parent == "":
+            parent = "/"
+        came_from = self.path[cut + 1:]
+        self.load(parent)
+        for i in range(len(self.entries)):
+            if self.entries[i].name == came_from:
+                self.move(i)
+
+    def open(self) -> None:
+        e = self.current()
+        if e is None:
+            return
+        if e.name == "..":
+            self.up()
+        elif e.is_folder():
+            self.load(self.full(e.name))
+        else:
+            self.show(e)
+
+    def show(self, e: k.FileInfo) -> None:
+        """The first lines (or bytes) of a file, for the panel."""
+        self.preview = []
+        self.preview_for = e.name
+        data = sys.buffer(600)
+        got = k.read_into(self.full(e.name), 0, data, 600)
+        n = got[1]
+        if got[0] != k.FS_OK and got[0] != k.FS_EOF:
+            self.preview.append("(cannot read: error " + str(got[0]) + ")")
+            return
+        if binary(data, n):
+            for row in range(min(8, (n + 7) // 8)):
+                line = ""
+                for i in range(row * 8, min(n, row * 8 + 8)):
+                    line += hex2(sys.peek(data, i, 1)) + " "
+                self.preview.append(line)
+            return
+        start = 0
+        while start < n and len(self.preview) < 14:
+            end = start
+            while end < n and sys.peek(data, end, 1) != 10:
+                end += 1
+            self.preview.append(utf8_prefix(data, start, end, 34))
+            start = end + 1
+
+def binary(data: buffer, n: int) -> bool:
+    for i in range(n):
+        b = sys.peek(data, i, 1)
+        if b < 9 or (b > 13 and b < 32):
+            return True
+    return False
+
+def hex2(b: int) -> str:
+    digits = "0123456789abcdef"
+    return digits[(b >> 4) & 15] + digits[b & 15]
+
+def utf8_prefix(data: buffer, start: int, end: int, chars: int) -> str:
+    """Bytes start..end as text, at most `chars` characters (UTF-8 aware)."""
+    pos = start
+    count = 0
+    while pos < end and count < chars:
+        pos += 1
+        while pos < end and sys.peek(data, pos, 1) & 0xC0 == 0x80:
+            pos += 1
+        count += 1
+    text = sys.peek_str(data, start, pos - start)
+    if text.endswith("\r"):
+        text = text[:len(text) - 1]
+    return text
+
+def size_text(e: k.FileInfo) -> str:
+    if e.is_folder():
+        return "<dir>"
+    if e.size_high != 0 or e.size < 0:
+        return ">4 GB"
+    if e.size < 10000:
+        return str(e.size)
+    if e.size < 10000 * 1024:
+        return str(e.size // 1024) + "K"
+    return str(e.size // (1024 * 1024)) + "M"
+
+def two(n: int) -> str:
+    if n < 10:
+        return "0" + str(n)
+    return str(n)
+
+def stamp(t: tuple[int, int, int, int, int, int]) -> str:
+    return str(t[0]) + "-" + two(t[1]) + "-" + two(t[2]) + " " + two(t[3]) + ":" + two(t[4])
+
+def attributes(e: k.FileInfo) -> str:
+    out = ""
+    for bit, letter in [(k.ATTR_READONLY, "r"), (k.ATTR_HIDDEN, "h"), (k.ATTR_SYSTEM, "s"), (k.ATTR_ARCHIVE, "a"), (k.ATTR_SYMLINK, "l")]:
+        if e.attributes & bit:
+            out += letter
+        else:
+            out += "-"
+    return out
+
+start = k.current_folder()
+if start == "":
+    start = "/sys"
+state = Browser(start)
+state.load(start)
+
+@window("Files", 60, 40, 620, 440, 0x1B2633)
+def files(win: Window) -> None:
+    win.text_utf8(LIST_X, 36, state.path, FOLDER)
+    win.bar(LIST_X, LIST_Y - 2, LIST_W, ROWS * ROW_H + 4, 0x141C26)
+    for row in range(ROWS):
+        i = state.top + row
+        if i >= len(state.entries):
+            break
+        e = state.entries[i]
+        y = LIST_Y + row * ROW_H
+        if i == state.selected:
+            win.bar(LIST_X, y, LIST_W, ROW_H, SELECTED)
+        color = TEXT
+        if e.is_folder():
+            color = FOLDER
+        win.text_utf8(LIST_X + 4, y + 1, e.name, color)
+        size = size_text(e)
+        win.text(LIST_X + LIST_W - 6 - 6 * len(size), y + 5, size, DIM)
+    if len(state.entries) > ROWS:                     # where the visible part is
+        h = ROWS * ROW_H * ROWS // len(state.entries)
+        y = LIST_Y + ROWS * ROW_H * state.top // len(state.entries)
+        win.bar(LIST_X + LIST_W + 2, y, 3, max(h, 4), DIM)
+    panel(win)
+    win.bar(0, 432 - 22, 620, 1, 0x34465A)
+    win.text(LIST_X, 432 - 14, state.status, DIM)
+
+def panel(win: Window) -> None:
+    win.frame(PANEL_X, LIST_Y - 2, PANEL_W, ROWS * ROW_H + 4, 0x34465A)
+    e = state.current()
+    if e is None:
+        return
+    x = PANEL_X + 10
+    win.text_utf8(x, LIST_Y + 6, e.name, FOLDER if e.is_folder() else TEXT)
+    win.text(x, LIST_Y + 30, "size      " + size_text(e), DIM)
+    win.text(x, LIST_Y + 44, "modified  " + stamp(e.modified), DIM)
+    win.text(x, LIST_Y + 58, "created   " + stamp(e.created), DIM)
+    win.text(x, LIST_Y + 72, "flags     " + attributes(e), DIM)
+    if state.preview_for == e.name:
+        y = LIST_Y + 96
+        for line in state.preview:
+            win.text_utf8(x, y, line, TEXT)
+            y += 16
+    elif not e.is_folder():
+        win.text(x, LIST_Y + 96, "Enter: show the beginning", DIM)
+
+def refresh() -> None:
+    files.redraw()
+
+@files.button("Up", x=LIST_X + LIST_W - 150, y=4 + 22, w=46, h=20)
+@files.on_key_code(k.KEY_BACKSPACE)
+def go_up() -> None:
+    state.up()
+    refresh()
+
+@files.button("Home", x=LIST_X + LIST_W - 100, y=4 + 22, w=46, h=20)
+def go_home() -> None:
+    state.load(start)
+    refresh()
+
+@files.button("Root", x=LIST_X + LIST_W - 50, y=4 + 22, w=46, h=20)
+def go_root() -> None:
+    state.load("/")
+    refresh()
+
+@files.on_key_code(k.KEY_ENTER)
+def enter() -> None:
+    state.open()
+    refresh()
+
+@files.on_key_code(k.KEY_UP)
+def line_up() -> None:
+    state.move(-1)
+    refresh()
+
+@files.on_key_code(k.KEY_DOWN)
+def line_down() -> None:
+    state.move(1)
+    refresh()
+
+@files.on_key_code(k.KEY_PAGE_UP)
+def page_up() -> None:
+    state.move(-ROWS)
+    refresh()
+
+@files.on_key_code(k.KEY_PAGE_DOWN)
+def page_down() -> None:
+    state.move(ROWS)
+    refresh()
+
+@files.on_key_code(k.KEY_HOME)
+def first() -> None:
+    state.move(-len(state.entries))
+    refresh()
+
+@files.on_key_code(k.KEY_END)
+def last() -> None:
+    state.move(len(state.entries))
+    refresh()
+
+@files.on_wheel
+def wheel(steps: int) -> None:
+    state.move(steps * 3)
+    refresh()
+
+def row_at(x: int, y: int) -> int:
+    if x < LIST_X or x >= LIST_X + LIST_W or y < LIST_Y:
+        return -1
+    i = state.top + (y - LIST_Y) // ROW_H
+    if (y - LIST_Y) // ROW_H >= ROWS or i >= len(state.entries):
+        return -1
+    return i
+
+@files.on_click
+def click(x: int, y: int) -> None:
+    i = row_at(x, y)
+    if i >= 0:
+        state.move(i - state.selected)
+        refresh()
+
+@files.on_double_click
+def double_click(x: int, y: int) -> None:
+    i = row_at(x, y)
+    if i >= 0:
+        state.move(i - state.selected)
+        state.open()
+        refresh()
+
+@files.on_key("q")
+@files.on_key_code(k.KEY_ESCAPE)
+def leave() -> None:
+    files.close()
+
+files.run()

@@ -47,8 +47,8 @@ static int lex_utf8(char *out,int cp){
     out[0]=(char)(0xE0|(cp>>12)); out[1]=(char)(0x80|((cp>>6)&0x3F)); out[2]=(char)(0x80|(cp&0x3F)); return 3;
 }
 /* Lex a string literal starting at *pp (which points at the opening quote).
-   Handles single and triple quotes, escapes, and raw strings.
-   NOTE: triple-quoted strings must be closed on the same source line. */
+   Handles single and triple quotes, escapes, and raw strings (a triple-quoted
+   string may span lines: lex_logical joins them). */
 static void lex_string(TokVec *tv, const char **pp, int line, int raw){
     const char *p=*pp;
     char q=*p; int triple=(p[1]==q && p[2]==q);
@@ -73,7 +73,12 @@ static void lex_string(TokVec *tv, const char **pp, int line, int raw){
     }
     fprintf(stderr,"unterminated string at line %d\n",line); exit(1);
 done:
-    addtok(tv,T_STRING,buf,b,0,0,0,line);
+    if(tv->n>0 && tv->v[tv->n-1].kind==T_STRING){        /* "a" "b": adjacent literals are one */
+        Tok *prev=&tv->v[tv->n-1]; size_t n0=strlen(prev->text);
+        char *joined=(char*)xmalloc(n0+(size_t)b+1);
+        memcpy(joined,prev->text,n0); memcpy(joined+n0,buf,(size_t)b); joined[n0+(size_t)b]=0;
+        free(prev->text); prev->text=joined;
+    } else addtok(tv,T_STRING,buf,b,0,0,0,line);
     *pp=p;
 }
 static TokKind kw(const char *s,int n){
@@ -233,14 +238,45 @@ static void lex_line(TokVec *tv,const char *p,int line){
     }
 }
 
+/* One logical line starting at s (after its indentation), as in Python:
+   physical lines are joined while a bracket or a triple-quoted string is
+   open, or after a backslash. Comments are dropped from the joined text
+   (lex_line stops at '#'), newlines inside strings are kept and the others
+   become spaces. *rest = where the next line starts, *extra = the physical
+   lines joined. */
+static char *lex_logical(const char *s,const char **rest,int *extra){
+    size_t cap=256,n=0; char *out=(char*)xmalloc(cap); int depth=0; char q=0; int triple=0;
+    #define PUT(c) do{ if(n+2>=cap){ cap*=2; out=(char*)xrealloc(out,cap); } out[n++]=(c); }while(0)
+    *extra=0;
+    while(*s){
+        char c=*s;
+        if(q){                                               /* inside a string */
+            if(c=='\\' && s[1]=='\n'){ s+=2; (*extra)++; continue; }   /* continued inside the literal */
+            if(c=='\\' && s[1]){ PUT(c); PUT(s[1]); s+=2; continue; }
+            if(triple?(c==q&&s[1]==q&&s[2]==q):c==q){ for(int k=triple?3:1;k>0;k--) PUT(*s++); q=0; continue; }
+            if(c=='\n'){ if(!triple){ s++; break; } (*extra)++; PUT('\n'); s++; continue; }
+            PUT(c); s++; continue;
+        }
+        if(c=='"'||c=='\''){ q=c; triple=(s[1]==c&&s[2]==c); for(int k=triple?3:1;k>0;k--) PUT(*s++); continue; }
+        if(c=='#'){ while(*s&&*s!='\n') s++; continue; }
+        if(c=='\\' && (s[1]=='\n'||(s[1]=='\r'&&s[2]=='\n'))){ s+=s[1]=='\r'?3:2; (*extra)++; PUT(' '); continue; }
+        if(c=='('||c=='['||c=='{') depth++;
+        else if((c==')'||c==']'||c=='}') && depth>0) depth--;
+        if(c=='\n'){ s++; if(depth==0) break; (*extra)++; PUT(' '); continue; }
+        PUT(c); s++;
+    }
+    #undef PUT
+    out[n]=0; *rest=s; return out;
+}
+
 TokVec lex(const char *src){
     TokVec tv={0}; int ind[256]; int top=0; ind[0]=0; int line=1; const char *p=src;
     while(*p){
-        const char *ls=p; const char *e=my_strchr(p,'\n'); int len=e?(int)(e-p):(int)my_strlen(p); p=e?e+1:p+len; int i=0,spaces=0; while(i<len&&ls[i]==' '){spaces++;i++;} int j=i; while(j<len&&(ls[j]==' '||ls[j]=='\t'||ls[j]=='\r'))j++; if(j>=len||ls[j]=='#'){line++;continue;}
+        const char *ls=p; const char *e=my_strchr(p,'\n'); int len=e?(int)(e-p):(int)my_strlen(p); int i=0,spaces=0; while(i<len&&ls[i]==' '){spaces++;i++;} int j=i; while(j<len&&(ls[j]==' '||ls[j]=='\t'||ls[j]=='\r'))j++; if(j>=len||ls[j]=='#'){ p=e?e+1:p+len; line++; continue; }
         if(spaces>ind[top]){ ind[++top]=spaces; addtok(&tv,T_INDENT,NULL,0,0,0,0,line); }
         else while(spaces<ind[top]){ top--; addtok(&tv,T_DEDENT,NULL,0,0,0,0,line); }
         if(spaces!=ind[top]){ fprintf(stderr,"bad indentation at line %d\n",line); exit(1); }
-        char *buf=xstrndup2(ls+i,len-i); lex_line(&tv,buf,line); free(buf); addtok(&tv,T_NEWLINE,NULL,0,0,0,0,line); line++; }
+        int extra; char *buf=lex_logical(ls+i,&p,&extra); lex_line(&tv,buf,line); free(buf); addtok(&tv,T_NEWLINE,NULL,0,0,0,0,line); line+=1+extra; }
     while(top>0){ top--; addtok(&tv,T_DEDENT,NULL,0,0,0,0,line); } addtok(&tv,T_EOF,NULL,0,0,0,0,line);
     return tv;
 }

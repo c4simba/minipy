@@ -313,13 +313,13 @@ static void emit_expr(Parser *p, Expr *e){
             }
             break;
         }
-        case EXPR_TERNARY:{
-            emit_expr(p,e->b);                                         /* A (then value) */
-            emit_expr(p,e->a);                                         /* C (cond) */
+        case EXPR_TERNARY:{                                            /* A if C else B: only one of A, B runs */
+            emit_expr(p,e->a);                                         /* C */
             emit_arg(p->chunk,OP_JUMP_IF_FALSE,0,line); int jf=p->chunk->count-1;
+            emit_expr(p,e->b);                                         /* A */
             emit_arg(p->chunk,OP_JUMP,0,line); int jend=p->chunk->count-1;
-            patch(p->chunk,jf,p->chunk->count); emit_op(p->chunk,OP_POP,line);
-            emit_expr(p,e->c);                                         /* B (else value) */
+            patch(p->chunk,jf,p->chunk->count);
+            emit_expr(p,e->c);                                         /* B */
             patch(p->chunk,jend,p->chunk->count);
             break;
         }
@@ -430,6 +430,10 @@ void assign_stmt(Parser *p){
     emit_arg(p->chunk,OP_LOAD,name_const(p,base->text),line);
     while(1){
         if(match(p,T_DOT)){ Tok *n=need(p,T_NAME,"attr"); Op ao2;
+            if(match(p,T_COLON)){                          /* self.x: T = v (a bare annotation stores nothing) */
+                skip_balanced_until(p,T_ASSIGN,T_NEWLINE);
+                if(match(p,T_ASSIGN)){ expr(p); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); }
+                emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
             if(aug_assign_op(peek(p)->kind,&ao2)){ p->pos++; emit_op(p->chunk,OP_DUP,line); emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line); expr(p); emit_op(p->chunk,ao2,line); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
             if(match(p,T_ASSIGN)){ expr(p); emit_arg(p->chunk,OP_SET_ATTR,name_const(p,n->text),line); emit_op(p->chunk,OP_POP,line); need(p,T_NEWLINE,"newline"); return; }
             emit_arg(p->chunk,OP_GET_ATTR,name_const(p,n->text),line);
