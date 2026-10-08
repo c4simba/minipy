@@ -1,0 +1,4 @@
+def numbers(n: int):
+    for i in range(n):
+        yield i
+    return n

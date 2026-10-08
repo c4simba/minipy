@@ -71,10 +71,13 @@ static int fp_stmt_has_assign(FrontParser *p){
 }
 static Stmt *fp_parse_stmt(FrontParser *p){
     fp_skip_nl(p); int start=p->pos; Tok *t=fp_peek(p); int line=t->line;
-    char **pending_decorators=NULL; int dec_count=0, dec_cap=0;
+    char *pending_decorators[32]; Expr *pending_dexprs[32]; int dec_count=0;
     while(fp_match(p,T_AT)){
-        Tok *d=fp_need(p,T_NAME); if(d) name_add_unique(&pending_decorators,&dec_count,&dec_cap,d->text);
-        fp_skip_balanced_to(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); fp_skip_nl(p);
+        int ds=p->pos, dl=fp_peek(p)->line;
+        Tok *d=fp_need(p,T_NAME);
+        fp_skip_balanced_to(p,T_NEWLINE,T_EOF);
+        if(d && dec_count<32){ pending_decorators[dec_count]=d->text; pending_dexprs[dec_count++]=expr_new_range(ds,p->pos,dl); }   /* @name, @obj.attr(args) ... */
+        fp_need(p,T_NEWLINE); fp_skip_nl(p);
         start=p->pos; t=fp_peek(p); line=t->line;
     }
     if(fp_match(p,T_IF)){
@@ -98,11 +101,12 @@ static Stmt *fp_parse_stmt(FrontParser *p){
     if(fp_match(p,T_DEF)){
         Tok *n=fp_need(p,T_NAME); Stmt *s=stmt_new(STMT_FUNCTION_DEF,n?n->text:"<anon>",line,start);
         s->is_async=is_async;
-        for(int di=0; di<dec_count; di++) stmt_add_decorator(s,pending_decorators[di]);
+        for(int di=0; di<dec_count; di++) stmt_add_decorator(s,pending_decorators[di],pending_dexprs[di]);
         fp_need(p,T_LP);
         while(fp_peek(p)->kind!=T_EOF && fp_peek(p)->kind!=T_RP){
-            if(fp_match(p,T_POWER)){ Tok *a=fp_need(p,T_NAME); if(a){ s->dstar_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } if(fp_match(p,T_COLON)) fp_annotation(p); }
-            else if(fp_match(p,T_STAR)){ Tok *a=fp_need(p,T_NAME); if(a){ s->star_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } if(fp_match(p,T_COLON)) fp_annotation(p); }
+            if(fp_match(p,T_POWER)){ Tok *a=fp_need(p,T_NAME); if(a){ s->dstar_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } if(fp_match(p,T_COLON)){ Expr *an=fp_annotation(p); if(a) stmt_set_annotation(s,s->param_count-1,an); } }
+            else if(fp_match(p,T_STAR) && (fp_peek(p)->kind==T_COMMA||fp_peek(p)->kind==T_RP)){ s->kwonly_index=s->param_count; }   /* bare `*`: keyword-only parameters follow */
+            else if(p->tv->v[p->pos-1].kind==T_STAR){ Tok *a=fp_need(p,T_NAME); if(a){ s->star_index=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text); } if(fp_match(p,T_COLON)){ Expr *an=fp_annotation(p); if(a) stmt_set_annotation(s,s->param_count-1,an); } }
             else {
                 Tok *a=fp_need(p,T_NAME); if(a) name_add_unique(&s->params,&s->param_count,&s->param_cap,a->text);
                 if(fp_match(p,T_COLON) && a) stmt_set_annotation(s,s->param_count-1,fp_annotation(p));   /* `name: type` */
@@ -114,7 +118,7 @@ static Stmt *fp_parse_stmt(FrontParser *p){
         if(fp_peek(p)->kind==T_MINUS && p->tv->v[p->pos+1].kind==T_GT){ p->pos+=2; s->returns=fp_expr_until(p,T_COLON,T_EOF); }   /* -> type */
         fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s;
     }
-    if(fp_match(p,T_CLASS)){ Tok *n=fp_need(p,T_NAME); Stmt *s=stmt_new(STMT_CLASS_DEF,n?n->text:"<class>",line,start); for(int di=0; di<dec_count; di++) stmt_add_decorator(s,pending_decorators[di]); if(fp_match(p,T_LP)){ if(fp_peek(p)->kind==T_NAME){ Tok *b=fp_need(p,T_NAME); s->name2=xstrdup2(b->text); } fp_skip_balanced_to(p,T_RP,T_NEWLINE); fp_need(p,T_RP); } fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s; }
+    if(fp_match(p,T_CLASS)){ Tok *n=fp_need(p,T_NAME); Stmt *s=stmt_new(STMT_CLASS_DEF,n?n->text:"<class>",line,start); for(int di=0; di<dec_count; di++) stmt_add_decorator(s,pending_decorators[di],pending_dexprs[di]); if(fp_match(p,T_LP)){ if(fp_peek(p)->kind==T_NAME){ Tok *b=fp_need(p,T_NAME); s->name2=xstrdup2(b->text); } fp_skip_balanced_to(p,T_RP,T_NEWLINE); fp_need(p,T_RP); } fp_need(p,T_COLON); fp_parse_suite_into(p,s,0); s->end=p->pos; return s; }
     if(fp_match(p,T_RETURN)){ Stmt *s=stmt_new(STMT_RETURN,NULL,line,start); if(fp_peek(p)->kind!=T_NEWLINE) s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_RAISE)){ Stmt *s=stmt_new(STMT_RAISE,NULL,line,start); if(fp_peek(p)->kind!=T_NEWLINE) s->expr=fp_expr_until(p,T_NEWLINE,T_EOF); fp_need(p,T_NEWLINE); s->end=p->pos; return s; }
     if(fp_match(p,T_IMPORT)){

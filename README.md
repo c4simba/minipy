@@ -91,8 +91,34 @@ reference-counted heap blocks. A class is a struct (fields at fixed offsets
 plus a vtable for methods that subclasses override); `print` formats into a
 buffer and makes one `write` system call (`int 0x80`) or, on KolibriOS, one
 message to the shell console. Only the runtime routines a program needs are
-emitted, so `print("Hello, world!")` is a 192-byte ELF (543 bytes on
+emitted, so `print("Hello, world!")` is a 201-byte ELF (552 bytes on
 KolibriOS, which includes the console connection).
+
+### Memory: reference counts the compiler leaves out
+
+Reference counting is what keeps shared objects alive, so it stays; but the
+compiler does not count where it can prove a count does not matter:
+
+- reading a variable, a field or an item, temporaries and arguments are
+  lent, not counted;
+- a loop variable borrows its item from the container when the container
+  keeps every item for the whole loop: a fresh one nothing else refers to
+  (`text.split()`, `sorted(xs)`, a comprehension, a generator call), an
+  immutable one (`str`, `tuple`), or any container if the loop's body runs no
+  user code and removes nothing (`pop`, `remove`, `del`, `xs[i] = ...`);
+- a variable's reference moves on its last use (backward liveness over the
+  function, loops to a fixpoint): `return x`, `y = x`, `xs.append(x)`,
+  `yield x` take it without an incref, and the slot needs no decref;
+- a function that keeps a parameter (`self.name = name` as its last use -
+  constructors) takes it owned: callers hand temporaries over, so
+  `Item(s + "!", [s, s])` needs neither the increfs in `__init__` nor the
+  decrefs after the call.
+
+On `tests/typed/memory.mpy` (373 000 allocations) this cuts the increfs from
+225 000 to 123 000 and the decrefs from 495 000 to 393 000 (most of the rest
+free objects); the code gets a little smaller too. `MPY_NO_BORROW=1`,
+`MPY_NO_MOVE=1` and `MPY_NO_CONSUME=1` in the compiler's environment switch
+each part off, for comparisons with `--count-allocs`.
 
 ### Types
 
@@ -109,8 +135,12 @@ count = "zero"                         # error: variable 'count' is int, cannot 
 ```
 
 - types: `int`, `bool`, `float`, `str`, `list[T]`, `set[T]`, `dict[K, V]`
-  (keys: `int`, `str`, tuples or objects), `tuple[A, B, ...]`, classes (also
-  `"Class"` forward references, `module.Class`), `sys.buffer`;
+  (keys: `int`, `str`, tuples or objects), `tuple[A, B, ...]`, `tuple[T, ...]`,
+  `Callable[[A, B], R]` (functions as values), `Iterator[T]` /
+  `Generator[T, None, None]` (generators), classes (also `"Class"` forward
+  references, `module.Class`), `sys.buffer`; `typing`'s `List`, `Dict`, `Set`,
+  `Tuple`, `Optional[T]` (just `T`: `None` is its zero value), `Iterable`,
+  `Sequence`, `Mapping` are understood too;
 - `int`/`bool` values are widened where a `float` is expected; a subclass
   instance is accepted where its base class is expected;
 - `None` is the zero value of the type it meets: `0`, `0.0`, `""`, a null
@@ -122,16 +152,19 @@ count = "zero"                         # error: variable 'count' is int, cannot 
   never calls and whose parameter types are therefore unknown is left out
   instead (libraries such as `examples/kolibri.mpy` keep working).
 
-Supported: functions (default values, keyword arguments, recursion,
-`global`), classes with fields, methods, single inheritance, `super()`,
+Supported: functions (default values, keyword arguments, keyword-only
+parameters, `*args`, `**kwargs`, `f(*seq)`, `f(**d)`, recursion, `global`),
+lambdas, nested functions and closures (`nonlocal`), decorators, generators
+(below), classes with fields, methods, single inheritance, `super()`,
 `@staticmethod`, `@property`, `__init__`, `__str__`/`__repr__`, `__len__`,
+`__iter__`,
 operator methods (`__add__ __sub__ __mul__ __truediv__ ... __neg__`,
 `__eq__ __ne__ __lt__ __le__ __gt__ __ge__`, `__getitem__ __setitem__
 __contains__`), constant class attributes (`Config.SIZE`), `isinstance`;
 `if`/`while`/`for` (with `else`, `break`, `continue`) over `range`,
-`reversed`, `enumerate`, `zip`, `dict.items()`, strings, tuples and
-containers; list/set/dict comprehensions and generator arguments
-(`sum(x * x for x in xs)`); slicing; tuples (`tuple[int, str]`, multiple
+`reversed`, `enumerate`, `zip`, `dict.items()`, strings, tuples, containers,
+generators and objects with `__iter__`; list/set/dict comprehensions and
+generator expressions; slicing; tuples (`tuple[int, str]`, multiple
 return values, unpacking, comparison, sorting); `%` formatting, f-strings,
 `str.format` and `format()` with Python's format specs (fill, `<>^`, sign,
 `#`, `0`, width, `,`, precision, `d s f e g x X o b c %`);
@@ -142,12 +175,82 @@ return values, unpacking, comparison, sorting); `%` formatting, f-strings,
 close`, `for line in f`, `with open(...) as f`; on KolibriOS through system
 function 70, written at `close()`); `assert`, `with x as y`, `del`; builtins
 `len str repr int float bool abs min max ord chr sum sorted reversed any all
-divmod pow hex bin oct format open isinstance input round list set dict`; the
-usual `str`, `list`, `dict` and `set` methods.
+divmod pow hex bin oct format open isinstance input round list set dict tuple
+map filter iter next zip enumerate range` and `functools.reduce` (`map`,
+`filter`, `zip`, `enumerate` and `range` used as values give lists; `dict()`
+takes a dict or (key, value) pairs); `print(*xs, sep=...)`; the usual `str`,
+`list`, `dict` and `set` methods.
 
-Not supported in compiled code (compile errors): generators (`yield`),
-`lambda` other than as a sort key, nested functions/classes, `*args`/`**kwargs`,
-`nonlocal`, the `thread` module. `int` is 32-bit (it wraps on overflow).
+Not supported in compiled code (compile errors): classes inside functions,
+class decorators, `yield` as an expression (`x = yield`, `send()`), `return
+value` in a generator, async generators, the `thread` module. Each name keeps
+one type, so a function (or lambda) cannot take an `int` in one call and a
+`str` in another - except decorators, which get an instance per use. `int` is
+32-bit (it wraps on overflow).
+
+### Functions as values, closures, decorators
+
+Functions, lambdas, nested functions, methods bound to their object
+(`obj.method`) and `Class.method` are values of type `Callable[[...], R]`: they
+can be stored in variables, fields, lists and dicts, passed and returned. A nested function or lambda
+keeps the variables of the enclosing function it uses: a variable bound once
+before the closure is made is copied into it, anything else (a loop variable,
+something assigned later or through `nonlocal`) is shared in a heap cell, so
+late binding works as in Python. A function value is a small object (code,
+name - `fn.__name__` - and the captured values); a function that captures
+nothing is a static one.
+
+```python
+def make_counter():
+    count = 0
+    def step() -> int:
+        nonlocal count
+        count += 1
+        return count
+    return step
+
+ops = {"+": lambda a, b: a + b, "*": lambda a, b: a * b}
+print(ops["*"](6, 7), list(map(lambda w: w.upper(), ["a", "b"])))
+```
+
+Decorators work on module functions, nested functions and methods
+(`name = d1(d2(function))`; on a method `obj.name(...)` then calls the
+decorated value): plain ones (`@trace`), factories with arguments
+(`@repeat(3)`, `@window.button("OK", x=10)`), stacked ones, and wrappers
+written the usual way with `*args, **kwargs` (`@functools.wraps` is accepted).
+A decorator function with unannotated parameters is generic: every use gets an
+instance of its own, so one `@trace` can wrap functions of different
+signatures. `examples/kui.mpy` is a small KolibriOS UI toolkit built on
+decorators and `examples/counter.mpy` a window made with it:
+
+```python
+win = Window("Counter", 100, 100, 260, 160)
+
+@win.button("+1", x=20, y=80)
+def increment() -> None:
+    global count
+    count += 1
+    win.redraw()
+
+@win.on_key("q")
+def leave() -> None:
+    win.close()
+
+win.run()
+```
+
+### Generators
+
+A function with `yield` (and `yield from`) is a generator function; calling it
+makes a generator (`Iterator[T]`) that `for` loops, `next(g[, default])`,
+`list()`, `sum()`, `sorted()`, `any()`/`all()` (lazily) and other
+generators consume. Generator expressions are generators too, except where
+they are consumed whole on the spot (`sum(x * x for x in xs)` becomes a loop).
+`iter(xs)` makes one over a list. Each generator runs on a stack of its own
+(64 KiB, like asyncio tasks); `next()` switches to it until it yields. An
+exception raised in a generator reaches the code that called `next()`. A
+generator dropped before it finishes releases what its frame holds (its
+`finally` blocks do not run).
 
 ### Exceptions
 
@@ -228,13 +331,18 @@ programs - and the Linux fasm itself - in a small emulator built on
 KolibriOS applications: it plays the shell's side of the console, maps system
 function 70 to host files, and fakes a headless desktop (window calls are
 logged; events come from `X86RUN_EVENTS`, by default "redraw, then the close
-button"):
+button"; `3:2` presses button 2, `2:113` the key `q`; a test's
+`tests/typed/<name>.events` file sets them):
 
 ```sh
 X="python3 tests/x86run.py"
 FASM="$X /path/to/fasm" RUN="$X" sh tests/run_typed_tests.sh
 TARGET=kolibri FASM="$X /path/to/fasm" RUN="$X" sh tests/run_typed_tests.sh
 ```
+
+`--count-allocs` makes a program report at exit how many heap blocks are
+still allocated and how many allocations, `incref` and `decref` calls it made
+(a leak check: the count of live blocks must not grow with the work done).
 
 On KolibriOS itself the KolibriOS build of `minipy` compiles the same way,
 running `/sys/develop/fasm` with KolibriOS fasm's `infile,outfile,path`

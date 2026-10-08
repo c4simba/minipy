@@ -68,8 +68,8 @@ static Expr *parse_call(Parser *p, Expr *callee, int line){
             else if(match(p,T_POWER)){ arg=parse_expr(p); arg->akind=2; }
             else if(peek(p)->kind==T_NAME && p->tv.v[p->pos+1].kind==T_ASSIGN){ Tok *n=need(p,T_NAME,"keyword name"); need(p,T_ASSIGN,"="); arg=parse_expr(p); arg->akind=3; arg->kw=n->text; }
             else { arg=parse_expr(p); arg->akind=0;
-                if(peek(p)->kind==T_FOR){                          /* f(x for x in xs): a generator argument, built as a list */
-                    Expr *g=enew(EXPR_COMPREHENSION,arg->line); g->comp_kind='L'; g->a=arg; parse_comp_tail(p,g); arg=g; } }
+                if(peek(p)->kind==T_FOR){                          /* f(x for x in xs): a generator argument (the interpreter builds a list) */
+                    Expr *g=enew(EXPR_COMPREHENSION,arg->line); g->comp_kind='G'; g->a=arg; parse_comp_tail(p,g); arg=g; } }
             ep_push(&e->items,&e->count,&e->cap,arg);
         }while(match(p,T_COMMA));
     }
@@ -103,7 +103,7 @@ static Expr *parse_primary(Parser *p){
         if(match(p,T_RP)) e=enew(EXPR_TUPLE,line);                     /* () */
         else {
             Expr *first=parse_expr(p);
-            if(peek(p)->kind==T_FOR){ e=enew(EXPR_COMPREHENSION,line); e->comp_kind='L'; e->a=first; parse_comp_tail(p,e); need(p,T_RP,")"); }
+            if(peek(p)->kind==T_FOR){ e=enew(EXPR_COMPREHENSION,line); e->comp_kind='G'; e->a=first; parse_comp_tail(p,e); need(p,T_RP,")"); }
             else if(match(p,T_COMMA)){
                 e=enew(EXPR_TUPLE,line); ep_push(&e->items,&e->count,&e->cap,first);
                 if(!match(p,T_RP)){ do{ Expr *x=parse_expr(p); ep_push(&e->items,&e->count,&e->cap,x); }while(match(p,T_COMMA)); need(p,T_RP,")"); }
@@ -233,7 +233,7 @@ static void emit_comp_clause(Parser *p, Expr *e, int ci, const char *tmp){
             emit_op(p->chunk,OP_SET_INDEX,line); emit_op(p->chunk,OP_POP,line);
         } else {
             emit_arg(p->chunk,OP_LOAD,name_const(p,tmp),line);
-            emit_arg(p->chunk,OP_GET_ATTR,name_const(p,e->comp_kind=='L'?"append":"add"),line);
+            emit_arg(p->chunk,OP_GET_ATTR,name_const(p,e->comp_kind=='S'?"add":"append"),line);
             emit_expr(p,e->a);
             emit_arg(p->chunk,OP_CALL,1,line);
             emit_op(p->chunk,OP_POP,line);
@@ -255,7 +255,7 @@ static void emit_comp_clause(Parser *p, Expr *e, int ci, const char *tmp){
 static void emit_comprehension(Parser *p, Expr *e){
     char tmp[24]; snprintf(tmp,sizeof(tmp),"$comp%d",comp_ctr++);
     int line=e->line;
-    if(e->comp_kind=='L') emit_arg(p->chunk,OP_MAKE_LIST,0,line);
+    if(e->comp_kind=='L'||e->comp_kind=='G') emit_arg(p->chunk,OP_MAKE_LIST,0,line);
     else if(e->comp_kind=='S') emit_arg(p->chunk,OP_MAKE_SET,0,line);
     else emit_arg(p->chunk,OP_MAKE_DICT,0,line);
     emit_arg(p->chunk,OP_STORE,name_const(p,tmp),line);

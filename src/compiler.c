@@ -27,9 +27,10 @@ static void copy_scope_directives(Function *fn, Stmt **body, int body_count){
         if(s->kind==STMT_NONLOCAL){ fn->nonlocal_names=s->params; fn->nonlocal_count=s->param_count; }
     }
 }
+/* @d1 @d2 class C: ... -> C = d1(d2(C)) (each decorator an expression: @ui.button("OK")) */
 static void apply_decorators(Parser *p, Stmt *s){
     for(int i=s->decorator_count-1;i>=0;i--){
-        emit_arg(p->chunk,OP_LOAD,name_const(p,s->decorators[i]),s->line);
+        compile_expr_ast(p,s->decorator_exprs[i]);
         emit_arg(p->chunk,OP_LOAD,name_const(p,s->name),s->line);
         emit_arg(p->chunk,OP_CALL,1,s->line);
         emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line);
@@ -106,8 +107,12 @@ void compile_stmt_ast(Parser *p, Stmt *s){
             fn->min_arity=nreg-s->default_count;
             /* default values are evaluated at def-time in the enclosing frame and
                pushed onto the stack; OP_DEF pops them into the new function. */
+            /* @d1 @d2 def f: the decorators are evaluated first, then f = d1(d2(f)) */
+            for(int di=0; di<s->decorator_count; di++) compile_expr_ast(p,s->decorator_exprs[di]);
             for(int di=0; di<s->default_count; di++) compile_expr_ast(p,s->defaults[di]);
-            emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),s->line); emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); apply_decorators(p,s); break;
+            emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),s->line);
+            for(int di=0; di<s->decorator_count; di++) emit_arg(p->chunk,OP_CALL,1,s->line);
+            emit_arg(p->chunk,OP_STORE,name_const(p,s->name),s->line); break;
         }
         case STMT_CLASS_DEF:{
             Function *body=compile_function_from_ast(p,s->name,NULL,0,s->body,s->body_count,1);

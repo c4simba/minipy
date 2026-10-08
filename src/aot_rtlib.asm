@@ -448,7 +448,12 @@ rt_alloc:                       ; eax = bytes -> eax = zeroed memory
 .take:  lea     ecx,[eax+ebx]
         mov     [rt_arena],ecx
 .ready: mov     [eax],edx
-.zero:  lea     edi,[eax+4]
+.zero:
+if defined RT_COUNT_ALLOCS
+        inc     dword [rt_live]
+        inc     dword [rt_nalloc]
+end if
+        lea     edi,[eax+4]
         lea     ecx,[ebx-4]
         shr     ecx,2
         mov     edx,eax
@@ -468,6 +473,10 @@ rt_alloc:                       ; eax = bytes -> eax = zeroed memory
         mov     [eax],ecx
         jmp     .zero
 ;;; bss rt_alloc
+rt_live         rd 1            ; --count-allocs: blocks in use, ...
+rt_nalloc       rd 1            ; ... allocations, references taken and dropped (not counting 0)
+rt_nincref      rd 1
+rt_ndecref      rd 1
 rt_free_list    rd 8
 rt_arena        rd 1
 rt_arena_end    rd 1
@@ -476,6 +485,9 @@ rt_arena_end    rd 1
 rt_free:                        ; eax = memory from rt_alloc (or 0); also the destroy routine of flat objects
         test    eax,eax
         jz      .done
+if defined RT_COUNT_ALLOCS
+        dec     dword [rt_live]
+end if
         sub     eax,4
         mov     ecx,[eax]
         test    ecx,ecx
@@ -488,10 +500,52 @@ rt_free:                        ; eax = memory from rt_alloc (or 0); also the de
         mov     edx,ecx
         jmp     rt_os_free
 
+;;; code rt_live_report : rt_write_err rt_alloc
+rt_live_report:                 ; --count-allocs: "[live blocks: N, allocations: A, incref: I, decref: D]" to stderr
+        push    ebx esi
+        mov     ebx,rt_live_fields
+        mov     esi,rt_live
+.f:     mov     ecx,[ebx]
+        movzx   edx,byte [ecx]
+        inc     ecx
+        call    rt_write_err
+        lodsd
+        mov     edi,rt_live_num+12
+        mov     ecx,10
+@@:     xor     edx,edx
+        div     ecx
+        add     dl,'0'
+        dec     edi
+        mov     [edi],dl
+        test    eax,eax
+        jnz     @b
+        mov     ecx,edi
+        mov     edx,rt_live_num+12
+        sub     edx,edi
+        call    rt_write_err
+        add     ebx,4
+        cmp     ebx,rt_live_fields+16
+        jb      .f
+        mov     ecx,rt_live_end
+        mov     edx,2
+        pop     esi ebx
+        jmp     rt_write_err
+;;; data rt_live_report
+rt_live_fields  dd rt_live_m1,rt_live_m2,rt_live_m3,rt_live_m4
+rt_live_m1      db 14,'[live blocks: '
+rt_live_m2      db 15,', allocations: '
+rt_live_m3      db 10,', incref: '
+rt_live_m4      db 10,', decref: '
+rt_live_end     db ']',10
+rt_live_num     db 12 dup 0
+
 ;;; code rt_incref
 rt_incref:                      ; eax = object or 0
         test    eax,eax
         jz      @f
+if defined RT_COUNT_ALLOCS
+        inc     dword [rt_nincref]
+end if
         inc     dword [eax]
 @@:     ret
 
@@ -499,6 +553,9 @@ rt_incref:                      ; eax = object or 0
 rt_decref:                      ; eax = object or 0: drop a reference, destroy at zero
         test    eax,eax
         jz      @f
+if defined RT_COUNT_ALLOCS
+        inc     dword [rt_ndecref]
+end if
         dec     dword [eax]
         jnz     @f
         jmp     dword [eax+4]
@@ -2952,6 +3009,8 @@ rt_list_minmax:                 ; eax = list, edx = kind | 0x100 for max -> eax 
         mov     edi,[esi]
         cmp     dl,1
         je      .s
+        cmp     dl,4            ; tuples: compared item by item
+        je      .s
         test    ebp,0x100
         jnz     .imax
         cmp     edi,ebx
@@ -2965,8 +3024,14 @@ rt_list_minmax:                 ; eax = list, edx = kind | 0x100 for max -> eax 
 .s:     push    ecx edx
         mov     eax,edi
         mov     edx,ebx
-        call    rt_str_cmp
-        pop     edx ecx
+if defined rt_tuple_cmp
+        cmp     byte [esp],4
+        jne     .sc
+        call    rt_tuple_cmp
+        jmp     .sd
+end if
+.sc:    call    rt_str_cmp
+.sd:    pop     edx ecx
         test    ebp,0x100
         jnz     .smax
         test    eax,eax
@@ -3241,6 +3306,74 @@ rt_dict_drop:                   ; eax = dict, edx = 1 to drop the values too
 rt_dict_destroy_ptr:            ; ... of references
         mov     edx,1
         jmp     rt_dict_drop
+
+;;; code rt_dict_eq : rt_dict_find rt_str_eq
+rt_dict_eq:                     ; eax = a, edx = b, ecx = value kind -> eax = 1 if the same keys map to equal values
+        push    ebx esi edi ebp
+        mov     ebx,eax
+        mov     esi,edx
+        mov     ebp,ecx
+        xor     eax,eax
+        test    ebx,ebx
+        jz      @f
+        mov     eax,[ebx+8]
+@@:     xor     edx,edx
+        test    esi,esi
+        jz      @f
+        mov     edx,[esi+8]
+@@:     cmp     eax,edx
+        jne     .no
+        xor     edi,edi
+.l:     test    ebx,ebx
+        jz      .yes
+        cmp     edi,[ebx+8]
+        jae     .yes
+        mov     eax,[ebx+16]
+        mov     edx,[eax+edi*4]
+        mov     eax,esi
+        call    rt_dict_find
+        cmp     eax,-1
+        je      .no
+        mov     ecx,[esi+20]
+        mov     edx,[ebx+20]
+        cmp     ebp,2
+        je      .f
+        mov     ecx,[ecx+eax*4]
+        mov     edx,[edx+edi*4]
+        cmp     ebp,1
+        je      .s
+if defined rt_tuple_eq
+        cmp     ebp,4
+        je      .t
+end if
+        cmp     ecx,edx
+        jne     .no
+        jmp     .next
+.s:     mov     eax,ecx
+        call    rt_str_eq
+        test    eax,eax
+        jz      .no
+        jmp     .next
+if defined rt_tuple_eq
+.t:     mov     eax,ecx
+        call    rt_tuple_eq
+        test    eax,eax
+        jz      .no
+        jmp     .next
+end if
+.f:     fld     qword [ecx+eax*8]
+        fcomp   qword [edx+edi*8]
+        fnstsw  ax
+        sahf
+        jne     .no
+.next:  inc     edi
+        jmp     .l
+.yes:   mov     eax,1
+        pop     ebp edi esi ebx
+        ret
+.no:    xor     eax,eax
+        pop     ebp edi esi ebx
+        ret
 
 ;;; code rt_dict_find : rt_str_eq
 rt_dict_find:                   ; eax = dict, edx = key -> eax = index or -1
@@ -4726,6 +4859,279 @@ rt_async_run:                   ; eax = task: run the event loop until it is don
         ret
 ;;; data rt_async_run
 rt_msg_stuck    db 'RuntimeError: every task is waiting (deadlock)',0
+
+; ---------------------------------------------------------------- generators
+; A generator runs its function on a stack of its own: next() switches to it
+; until it yields (the value is left in the generator object) or returns.
+; Generator: +0 refcount, +4 destroy, +8 state (0 created, 1 running,
+; 2 suspended, 3 done), +12 its saved esp, +16 stack memory, +20 the
+; consumer's esp, +24 the current value (8 bytes), +32 the value is a
+; reference, +36 the arguments, +40 descriptor (function, flags: 1 reference
+; values, 2 8-byte values; slot count, frame offsets of the references it
+; owns), +44 closure, +48 its handlers, +52 the consumer's handlers, +56 the
+; generator that ran before, +60 its outermost handler record (28 bytes).
+
+;;; code rt_gen_new : rt_alloc rt_os_alloc rt_gen_free rt_gen_yield
+rt_gen_new:                     ; eax = argument bytes, edx = descriptor -> eax = new generator; arguments at [eax+36]
+        push    ebx esi
+        mov     esi,eax
+        push    edx
+        mov     eax,88
+        call    rt_alloc
+        mov     ebx,eax
+        mov     dword [ebx],1
+        mov     dword [ebx+4],rt_gen_free
+        pop     edx
+        mov     [ebx+40],edx
+        mov     eax,[edx+4]
+        and     eax,1
+        mov     [ebx+32],eax
+        mov     eax,65536
+        call    rt_os_alloc
+        mov     [ebx+16],eax
+        add     eax,65536-64
+        sub     eax,esi
+        and     eax,-16
+        sub     eax,20          ; edi esi ebx ebp, then "return" into rt_gen_start
+        xor     ecx,ecx
+        mov     [eax],ecx
+        mov     [eax+4],ecx
+        mov     [eax+8],ecx
+        mov     [eax+12],ecx
+        mov     dword [eax+16],rt_gen_start
+        mov     [ebx+12],eax
+        add     eax,20
+        mov     [ebx+36],eax
+        mov     eax,ebx
+        pop     esi ebx
+        ret
+
+;;; code rt_gen_next : rt_gen_yield rt_panic_value
+rt_gen_next:                    ; eax = generator: run it to its next value -> eax = 1 (the value is at +24) or 0 (finished)
+        mov     ecx,[eax+8]
+        cmp     ecx,3
+        je      .done
+        cmp     ecx,1
+        je      .busy
+        push    ebp ebx esi edi
+        mov     [eax+20],esp
+if defined rt_throw
+        mov     ecx,[rt_exc_top]
+        mov     [eax+52],ecx
+        mov     ecx,[eax+48]
+        mov     [rt_exc_top],ecx
+end if
+        mov     ecx,[rt_cur_gen]
+        mov     [eax+56],ecx
+        mov     [rt_cur_gen],eax
+        mov     dword [eax+8],1
+        mov     esp,[eax+12]
+        pop     edi esi ebx ebp
+        ret
+.done:  xor     eax,eax
+        ret
+.busy:  mov     esi,rt_msg_genbusy
+        jmp     rt_panic_value
+;;; data rt_gen_next
+rt_msg_genbusy  db 'generator already executing',0
+
+;;; code rt_gen_yield
+rt_gen_yield:                   ; from the generator's function, its value stored: back to the consumer until the next next()
+        push    ebp ebx esi edi
+        mov     eax,[rt_cur_gen]
+        mov     [eax+12],esp
+        mov     dword [eax+8],2
+        mov     ecx,1
+rt_gen_switch:                  ; eax = generator, ecx = what next() returns
+if defined rt_throw
+        mov     edx,[rt_exc_top]
+        mov     [eax+48],edx
+        mov     edx,[eax+52]
+        mov     [rt_exc_top],edx
+end if
+        mov     edx,[eax+56]
+        mov     [rt_cur_gen],edx
+        mov     esp,[eax+20]
+        pop     edi esi ebx ebp
+        mov     eax,ecx
+        ret
+rt_gen_start:                   ; the first next(): run the generator's function
+        mov     ecx,[rt_cur_gen]
+if defined rt_throw
+        lea     eax,[ecx+60]    ; its outermost handler: an exception leaves the generator
+        mov     dword [eax],0
+        mov     [eax+4],esp
+        mov     [eax+8],ebp
+        mov     dword [eax+12],rt_gen_caught
+        mov     [eax+16],ebx
+        mov     [eax+20],esi
+        mov     [eax+24],edi
+        mov     [rt_exc_top],eax
+end if
+        mov     edx,[ecx+44]    ; its closure
+        mov     eax,[ecx+40]
+        call    dword [eax]
+        mov     eax,[rt_cur_gen]
+        mov     dword [eax+8],3
+        xor     ecx,ecx
+        jmp     rt_gen_switch
+if defined rt_throw
+rt_gen_caught:                  ; an exception escaped the generator: it is finished, the consumer gets the exception
+        mov     eax,[rt_cur_gen]
+        mov     dword [eax+8],3
+        mov     ecx,[eax+52]
+        mov     [rt_exc_top],ecx
+        mov     ecx,[eax+56]
+        mov     [rt_cur_gen],ecx
+        mov     esp,[eax+20]
+        pop     edi esi ebx ebp
+        mov     eax,[rt_exc_cur]
+        jmp     rt_throw
+end if
+;;; bss rt_gen_yield
+rt_cur_gen      rd 1            ; the running generator
+
+;;; code rt_gen_free : rt_decref rt_os_free rt_free
+rt_gen_free:                    ; destroy routine: also releases what a suspended (or never started) generator's frame holds
+        push    ebx esi edi ebp
+        mov     ebx,eax
+        mov     eax,[ebx+8]
+        xor     edi,edi
+        cmp     eax,2
+        jne     .ns
+        mov     ebp,[ebx+12]
+        mov     ebp,[ebp+12]    ; the function's frame (ebp saved by rt_gen_yield)
+        jmp     .slots
+.ns:    test    eax,eax
+        jnz     .rest
+        mov     ebp,[ebx+36]    ; never started: just the arguments
+        sub     ebp,8
+        inc     edi
+.slots: mov     esi,[ebx+40]
+        mov     ecx,[esi+8]
+        add     esi,12
+.l:     test    ecx,ecx
+        jz      .rest
+        mov     eax,[esi]
+        test    edi,edi
+        jz      .take
+        test    eax,eax
+        js      .skip
+.take:  push    ecx
+        mov     eax,[ebp+eax]
+        call    rt_decref
+        pop     ecx
+.skip:  add     esi,4
+        dec     ecx
+        jmp     .l
+.rest:  cmp     dword [ebx+32],0
+        je      .nv
+        mov     eax,[ebx+24]
+        call    rt_decref
+.nv:    mov     eax,[ebx+44]
+        call    rt_decref
+        mov     eax,[ebx+16]
+        mov     edx,65536
+        call    rt_os_free
+        mov     eax,ebx
+        pop     ebp edi esi ebx
+        jmp     rt_free
+
+;;; code rt_gen_drain : rt_gen_next rt_list_new rt_list_push rt_incref
+rt_gen_drain:                   ; eax = generator, edx = the list's destroy routine -> eax = new list of the values left
+        push    ebx esi
+        mov     ebx,eax
+        mov     eax,edx
+        call    rt_list_new
+        mov     esi,eax
+.l:     test    ebx,ebx
+        jz      .out
+        mov     eax,ebx
+        call    rt_gen_next
+        test    eax,eax
+        jz      .out
+        mov     eax,[ebx+40]
+        test    dword [eax+4],2
+        jnz     .f
+        mov     eax,esi
+        mov     edx,4
+        call    rt_list_push
+        mov     ecx,[ebx+24]
+        mov     [eax],ecx
+        cmp     dword [ebx+32],0
+        je      .l
+        mov     eax,ecx
+        call    rt_incref
+        jmp     .l
+.f:     mov     eax,esi
+        mov     edx,8
+        call    rt_list_push
+        mov     ecx,[ebx+24]
+        mov     [eax],ecx
+        mov     ecx,[ebx+28]
+        mov     [eax+4],ecx
+        jmp     .l
+.out:   mov     eax,esi
+        pop     esi ebx
+        ret
+
+;;; code rt_panic_stop : rt_panic
+rt_panic_stop:                  ; next() of a finished generator
+if defined rt_throw
+        mov     eax,VTX_StopIteration
+        mov     edx,DTX_StopIteration
+        xor     ecx,ecx
+        xor     esi,esi
+        jmp     rt_raise_builtin
+else
+        mov     esi,rt_msg_stop
+        jmp     rt_panic
+end if
+;;; data rt_panic_stop
+rt_msg_stop     db 'StopIteration',0
+
+;;; code rt_panic_type : rt_panic
+rt_panic_type:                  ; esi = detail
+if defined rt_throw
+        mov     eax,VTX_TypeError
+        mov     edx,DTX_TypeError
+        xor     ecx,ecx
+        jmp     rt_raise_builtin
+else
+        push    esi
+        mov     esi,rt_msg_type
+        call    rt_errz
+        pop     esi
+        jmp     rt_panic
+end if
+;;; data rt_panic_type
+rt_msg_type     db 'TypeError: ',0
+
+; ---------------------------------------------------------------- closures
+; A function value: +0 refcount, +4 destroy, +8 code, +12 captured values
+; (copies, or cells shared with the defining function). A cell: +0 refcount,
+; +4 destroy, +8 the value (8 bytes).
+
+;;; code rt_cell_new : rt_alloc rt_cell_free
+rt_cell_new:                    ; eax = 1 if the value is a reference -> eax = new cell (value 0)
+        push    eax
+        mov     eax,16
+        call    rt_alloc
+        pop     ecx
+        mov     dword [eax],1
+        mov     dword [eax+4],rt_free
+        test    ecx,ecx
+        jz      @f
+        mov     dword [eax+4],rt_cell_free
+@@:     ret
+
+;;; code rt_cell_free : rt_decref rt_free
+rt_cell_free:                   ; destroy routine of a cell holding a reference
+        push    eax
+        mov     eax,[eax+8]
+        call    rt_decref
+        pop     eax
+        jmp     rt_free
 
 ;;; code rt_now_ms linux
 rt_now_ms:                      ; -> eax = milliseconds (wraps; compare differences)

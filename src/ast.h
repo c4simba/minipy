@@ -23,7 +23,7 @@ typedef enum {
     EXPR_SLICE,         /* a = obj, b = lo, c = hi, d = step (NULL = missing) */
     EXPR_LIST, EXPR_TUPLE, EXPR_SET,   /* items */
     EXPR_DICT,          /* items = keys, vals = values */
-    EXPR_COMPREHENSION, /* comp_kind 'L'/'S'/'D', a = element/key, b = dict value, clauses */
+    EXPR_COMPREHENSION, /* comp_kind 'L'/'S'/'D'/'G' (generator expression), a = element/key, b = dict value, clauses */
     EXPR_LAMBDA,        /* eparams, a = body */
     EXPR_AWAIT          /* await a */
 } ExprKind;
@@ -105,10 +105,12 @@ struct Stmt {
     Expr **defaults; int default_count, default_cap;
     Expr **annotations; int annotation_cap;   /* def: per-parameter type annotation (token range) or NULL */
     Expr *returns;                            /* def: `-> type` annotation (token range) or NULL */
-    char **decorators; int decorator_count, decorator_cap;
+    char **decorators; int decorator_count, decorator_cap;   /* each decorator's first name ... */
+    Expr **decorator_exprs;                                   /* ... and its whole expression (token range) */
     Stmt **body; int body_count, body_cap;
     Stmt **orelse; int orelse_count, orelse_cap;
     int star_index, dstar_index;   /* def params: index of *args / **kwargs, else -1 */
+    int kwonly_index;              /* def params: first keyword-only parameter after a bare `*`, else -1 */
     int block_tag;                 /* try-clause blocks: 0 normal, 1 except, 2 else, 3 finally */
     int is_async;                  /* async def */
     SymScope *scope;
@@ -133,7 +135,7 @@ void     stmt_add_body(Stmt *s, Stmt *child);
 void     stmt_add_orelse(Stmt *s, Stmt *child);
 void     stmt_add_default(Stmt *s, Expr *e);
 void     stmt_set_annotation(Stmt *s, int param, Expr *e);
-void     stmt_add_decorator(Stmt *s, const char *name);
+void     stmt_add_decorator(Stmt *s, const char *name, Expr *e);
 SymScope *scope_new(SymScopeKind k, const char *name, int line);
 void     scope_add_child(SymScope *p, SymScope *c);
 void     scope_def(SymScope *s, const char *name);

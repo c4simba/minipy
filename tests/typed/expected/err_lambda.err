@@ -1,1 +1,1 @@
-err_lambda.mpy:1: error: lambda is not supported in compiled code (define a function)
+err_lambda.mpy:2: error: type mismatch: an argument is int, cannot take str

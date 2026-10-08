@@ -1,0 +1,27 @@
+42 2 50 81
+5 0
+2.5 1.25
+* 21
++ 10
+- 4
+[16, 5, -4]
+25 17
+['fig', 'kiwi', 'pear', 'banana']
+banana banana
+['PEAR', 'FIG', 'BANANA', 'KIWI']
+['1', '2', '3'] [4, 3, 6, 4]
+['pear', 'banana'] [3, 5]
+[4, 10, 18]
+0,1,2,3,4
+14
+120 17
+60
+nothing
+clicked ok
+2.5 10.0
+called
+['a', 'b'] True True
+15 [2, 4, 6] 21 4.5
+10.5 40 apply <lambda> square
+[3, 2, 1]
+[6, 10, 4]

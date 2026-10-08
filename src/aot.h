@@ -38,6 +38,7 @@ typedef struct AotUnit {
 typedef struct {
     AotTarget target;
     unsigned stack_size;       /* kolibri: application stack size in bytes (0: 64 KiB) */
+    int count_allocs;          /* debugging: report the heap blocks still allocated at exit */
 } AotCodegenOptions;
 
 /* Type-check units[0..n) (units[0] is __main__) and emit the fasm listing into

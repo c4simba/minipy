@@ -1,0 +1,55 @@
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 0'
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 0'
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 1'
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 2'
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 0'
+[gui] redraw end
+[gui] redraw begin
+[gui] window x=100 w=260 y=100 h=160 style=0x14223344 caption='Counter'
+[gui] button x=20 w=100 y=80 h=30 id=2 color=0x5588cc
+[gui] text x=30 y=91 color=0xffffff '+1'
+[gui] button x=140 w=100 y=80 h=30 id=3 color=0x5588cc
+[gui] text x=150 y=91 color=0xffffff 'Reset'
+[gui] bar x=20 w=220 y=30 h=20 color=0x334455
+[gui] text x=24 y=36 color=0xffffff 'Count: 1'
+[gui] redraw end
+final count: 1

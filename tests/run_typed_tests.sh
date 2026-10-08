@@ -4,7 +4,8 @@
 #   tests/typed/<name>.mpy      compiled to an i386 Linux executable and run; its
 #                               output (stdout+stderr, plus "[exit N]" when N != 0)
 #                               must equal tests/typed/expected/<name>.out.
-#                               <name>.in, when present, is fed to stdin.
+#                               <name>.in, when present, is fed to stdin;
+#                               <name>.events: the GUI events x86run delivers.
 #   tests/typed/err_<name>.mpy  must be rejected by the compiler with the
 #                               diagnostic in tests/typed/expected/err_<name>.err.
 #
@@ -45,7 +46,8 @@ for f in $files; do
             fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (does not compile)"; head -10 "$OUT/$n.log"; continue
         fi
         inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"
-        $RUN "$OUT/$n" <"$inp" >"$OUT/$n.got" 2>&1
+        ev=1,3; [ -f "$DIR/$n.events" ] && ev=$(cat "$DIR/$n.events")   # scripted GUI events for x86run
+        X86RUN_EVENTS="$ev" $RUN "$OUT/$n" <"$inp" >"$OUT/$n.got" 2>&1
         rc=$?
         [ $rc -ne 0 ] && echo "[exit $rc]" >>"$OUT/$n.got"
         if [ "$UPDATE" = 1 ]; then cp "$OUT/$n.got" "$EXP/$n.out"; fi

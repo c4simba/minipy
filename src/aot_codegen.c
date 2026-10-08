@@ -76,6 +76,9 @@ typedef struct G {
     struct { AFunc *fn; int virt; } *stubs; int nstubs, cstubs;   /* task entries TS<i> */
     Ty **tdescs; int ntdescs, ctdescs;      /* tuple descriptors TD<i> */
     int *class_used;
+    char *fv_used, *cd_used;                /* per function: static closure FV<id>, closure destroy routine CD<id> */
+    struct { Ty *to, *from; } *adapters; int nadapters, cadapters;   /* AD<k> */
+    char *bm_used;                          /* per method: BM<id>, the code of its bound values */
 } G;
 
 typedef struct Loop { int lcont, lbreak; } Loop;
@@ -95,6 +98,11 @@ typedef struct F {
     char param_stored[16];      /* parameter assigned in the body: the function takes its own reference */
     TryCtx tries[32]; int ntries;
     int excs[32]; int nexcs;    /* slots of the exceptions being handled (bare raise) */
+    int env;                    /* frame slot of its closure (edx at entry); 0 without captures */
+    struct LiveTab *live;       /* liveness of its variables after each simple statement (moves) */
+    unsigned *live_after;       /* the statement being generated: variables still needed after it */
+    unsigned char *occ;         /* ... and how often each occurs in it (2: more, or evaluated repeatedly) */
+    Ty *ret;                    /* what `return` gives (None in a generator's function) */
 } F;
 
 static G *gg;                   /* the generator (one compilation at a time) */
@@ -207,17 +215,40 @@ static void scope_close(F *f, int mark){
 static int ref_slot(F *f){ int off=frame_slot(f,4); add_ref_slot(f,off); return off; }
 
 /* ---- variables and memory ---- */
+static int is_fn_body(AFunc *f){ return f->def||f->lam||f->genexp; }   /* not a module body */
+static AVar *root_var(AVar *v){ while(v->src) v=v->src; return v; }
+/* A function value: +0 refcount, +4 destroy, +8 code, +12 its name (str),
+   captured values from +16: a copy, or the pointer of a shared cell. */
+static void layout_caps(AFunc *fn){
+    if(fn->capsize || !fn->ncaps) return;
+    int off=16;
+    for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; v->capoff=off; off+=root_var(v)->cell?4:ty_size(v->ty); }
+    fn->capsize=off-16;
+}
+static const char *fn_display_name(AFunc *g){ return g->lam?"<lambda>":g->genexp?"<genexpr>":g->name; }
 static void var_addr(char *buf, size_t n, AVar *v){
     if(v->global) snprintf(buf,n,"[G%d]",v->id); else snprintf(buf,n,"[ebp%+d]",v->offset);
 }
+static void load_mem(F *f, Ty *t, const char *reg, int off);
+static void store_mem(F *f, Ty *t, const char *reg, int off);
 static void load_var(F *f, AVar *v){
+    if(v->src){                                         /* captured: in the closure (or its cell) */
+        layout_caps(v->owner);
+        E(f,"mov ecx,[ebp%+d]",f->env);
+        if(root_var(v)->cell){ E(f,"mov ecx,[ecx+%d]",v->capoff); load_mem(f,v->ty,"ecx",8); }
+        else load_mem(f,v->ty,"ecx",v->capoff);
+        return;
+    }
+    if(v->cell){ E(f,"mov ecx,[ebp%+d]",v->offset); load_mem(f,v->ty,"ecx",8); return; }
     char a[32]; var_addr(a,sizeof a,v);
     if(is_flt(v->ty)) E(f,"fld qword %s",a); else E(f,"mov eax,%s",a);
 }
 /* Store eax/st0 (an owned reference for reference types) into the variable. */
 static void store_var(F *f, AVar *v){
+    if(v->src){ layout_caps(v->owner); E(f,"mov ecx,[ebp%+d]",f->env); E(f,"mov ecx,[ecx+%d]",v->capoff); store_mem(f,v->ty,"ecx",8); return; }   /* nonlocal: a cell */
+    if(v->cell){ E(f,"mov ecx,[ebp%+d]",v->offset); store_mem(f,v->ty,"ecx",8); return; }
     char a[32]; var_addr(a,sizeof a,v);
-    if(!v->global && v->id<f->fn->nparams && f->fn->params[v->id]==v) f->param_stored[v->id]=1;
+    if(!v->global && v->id>=0 && v->id<f->fn->nparams && f->fn->params[v->id]==v) f->param_stored[v->id]=1;
     if(is_flt(v->ty)) E(f,"fstp qword %s",a);
     else if(is_ptr(v->ty)){ rt("rt_decref"); E(f,"xchg eax,%s",a); E(f,"call rt_decref"); }
     else E(f,"mov %s,eax",a);
@@ -251,6 +282,8 @@ static void incref(F *f){ CALLRT(f,"rt_incref"); }
 
 static int  gen(F *f, Expr *e);
 static void gen_bool(F *f, Expr *e);
+static void gen_yield_value(F *f, Ty *yt);
+static void call_method_on_top(F *f, AFunc *m);
 static void gen_fmt(F *f, Ty *t, int repr);
 static void gen_stmts(F *f, Stmt **b, int n);
 
@@ -261,10 +294,11 @@ MPY_NORETURN static void cg_fail(int line, const char *msg){
 /* The variable a name stores to inside the current function. */
 static AVar *find_var(F *f, const char *name, int line){
     AFunc *fn=f->fn; ASym *s=NULL;
-    if(fn->def){
+    if(is_fn_body(fn)){
         int global=0;
         for(int i=0;i<fn->nglobals_decl;i++) if(!strcmp(fn->globals_decl[i],name)) global=1;
         if(!global) s=symtab_find(&fn->locals,name);
+        if(!global && !s) for(int i=0;i<fn->ncaps;i++) if(!strcmp(fn->caps[i]->name,name)) return fn->caps[i];   /* nonlocal */
     }
     if(!s) s=symtab_find(&fn->mod->syms,name);
     if(!s || s->kind!=AS_VAR) cg_fail(line,"internal error: unknown variable");
@@ -272,18 +306,36 @@ static AVar *find_var(F *f, const char *name, int line){
 }
 
 /* reference results: make owned / borrowed (owned temporaries are held) */
-static void gen_owned(F *f, Expr *e){ int o=gen(f,e); if(is_ptr(TY(e)) && !o) incref(f); }
+static int try_move(F *f, Expr *e);
+static void gen_owned(F *f, Expr *e){ if(try_move(f,e)) return; int o=gen(f,e); if(is_ptr(TY(e)) && !o) incref(f); }
 static void gen_borrow(F *f, Expr *e){ int o=gen(f,e); if(is_ptr(TY(e)) && o) hold(f); }
 /* convert eax (int/bool) to st0 when a float is wanted */
-static void conv(F *f, Ty *from, Ty *to){
+static void conv_num(F *f, Ty *from, Ty *to){
     from=ty_find(from); to=ty_find(to);
     if(to->k==TY_FLOAT && from->k!=TY_FLOAT && from->k!=TY_VAR){ E(f,"push eax"); E(f,"fild dword [esp]"); E(f,"add esp,4"); }
 }
+/* A function taking *args where a fixed signature is wanted: an adapter
+   closure AD<k> (+16 the function) packs the extra arguments into the tuple. */
+static int adapt_needed(Ty *from, Ty *to){ from=ty_find(from); to=ty_find(to); return from->k==TY_FUNC && to->k==TY_FUNC && !to->tup && (from->tup&1); }
+static int adapter_index(Ty *to, Ty *from);
+static void conv_func(F *f, Ty *from, Ty *to, int owned){
+    if(!adapt_needed(from,to)) return;
+    int k=adapter_index(ty_find(to),ty_find(from)), l=new_label();
+    E(f,"test eax,eax"); E(f,"jz L%d",l);
+    E(f,"push eax"); E(f,"mov eax,20"); CALLRT(f,"rt_alloc");
+    E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],ADFREE"); E(f,"mov dword [eax+8],AD%d",k);
+    E(f,"pop ecx"); E(f,"mov [eax+16],ecx"); E(f,"mov edx,[ecx+12]"); E(f,"mov [eax+12],edx");
+    if(!owned){ E(f,"push eax"); E(f,"mov eax,ecx"); CALLRT(f,"rt_incref"); E(f,"pop eax"); }   /* an owned one moves into the adapter */
+    LBL(f,l);
+    if(!owned) hold(f);
+}
+/* the value in eax/st0 (owned) as a `to` */
+static void conv(F *f, Ty *from, Ty *to){ conv_num(f,from,to); conv_func(f,from,to,1); }
 static int gen_zero(F *f, Ty *t);
 static void gen_as(F *f, Expr *e, Ty *want, int owned){
     if(e->kind==EXPR_NONE){ int o=gen_zero(f,want); if(o && !owned) hold(f); return; }
     if(owned) gen_owned(f,e); else gen_borrow(f,e);
-    conv(f,TY(e),want);
+    conv_num(f,TY(e),want); conv_func(f,TY(e),want,owned);
 }
 
 /* ---- binary operators: left operand on the machine stack, right in eax/st0 ---- */
@@ -437,7 +489,7 @@ static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
     }
     if(numeric_ty(ta)&&numeric_ty(tb)){
         if(ta->k==TY_FLOAT||tb->k==TY_FLOAT){
-            conv(f,tb,TY_FLOAT_T);
+            conv_num(f,tb,TY_FLOAT_T);
             if(ta->k==TY_FLOAT){ E(f,"fld qword [esp]"); E(f,"add esp,8"); } else { E(f,"fild dword [esp]"); E(f,"add esp,4"); }
             E(f,"fcompp"); E(f,"fnstsw ax"); E(f,"sahf");
             E(f,"set%s al",cc_of(code,1)); E(f,"movzx eax,al"); return;
@@ -453,6 +505,10 @@ static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
         E(f,"mov edx,eax"); E(f,"pop eax");
         if(code==CMP_EQ||code==CMP_NE){ CALLRT(f,"rt_tuple_eq"); if(code==CMP_NE) E(f,"xor eax,1"); return; }
         CALLRT(f,"rt_tuple_cmp"); E(f,"cmp eax,0"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
+    }
+    if(ta->k==TY_DICT&&(code==CMP_EQ||code==CMP_NE)){
+        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(ta->elem)); CALLRT(f,"rt_dict_eq");
+        if(code==CMP_NE) E(f,"xor eax,1"); return;
     }
     if((ta->k==TY_LIST||ta->k==TY_SET)&&(code==CMP_EQ||code==CMP_NE)){
         E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(ta->elem)); CALLRT(f,ta->k==TY_LIST?"rt_list_eq":"rt_set_eq");
@@ -542,7 +598,7 @@ static void gen_jump(F *f, Expr *e, int label, int want){
 }
 
 /* ---- iteration (for loops and comprehensions) ---- */
-typedef enum { IT_RANGE, IT_SEQ, IT_STR, IT_KEYS, IT_ITEMS, IT_ENUM, IT_ZIP, IT_TUP } ItKind;
+typedef enum { IT_RANGE, IT_SEQ, IT_STR, IT_KEYS, IT_ITEMS, IT_ENUM, IT_ZIP, IT_TUP, IT_GEN } ItKind;
 typedef struct {
     ItKind kind;
     int top, cont, exit;
@@ -552,11 +608,21 @@ typedef struct {
     Ty *elem, *elem2;               /* element types (enumerate: elem2 = the items) */
     ItKind sub, sub2;               /* enumerate/zip: what the underlying objects are */
 } Iter;
-static ItKind seq_kind(Ty *t){ t=ty_find(t); return t->k==TY_STR?IT_STR:t->k==TY_DICT?IT_KEYS:t->k==TY_TUPLE?IT_TUP:IT_SEQ; }
+static ItKind seq_kind(Ty *t){ t=ty_find(t); return t->k==TY_STR?IT_STR:t->k==TY_DICT?IT_KEYS:t->k==TY_TUPLE?IT_TUP:t->k==TY_GEN?IT_GEN:IT_SEQ; }
 static Ty *seq_elem(Ty *t){ t=ty_find(t); return t->k==TY_STR?TY_STR_T:t->k==TY_DICT?ty_dkey(t):t->k==TY_TUPLE?t->elems[0]:t->elem; }
-static void iter_src(F *f, Expr *x, int *slot){
+/* the object a loop goes over, kept in a slot of its own: a sequence, a
+   generator, obj.__iter__()'s result, a file's lines -> its kind and items */
+static ItKind iter_source(F *f, Expr *x, int *slot, Ty **elem){
+    Ty *t=TY(x);
     *slot=ref_slot(f);
+    if(t->k==TY_OBJ){
+        AFunc *m=aot_find_method(t->cls,"__iter__"); Ty *r=ty_find(m->ret);
+        E(f,"sub esp,4"); gen_borrow(f,x); E(f,"mov [esp],eax"); call_method_on_top(f,m); E(f,"add esp,4");
+        E(f,"mov [ebp%+d],eax",*slot); *elem=r->elem; return r->k==TY_GEN?IT_GEN:IT_SEQ;
+    }
+    if(t->k==TY_FILE){ gen_borrow(f,x); CALLRT(f,"rt_file_readlines"); E(f,"mov [ebp%+d],eax",*slot); *elem=TY_STR_T; return IT_SEQ; }
     gen_owned(f,x); E(f,"mov [ebp%+d],eax",*slot);
+    *elem=seq_elem(t); return seq_kind(t);
 }
 static void iter_begin(F *f, Expr *it, Iter *I){
     memset(I,0,sizeof *I);
@@ -596,26 +662,23 @@ static void iter_begin(F *f, Expr *it, Iter *I){
     }
     E(f,"mov dword [ebp%+d],0",I->idx);
     if(xi->kind==X_BUILTIN && (!strcmp(xi->name,"enumerate")||!strcmp(xi->name,"zip"))){
-        int isenum=xi->name[0]=='e';
+        int isenum=xi->name[0]=='e'; Ty *e0, *e1;
         I->kind=isenum?IT_ENUM:IT_ZIP;
-        iter_src(f,it->items[0],&I->src);
-        I->sub=seq_kind(TY(it->items[0]));
-        if(isenum){ I->elem=TY_INT_T; I->elem2=seq_elem(TY(it->items[0])); I->start=frame_slot(f,4);
+        I->sub=iter_source(f,it->items[0],&I->src,&e0);
+        if(isenum){ I->elem=TY_INT_T; I->elem2=e0; I->start=frame_slot(f,4);
             if(it->count==2){ gen(f,it->items[1]); E(f,"mov [ebp%+d],eax",I->start); } else E(f,"mov dword [ebp%+d],0",I->start); }
-        else { iter_src(f,it->items[1],&I->src2); I->sub2=seq_kind(TY(it->items[1])); I->elem=seq_elem(TY(it->items[0])); I->elem2=seq_elem(TY(it->items[1])); }
+        else { I->sub2=iter_source(f,it->items[1],&I->src2,&e1); I->elem=e0; I->elem2=e1; }
     } else if(xi->kind==X_TMETHOD && !strcmp(xi->name,"items")){
-        I->kind=IT_ITEMS; iter_src(f,it->a->a,&I->src); I->elem=ty_dkey(TY(it->a->a)); I->elem2=TY(it->a->a)->elem;
-    } else if(TY(it)->k==TY_FILE){                       /* for line in f */
-        I->kind=IT_SEQ; I->elem=TY_STR_T; I->src=ref_slot(f);
-        gen_borrow(f,it); CALLRT(f,"rt_file_readlines"); E(f,"mov [ebp%+d],eax",I->src);
+        Ty *e0; iter_source(f,it->a->a,&I->src,&e0); I->kind=IT_ITEMS; I->elem=ty_dkey(TY(it->a->a)); I->elem2=TY(it->a->a)->elem;
     } else {
-        Ty *t=TY(it); I->kind=seq_kind(t); I->elem=seq_elem(t); iter_src(f,it,&I->src);
+        Ty *el; I->kind=iter_source(f,it,&I->src,&el); I->elem=el;
     }
     LBL(f,I->top);
     int srcs[2]={I->src,I->src2};
     for(int k=0;k<(I->kind==IT_ZIP?2:1);k++){
         ItKind sk=I->kind==IT_ZIP||I->kind==IT_ENUM ? (k?I->sub2:I->sub) : I->kind;
         E(f,"mov eax,[ebp%+d]",srcs[k]); E(f,"test eax,eax"); E(f,"jz L%d",I->exit);
+        if(sk==IT_GEN){ CALLRT(f,"rt_gen_next"); E(f,"test eax,eax"); E(f,"jz L%d",I->exit); continue; }
         E(f,"mov ecx,[ebp%+d]",I->idx);
         if(sk==IT_TUP){ E(f,"mov edx,[eax+8]"); E(f,"cmp ecx,[edx]"); } else E(f,"cmp ecx,[eax+8]");
         E(f,"jae L%d",I->exit);
@@ -627,7 +690,9 @@ static void iter_value(F *f, Iter *I, int k){
     if(kind==IT_RANGE){ E(f,"mov eax,[ebp%+d]",I->idx); return; }
     if(kind==IT_ENUM){ if(k==0){ E(f,"mov eax,[ebp%+d]",I->idx); E(f,"add eax,[ebp%+d]",I->start); return; } kind=I->sub; }
     else if(kind==IT_ZIP){ kind=k?I->sub2:I->sub; src=k?I->src2:I->src; }
-    E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",I->idx);
+    E(f,"mov eax,[ebp%+d]",src);
+    if(kind==IT_GEN){ load_mem(f,el,"eax",24); return; }
+    E(f,"mov ecx,[ebp%+d]",I->idx);
     if(kind==IT_STR){ rt("rt_chars"); E(f,"movzx eax,byte [eax+12+ecx]"); E(f,"shl eax,4"); E(f,"add eax,rt_chars"); return; }
     if(kind==IT_TUP){ if(is_flt(el)) E(f,"fld qword [eax+12+ecx*8]"); else E(f,"mov eax,[eax+12+ecx*4]"); return; }
     if(kind==IT_KEYS||(kind==IT_ITEMS&&k==0)){ E(f,"mov eax,[eax+16]"); E(f,"mov eax,[eax+ecx*4]"); return; }
@@ -647,6 +712,7 @@ static void iter_release(F *f, Iter *I){
 }
 /* store the iteration value (borrowed in eax/st0) into a variable */
 static void store_borrowed(F *f, AVar *v, Ty *from){
+    if(v->borrowed){ conv_num(f,from,v->ty); E(f,"mov [ebp%+d],eax",v->offset); return; }   /* the item stays the container's */
     if(is_ptr(v->ty)) incref(f);
     conv(f,from,v->ty);
     store_var(f,v);
@@ -691,7 +757,7 @@ static int gen_comprehension(F *f, Expr *e){
     }
     int mark=scope_open(f);
     Ty *el=t->elem;
-    if(e->comp_kind=='L'){
+    if(e->comp_kind=='L'||e->comp_kind=='g'){
         gen_as(f,e->a,el,1);
         if(is_flt(el)){ E(f,"mov eax,[ebp%+d]",res); E(f,"mov edx,8"); CALLRT(f,"rt_list_push"); E(f,"fstp qword [eax]"); }
         else { E(f,"push eax"); E(f,"mov eax,[ebp%+d]",res); E(f,"mov edx,4"); CALLRT(f,"rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx"); }
@@ -825,7 +891,77 @@ static int gen_literal_container(F *f, Expr *e){
 }
 
 /* ---- calls ---- */
-/* self_kind: 0 none, 1 the object of obj.method(), 2 the current method's self (super()) */
+static void put_arg(F *f, Ty *pt, int off){ if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off); else E(f,"mov [esp+%d],eax",off); }
+static int tuple_off(Ty *t, int i);
+static void list_append_top(F *f, Ty *el);
+static int in_list(int *v, int n, int x){ for(int i=0;i<n;i++) if(v[i]==x) return 1; return 0; }
+/* *args of a call: a new tuple (list) of the extra positionals and f(*xs) -> eax (held) */
+static void gen_star_args(F *f, AFunc *fn, Expr *e, XInfo *xi){
+    Ty *el=ty_find(fn->params[fn->star]->ty)->elem;
+    E(f,"mov eax,%s",list_destroy(el)); CALLRT(f,"rt_list_new"); E(f,"push eax");
+    for(int j=0;j<xi->nxargs;j++){ gen_as(f,e->items[xi->xargs[j]],el,1); list_append_top(f,el); }
+    if(xi->splat){
+        Expr *sa=e->items[xi->splat-1]; Ty *st=TY(sa);
+        if(st->k==TY_LIST && is_flt(el)==is_flt(st->elem)){ gen_borrow(f,sa); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_list_extend"); }
+        else if(st->k==TY_LIST) cg_fail(e->line,"f(*list of int) into *args of float is not supported");
+        else {
+            int slot=frame_slot(f,4); gen_borrow(f,sa); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
+            for(int k=0;k<st->nelems;k++){ Ty *et=st->elems[k];
+                E(f,"mov eax,[ebp%+d]",slot); load_mem(f,et,"eax",tuple_off(st,k)); if(is_ptr(et)) incref(f); conv(f,et,el); list_append_top(f,el); }
+        }
+    }
+    E(f,"pop eax"); hold(f);
+}
+/* **kwargs of a call: a new dict of the extra keywords and f(**d) -> eax (held) */
+static void gen_kwargs(F *f, AFunc *fn, Expr *e, XInfo *xi){
+    Ty *dt=ty_find(fn->params[fn->dstar]->ty), *el=dt->elem;
+    new_dict(f,dt); E(f,"push eax");
+    for(int j=0;j<xi->nkwargs;j++){ Expr *a=e->items[xi->kwargs[j]];
+        gen_as(f,a,el,1); push_value(f,el);
+        E(f,"mov edx,S%d",str_lit(a->kw)); E(f,"mov eax,[esp+%d]",esize(el)); E(f,"mov ecx,%d",esize(el)); CALLRT(f,"rt_dict_slot");
+        E(f,"mov ecx,eax"); pop_value(f,el); store_mem(f,el,"ecx",0); }
+    if(xi->dsplat){ gen_borrow(f,e->items[xi->dsplat-1]); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_dict_update"); }
+    E(f,"pop eax"); hold(f);
+}
+/* The arguments of a call of fn (parameters from `first` on) into [esp+off[i]],
+   in source order: positionals, keywords, f(*seq) spread, *args, **kwargs, defaults. */
+static void gen_call_args(F *f, AFunc *fn, Expr *e, XInfo *xi, int *off, int first){
+    int done_star=fn->star<0, done_dstar=fn->dstar<0;
+    for(int ai=0;ai<e->count;ai++){
+        Expr *a=e->items[ai]; int mapped=0;
+        if(xi->emptysplat==ai+1){ gen_borrow(f,a); E(f,"xor edx,edx"); CALLRT(f,"rt_unpack_check"); continue; }   /* f(*xs) with nothing left to fill */
+        for(int i=first;i<fn->nparams;i++) if(xi->argmap[i]==ai) mapped++;
+        if(mapped && a->akind==1){                      /* f(*seq) over parameters */
+            Ty *st=TY(a); int slot=frame_slot(f,4);
+            gen_borrow(f,a);
+            if(st->k==TY_LIST){ E(f,"mov edx,%d",mapped); CALLRT(f,"rt_unpack_check"); } else panic_if_null(f);
+            E(f,"mov [ebp%+d],eax",slot);
+            for(int i=first;i<fn->nparams;i++) if(xi->argmap[i]==ai){
+                Ty *pt=fn->params[i]->ty; int k=xi->argelem[i]-1;
+                E(f,"mov eax,[ebp%+d]",slot);
+                if(st->k==TY_TUPLE){ load_mem(f,st->elems[k],"eax",tuple_off(st,k)); conv_num(f,st->elems[k],pt); }
+                else { E(f,"mov eax,[eax+16]"); load_mem(f,st->elem,"eax",k*esize(st->elem)); conv_num(f,st->elem,pt); }
+                if(fn->params[i]->consumed) incref(f);
+                put_arg(f,pt,off[i]);
+            }
+            continue;
+        }
+        if(mapped){ for(int i=first;i<fn->nparams;i++) if(xi->argmap[i]==ai){ Ty *pt=fn->params[i]->ty; gen_as(f,a,pt,fn->params[i]->consumed); put_arg(f,pt,off[i]); } continue; }
+        if(!done_star && (in_list(xi->xargs,xi->nxargs,ai) || xi->splat==ai+1)){ done_star=1; gen_star_args(f,fn,e,xi); put_arg(f,fn->params[fn->star]->ty,off[fn->star]); }
+        if(!done_dstar && (in_list(xi->kwargs,xi->nkwargs,ai) || xi->dsplat==ai+1)){ done_dstar=1; gen_kwargs(f,fn,e,xi); put_arg(f,fn->params[fn->dstar]->ty,off[fn->dstar]); }
+        else if(fn->dstar<0 && xi->dsplat==ai+1){          /* f(**d) without **kwargs: d must be empty */
+            int l=new_label(); gen_borrow(f,a); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"cmp dword [eax+8],0"); E(f,"je L%d",l);
+            E(f,"mov esi,Z%d",zlit("got unexpected keyword arguments")); CALLRT(f,"rt_panic_type"); LBL(f,l); }
+    }
+    if(!done_star){ gen_star_args(f,fn,e,xi); put_arg(f,fn->params[fn->star]->ty,off[fn->star]); }
+    if(!done_dstar){ gen_kwargs(f,fn,e,xi); put_arg(f,fn->params[fn->dstar]->ty,off[fn->dstar]); }
+    for(int i=first;i<fn->nparams;i++) if(xi->argmap[i]<0 && fn->defaults[i] && i!=fn->star && i!=fn->dstar){
+        Ty *pt=fn->params[i]->ty;
+        gen_as(f,fn->defaults[i],pt,fn->params[i]->consumed); put_arg(f,pt,off[i]);
+    }
+}
+/* self_kind: 0 none, 1 the object of obj.method(), 2 the current method's self (super());
+   env: the closure of a nested function (NULL: none, or the current one if it calls itself) */
 static void call_user(F *f, AFunc *fn, Expr *e, XInfo *xi, int self_kind){
     use_fn(fn);
     int off[16], total=0;
@@ -833,16 +969,10 @@ static void call_user(F *f, AFunc *fn, Expr *e, XInfo *xi, int self_kind){
     if(total) E(f,"sub esp,%d",total);
     if(self_kind==1){ gen_borrow(f,e->a->a); E(f,"mov [esp],eax"); }
     if(self_kind==2){ E(f,"mov eax,[ebp+8]"); E(f,"mov [esp],eax"); }
-    for(int ai=0;ai<e->count;ai++)                 /* arguments in source order */
-        for(int i=0;i<fn->nparams;i++) if(xi->argmap[i]==ai){
-            Ty *pt=fn->params[i]->ty;
-            gen_as(f,e->items[ai],pt,0);
-            if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off[i]); else E(f,"mov [esp+%d],eax",off[i]);
-        }
-    for(int i=(self_kind?1:0);i<fn->nparams;i++) if(xi->argmap[i]<0 && fn->defaults[i]){
-        Ty *pt=fn->params[i]->ty;
-        gen_as(f,fn->defaults[i],pt,0);
-        if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off[i]); else E(f,"mov [esp+%d],eax",off[i]);
+    gen_call_args(f,fn,e,xi,off,self_kind?1:0);
+    if(xi->kind==X_CALLNEST && fn->ncaps){               /* its closure in edx */
+        if(xi->var){ load_var(f,xi->var); panic_if_null(f); E(f,"mov edx,eax"); }
+        else E(f,"mov edx,[ebp%+d]",f->env);
     }
     if(self_kind==1 && fn->cls && !fn->is_static){
         E(f,"mov eax,[esp]"); panic_if_null(f);
@@ -851,6 +981,33 @@ static void call_user(F *f, AFunc *fn, Expr *e, XInfo *xi, int self_kind){
     } else E(f,"call F%d",fn->id);
     if(total) E(f,"add esp,%d",total);
 }
+/* fv(args): a function value -> its result (owned if a reference). Its
+   parameters: the regular ones, then *args (a tuple) and **kwargs (a dict).
+   With dv: a decorated method obj.m(args) -> dv(obj, args). */
+static int call_value_of(F *f, Expr *e, AVar *dv){
+    Ty *ft=dv?ty_find(dv->ty):TY(e->a); int cs=frame_slot(f,4), off[17], total=0;
+    int star=ft->tup&1, dstar=(ft->tup>>1)&1, nreg=ft->nelems-star-dstar, skip=dv?1:0;
+    AFunc pseudo; memset(&pseudo,0,sizeof pseudo); AVar pv[16], *pp[16]; Expr *nodef[16]={NULL};
+    for(int i=0;i<ft->nelems;i++){
+        Ty *pt;
+        if(i<nreg) pt=ft->elems[i];
+        else if(star && i==nreg){ pt=ty_new(TY_LIST,ft->elems[i],NULL); pt->tup=1; }
+        else pt=ty_dict(TY_STR_T,ft->elems[i]);
+        off[i]=total; total+=esize(pt);
+        if(i>=skip){ memset(&pv[i-skip],0,sizeof pv[0]); pv[i-skip].ty=pt; pp[i-skip]=&pv[i-skip]; }
+    }
+    pseudo.name="function"; pseudo.nparams=ft->nelems-skip; pseudo.params=pp; pseudo.defaults=nodef;
+    pseudo.star=star?nreg-skip:-1; pseudo.dstar=dstar?nreg+star-skip:-1; pseudo.kwonly=nreg-skip;
+    if(dv) load_var(f,dv); else gen_borrow(f,e->a);
+    E(f,"mov [ebp%+d],eax",cs);
+    if(total) E(f,"sub esp,%d",total);
+    if(dv){ gen_borrow(f,e->a->a); E(f,"mov [esp],eax"); }
+    gen_call_args(f,&pseudo,e,xinfo(e),off+skip,0);
+    E(f,"mov eax,[ebp%+d]",cs); panic_if_null(f); E(f,"mov edx,eax"); E(f,"call dword [edx+8]");
+    if(total) E(f,"add esp,%d",total);
+    return is_ptr(ft->elem);
+}
+static int call_value(F *f, Expr *e){ return call_value_of(f,e,NULL); }
 static int gen_str_of(F *f, Expr *x);
 /* the message of an exception: str(x), owned, in eax */
 static void gen_exc_message(F *f, Expr *x){ int o=gen_str_of(f,x); if(!o) incref(f); }
@@ -871,14 +1028,7 @@ static int gen_ctor(F *f, Expr *e, XInfo *xi){
     int off[16], total=0;
     if(init){ use_fn(init); for(int i=0;i<init->nparams;i++){ off[i]=total; total+=esize(init->params[i]->ty); } }
     if(total) E(f,"sub esp,%d",total);
-    if(init){
-        for(int ai=0;ai<e->count;ai++) for(int i=1;i<init->nparams;i++) if(xi->argmap[i]==ai){
-            Ty *pt=init->params[i]->ty; gen_as(f,e->items[ai],pt,0);
-            if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off[i]); else E(f,"mov [esp+%d],eax",off[i]); }
-        for(int i=1;i<init->nparams;i++) if(xi->argmap[i]<0 && init->defaults[i]){
-            Ty *pt=init->params[i]->ty; gen_as(f,init->defaults[i],pt,0);
-            if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off[i]); else E(f,"mov [esp+%d],eax",off[i]); }
-    }
+    if(init) gen_call_args(f,init,e,xi,off,1);
     E(f,"mov eax,%d",cls->size); E(f,"mov edx,VT%d",cls->id); E(f,"mov ecx,DT%d",cls->id); CALLRT(f,"rt_obj_new");
     AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
     for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i];
@@ -906,12 +1056,23 @@ static int sort_kind(Ty *t);
 static void gen_key_call(F *f, Expr *key, Ty *elem){
     XInfo *ki=xinfo(key);
     if(key->kind==EXPR_LAMBDA){ store_borrowed(f,ki->var,elem); gen_borrow(f,key->a); return; }
+    if(ki->kind!=X_FUNC){                                   /* a function value */
+        Ty *ft=TY(key), *pt=ft->elems[0];
+        conv_num(f,elem,pt); push_value(f,pt);
+        gen_borrow(f,key); panic_if_null(f); E(f,"mov edx,eax"); E(f,"call dword [edx+8]"); E(f,"add esp,%d",esize(pt));
+        if(is_ptr(ft->elem)) hold(f);
+        return;
+    }
     AFunc *fn=ki->fn; Ty *pt=fn->params[0]->ty; use_fn(fn);
-    conv(f,elem,pt); push_value(f,pt);
+    conv_num(f,elem,pt); push_value(f,pt);
     E(f,"call F%d",fn->id); E(f,"add esp,%d",esize(pt));
     if(is_ptr(fn->ret)) hold(f);
 }
-static Ty *key_type(Expr *key){ return ty_find(xinfo(key)->ty); }
+static Ty *key_type(Expr *key){
+    Ty *t=ty_find(xinfo(key)->ty);
+    if(key->kind!=EXPR_LAMBDA && xinfo(key)->kind!=X_FUNC && t->k==TY_FUNC) return ty_find(t->elem);   /* a function value: its result */
+    return t;
+}
 /* reverse= evaluated once -> a frame slot holding 0/1 (0 when absent) */
 static int gen_rev_flag(F *f, Expr *rev){
     int slot=frame_slot(f,4);
@@ -968,6 +1129,7 @@ static int gen_sort_by_key(F *f, int src, Ty *el, Expr *key, int revslot, int in
         E(f,"mov eax,[ebp%+d]",res); E(f,"mov dword [ebp%+d],0",res); CALLRT(f,"rt_decref");
         return 0;
     }
+    E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref");   /* the copy sorted */
     E(f,"mov eax,[ebp%+d]",res); E(f,"mov dword [ebp%+d],0",res);
     return 1;
 }
@@ -1004,13 +1166,75 @@ static int gen_minmax_key(F *f, Expr *e, int is_max){
     LBL(f,lend);
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",best); E(f,"mov eax,[eax+16]");
     if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else { E(f,"mov eax,[eax+ecx*4]"); if(is_ptr(el)) incref(f); }
+    if(!is_flt(el)) E(f,"push eax");                                          /* the sequence is released */
+    E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref");
+    if(!is_flt(el)) E(f,"pop eax");
     return is_ptr(el);
 }
 static int sort_kind(Ty *t){ t=ty_find(t); if(t->k==TY_TUPLE){ rt("rt_tuple_cmp"); return 4; } return t->k==TY_STR?1:t->k==TY_FLOAT?2:0; }
 
+/* any/all of a generator expression: its loops, stopping at the first deciding item */
+static int gen_comp_anyall(F *f, Expr *e, int isall){
+    int res=frame_slot(f,4), lfound=new_label(), ldone=new_label();
+    E(f,"mov dword [ebp%+d],%d",res,isall);
+    Iter its[8]; int n=e->nclause;
+    if(n>8) cg_fail(e->line,"too many for clauses");
+    for(int i=0;i<n;i++){
+        CompClause *cl=&e->clauses[i];
+        iter_begin(f,cl->iter,&its[i]);
+        iter_store_vars(f,&its[i],&xinfo(e)->cvars[2*i],cl->nvars);
+        for(int k=0;k<cl->ncond;k++) gen_jump(f,cl->conds[k],its[i].cont,0);
+    }
+    gen_jump(f,e->a,lfound,!isall);
+    for(int i=n-1;i>=0;i--){ iter_end(f,&its[i]); LBL(f,its[i].exit); iter_release(f,&its[i]); }
+    E(f,"jmp L%d",ldone);
+    LBL(f,lfound);
+    E(f,"mov dword [ebp%+d],%d",res,!isall);
+    for(int i=0;i<n;i++) iter_release(f,&its[i]);
+    LBL(f,ldone);
+    E(f,"mov eax,[ebp%+d]",res);
+    return 0;
+}
+/* functools.reduce(f, xs[, init]) */
+static int gen_reduce(F *f, Expr *e, XInfo *xi){
+    Ty *lt=TY(e->items[1]), *el=lt->elem; AVar *acc=xi->cvars[0], *x=xi->cvars[1]; Ty *at=acc->ty;
+    int src=ref_slot(f), idx=frame_slot(f,4), ltop=new_label(), lend=new_label();
+    gen_owned(f,e->items[1]); E(f,"mov [ebp%+d],eax",src);
+    if(e->count==3){ gen_as(f,e->items[2],at,1); store_var(f,acc); E(f,"mov dword [ebp%+d],0",idx); }
+    else {
+        int lok=new_label(), lempty=new_label();
+        E(f,"mov eax,[ebp%+d]",src); E(f,"test eax,eax"); E(f,"jz L%d",lempty); E(f,"cmp dword [eax+8],0"); E(f,"jne L%d",lok);
+        LBL(f,lempty); E(f,"mov esi,Z%d",zlit("reduce() of empty iterable with no initial value")); CALLRT(f,"rt_panic_type");
+        LBL(f,lok); E(f,"mov eax,[eax+16]"); load_mem(f,el,"eax",0); store_borrowed(f,acc,el); E(f,"mov dword [ebp%+d],1",idx);
+    }
+    LBL(f,ltop);
+    E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",idx); E(f,"cmp ecx,[eax+8]"); E(f,"jae L%d",lend);
+    E(f,"mov eax,[eax+16]"); if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]");
+    store_borrowed(f,x,el);
+    { int mark=scope_open(f); gen_as(f,xi->key,at,1); store_var(f,acc); scope_close(f,mark); }
+    E(f,"inc dword [ebp%+d]",idx); E(f,"jmp L%d",ltop);
+    LBL(f,lend);
+    E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref");
+    load_var(f,acc); if(is_ptr(at)) incref(f);
+    return is_ptr(at);
+}
 static int gen_builtin(F *f, Expr *e, XInfo *xi){
     const char *n=xi->name; Ty *t=TY(e);
     Expr *a0=e->count?e->items[0]:NULL; Ty *t0=a0?TY(a0):NULL;
+    if(!strcmp(n,"reduce")) return gen_reduce(f,e,xi);
+    if(!strcmp(n,"next")){
+        Ty *el=t; int slot=frame_slot(f,4), lmiss=new_label(), lend=new_label();
+        gen_borrow(f,a0); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
+        CALLRT(f,"rt_gen_next"); E(f,"test eax,eax"); E(f,"jz L%d",lmiss);
+        E(f,"mov eax,[ebp%+d]",slot); load_mem(f,el,"eax",24); if(is_ptr(el)) incref(f);
+        E(f,"jmp L%d",lend);
+        LBL(f,lmiss);
+        if(e->count==2){ gen_as(f,e->items[1],el,1); }
+        else CALLRT(f,"rt_panic_stop");
+        LBL(f,lend);
+        return is_ptr(el);
+    }
+    if((!strcmp(n,"any")||!strcmp(n,"all")) && a0->kind==EXPR_COMPREHENSION && a0->comp_kind=='g') return gen_comp_anyall(f,a0,n[1]=='l');
     if(!strcmp(n,"len") && t0->k==TY_TUPLE){ int o=gen(f,a0); drop_value(f,t0,o); E(f,"mov eax,%d",t0->nelems); return 0; }
     if(!strcmp(n,"divmod")){
         Ty *qt=t->elems[0];
@@ -1160,7 +1384,8 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         gen_borrow(f,a0);
         if(t0->k==TY_STR) CALLRT(f,"rt_str_chars");
         else if(t0->k==TY_DICT) CALLRT(f,"rt_dict_keys");
-        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); if(t0->k==TY_SET){ E(f,"mov dword [eax+4],%s",list_destroy(t->elem)); } }
+        else if(t0->k==TY_GEN){ E(f,"mov edx,%s",list_destroy(t->elem)); CALLRT(f,"rt_gen_drain"); }
+        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); E(f,"mov dword [eax+4],%s",list_destroy(t->elem)); }
         return 1;
     }
     if(!strcmp(n,"set")){
@@ -1169,6 +1394,13 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         if(t0->k==TY_STR||t0->k==TY_DICT){ CALLRT(f,t0->k==TY_STR?"rt_str_chars":"rt_dict_keys"); hold(f); }
         E(f,"mov edx,%d",kind_of(t->elem)); CALLRT(f,"rt_set_from"); return 1;
     }
+    if(!strcmp(n,"range_list")){                         /* range(...) as a value */
+        E(f,"sub esp,12"); E(f,"mov dword [esp],0"); E(f,"mov dword [esp+8],1");
+        if(e->count==1){ gen(f,a0); E(f,"mov [esp+4],eax"); }
+        else { gen(f,a0); E(f,"mov [esp],eax"); gen(f,e->items[1]); E(f,"mov [esp+4],eax");
+            if(e->count==3){ gen(f,e->items[2]); E(f,"mov [esp+8],eax"); } }
+        E(f,"pop eax"); E(f,"pop edx"); E(f,"pop ecx"); CALLRT(f,"rt_range_list"); return 1; }
+    if(!strcmp(n,"dict_copy")){ gen_borrow(f,a0); E(f,"mov edx,%d",kind_of(t->elem)); CALLRT(f,"rt_dict_copy"); return 1; }
     if(!strcmp(n,"dict")){ new_dict(f,t); return 1; }
     cg_fail(e->line,"unsupported builtin");
 }
@@ -1327,7 +1559,9 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi);
 static int gen_call(F *f, Expr *e){
     XInfo *xi=xinfo(e); Ty *t=TY(e);
     switch(xi->kind){
-        case X_FUNC: case X_STATIC: call_user(f,xi->fn,e,xi,0); return is_ptr(t);
+        case X_FUNC: case X_STATIC: case X_CALLNEST: call_user(f,xi->fn,e,xi,0); return is_ptr(t);
+        case X_CALLVAL: return call_value(f,e);
+        case X_CALLDECO: return call_value_of(f,e,xi->var);
         case X_METHOD: call_user(f,xi->fn,e,xi,1); return is_ptr(t);
         case X_SUPER:
             if(!xi->fn){                                         /* super().__init__(message) of an exception */
@@ -1354,7 +1588,7 @@ static void sb_bytes_lit(F *f, const char *s, int n){
     E(f,"mov eax,RL%d",rlit(s,n)); E(f,"mov edx,%d",n); CALLRT(f,"rt_sb_bytes");
 }
 static void fmt_arg(F *f, Expr *a, Ty *tt, int tslot, int i, int as_float){
-    if(tslot){ Ty *et=ty_find(tt)->elems[i]; E(f,"mov eax,[ebp%+d]",tslot); load_mem(f,et,"eax",tuple_off(tt,i)); if(as_float) conv(f,et,TY_FLOAT_T); return; }
+    if(tslot){ Ty *et=ty_find(tt)->elems[i]; E(f,"mov eax,[ebp%+d]",tslot); load_mem(f,et,"eax",tuple_off(tt,i)); if(as_float) conv_num(f,et,TY_FLOAT_T); return; }
     if(as_float) gen_as(f,a,TY_FLOAT_T,0); else gen_borrow(f,a);
 }
 
@@ -1482,6 +1716,32 @@ static int gen_format(F *f, Expr *e){
 }
 
 static int gen_await(F *f, Expr *e);
+/* a closure of g made here: its captured values (or cells) copied from this function -> eax (owned) */
+static int gen_closure(F *f, AFunc *g){
+    layout_caps(g); use_fn(g); gg->cd_used[g->id]=1;
+    E(f,"mov eax,%d",16+g->capsize); CALLRT(f,"rt_alloc");
+    E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],CD%d",g->id); E(f,"mov dword [eax+8],F%d",g->id); E(f,"mov dword [eax+12],S%d",str_lit(fn_display_name(g)));
+    E(f,"push eax");
+    for(int k=0;k<g->ncaps;k++){ AVar *cv=g->caps[k], *src=cv->src;
+        if(root_var(cv)->cell){                             /* share the cell */
+            if(src->src){ layout_caps(src->owner); E(f,"mov ecx,[ebp%+d]",f->env); E(f,"mov eax,[ecx+%d]",src->capoff); }
+            else E(f,"mov eax,[ebp%+d]",src->offset);
+            incref(f); E(f,"mov ecx,[esp]"); E(f,"mov [ecx+%d],eax",cv->capoff);
+        } else {
+            load_var(f,src); if(is_ptr(cv->ty)) incref(f);
+            E(f,"mov ecx,[esp]"); store_new(f,cv->ty,"ecx",cv->capoff);
+        }
+    }
+    E(f,"pop eax");
+    return 1;
+}
+/* function g as a value -> eax */
+static int gen_funcref(F *f, AFunc *g){
+    use_fn(g);
+    if(!g->ncaps){ gg->fv_used[g->id]=1; rt("rt_static"); E(f,"mov eax,FV%d",g->id); return 0; }   /* nothing captured: a static object */
+    if(g==f->fn){ E(f,"mov eax,[ebp%+d]",f->env); return 0; }                                    /* a nested def naming itself */
+    return gen_closure(f,g);
+}
 static int gen(F *f, Expr *e){
     XInfo *xi=xinfo(e); Ty *t=TY(e);
     switch(e->kind){
@@ -1498,7 +1758,9 @@ static int gen(F *f, Expr *e){
         case EXPR_NONE: return gen_zero(f,t);
         case EXPR_NAME:
             if(xi->kind==X_CONST_STR){ E(f,"mov eax,S%d",str_lit(xi->name)); return 0; }
+            if(xi->kind==X_FUNCREF) return gen_funcref(f,xi->fn);
             load_var(f,xi->var); return 0;
+        case EXPR_LAMBDA: return gen_funcref(f,xi->fn);
         case EXPR_UNARY:
             if(e->op==T_NOT){ gen_bool(f,e->a); E(f,"xor eax,1"); return 0; }
             if(xi->kind==X_OPMETHOD) return gen_op_call(f,xi->fn,e->a,NULL);
@@ -1522,6 +1784,14 @@ static int gen(F *f, Expr *e){
                 E(f,"fld qword [FC%d]",float_const(!strcmp(xi->name,"pi")?"3.141592653589793":!strcmp(xi->name,"tau")?"6.283185307179586":"2.718281828459045"));
                 return 0; }
             if(xi->kind==X_VAR){ load_var(f,xi->var); return 0; }
+            if(xi->kind==X_FUNCREF) return gen_funcref(f,xi->fn);
+            if(xi->kind==X_BOUND){                        /* obj.method: a closure of obj (+16) */
+                AFunc *m=xi->fn; use_fn(m); gg->bm_used[m->id]=1;
+                gen_owned(f,e->a); panic_if_null(f); E(f,"push eax");
+                E(f,"mov eax,20"); CALLRT(f,"rt_alloc");
+                E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],ADFREE"); E(f,"mov dword [eax+8],BM%d",m->id); E(f,"mov dword [eax+12],S%d",str_lit(m->name));
+                E(f,"pop ecx"); E(f,"mov [eax+16],ecx");
+                return 1; }
             if(xi->kind==X_PROP){ E(f,"sub esp,4"); gen_borrow(f,e->a); E(f,"mov [esp],eax"); call_on_top(f,xi->fn); E(f,"add esp,4"); return is_ptr(xi->fn->ret); }
             if(xi->kind==X_CLASSCONST){ gen_as(f,xi->field->init,xi->field->ty,0); return 0; }
             gen_borrow(f,e->a); panic_if_null(f);
@@ -1531,7 +1801,16 @@ static int gen(F *f, Expr *e){
         case EXPR_SLICE: return gen_slice(f,e);
         case EXPR_LIST: case EXPR_SET: case EXPR_DICT: return gen_literal_container(f,e);
         case EXPR_TUPLE: return t->k==TY_TUPLE ? gen_tuple(f,e) : gen_literal_container(f,e);
-        case EXPR_COMPREHENSION: return gen_comprehension(f,e);
+        case EXPR_COMPREHENSION:
+            if(e->comp_kind=='G'){                       /* a generator expression: call its generator function with the first iterable */
+                AFunc *g=xi->fn; use_fn(g);
+                if(g->nparams){ Ty *pt=g->params[0]->ty; E(f,"sub esp,%d",esize(pt)); gen_as(f,e->clauses[0].iter,pt,0); put_arg(f,pt,0); }
+                if(g->ncaps){ gen_closure(f,g); hold(f); E(f,"mov edx,eax"); }
+                E(f,"call F%d",g->id);
+                if(g->nparams) E(f,"add esp,%d",esize(g->params[0]->ty));
+                return 1;
+            }
+            return gen_comprehension(f,e);
         case EXPR_AWAIT: return gen_await(f,e);
         default: cg_fail(e->line,"unsupported expression");
     }
@@ -1599,6 +1878,8 @@ static void gen_fmt(F *f, Ty *t, int repr){
         case TY_BUF: E(f,"mov eax,Z%d",zlit("<buffer>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_TASK: E(f,"mov eax,Z%d",zlit("<Task>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_FILE: E(f,"mov eax,Z%d",zlit("<file>")); CALLRT(f,"rt_sb_cstr"); return;
+        case TY_FUNC: E(f,"mov eax,Z%d",zlit("<function>")); CALLRT(f,"rt_sb_cstr"); return;
+        case TY_GEN: E(f,"mov eax,Z%d",zlit("<generator object>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_LIST: case TY_SET: case TY_DICT: case TY_OBJ: case TY_TUPLE:
             rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(t,repr)); return;
         default: E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); return;     /* a bare None */
@@ -1662,7 +1943,7 @@ static void emit_formatter(int i){
         E(f,"test ebx,ebx"); E(f,"jz L%d",lne); E(f,"cmp dword [ebx+8],0"); E(f,"jne L%d",lgo);
         LBL(f,lne); E(f,"mov eax,Z%d",zlit("set()")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",lout);
         LBL(f,lgo); }
-    E(f,"mov al,'%c'",t->k==TY_LIST?'[':'{'); CALLRT(f,"rt_sb_char");
+    E(f,"mov al,'%c'",t->k==TY_LIST?(t->tup?'(':'['):'{'); CALLRT(f,"rt_sb_char");
     E(f,"xor esi,esi");
     LBL(f,ltop);
     E(f,"test ebx,ebx"); E(f,"jz L%d",lend); E(f,"cmp esi,[ebx+8]"); E(f,"jae L%d",lend);
@@ -1675,7 +1956,9 @@ static void emit_formatter(int i){
     if(is_flt(el)) E(f,"fld qword [eax+esi*8]"); else E(f,"mov eax,[eax+esi*4]");
     gen_fmt(f,el,1);
     E(f,"inc esi"); E(f,"jmp L%d",ltop);
-    LBL(f,lend); E(f,"mov al,'%c'",t->k==TY_LIST?']':'}'); CALLRT(f,"rt_sb_char");
+    LBL(f,lend);
+    if(t->k==TY_LIST && t->tup){ int l=new_label(); E(f,"cmp esi,1"); E(f,"jne L%d",l); E(f,"mov al,','"); CALLRT(f,"rt_sb_char"); LBL(f,l); }   /* (x,) */
+    E(f,"mov al,'%c'",t->k==TY_LIST?(t->tup?')':']'):'}'); CALLRT(f,"rt_sb_char");
     LBL(f,lout); E(f,"pop esi"); E(f,"pop ebx"); E(f,"ret");
     buf_cat(&gg->text,&f->code); free(f->code.s);
 }
@@ -1709,6 +1992,8 @@ static void emit_task_stub(int i){
    evaluated now (and owned by the task). */
 static void gen_task_new(F *f, Expr *call){
     XInfo *xi=xinfo(call); AFunc *fn=xi->fn;
+    if(fn->star>=0||fn->dstar>=0) cg_fail(call->line,"coroutines with *args/**kwargs are not supported in compiled code");
+    for(int i=0;i<16;i++) if(xi->argelem[i]) cg_fail(call->line,"f(*seq) of a coroutine is not supported in compiled code");
     int self_kind=xi->kind==X_METHOD&&!fn->is_static ? 1 : xi->kind==X_SUPER&&!fn->is_static ? 2 : 0;
     int off[16], total=0;
     for(int i=0;i<fn->nparams;i++){ off[i]=total; total+=esize(fn->params[i]->ty); }
@@ -1839,8 +2124,27 @@ static int has_call(Expr *e){
     return 0;
 }
 static int park_value(F *f, Ty *t, int owned);
+/* print(..., *xs, ...): separators only between the items actually printed */
+static void gen_print_star(F *f, APrint *pr){
+    int first=frame_slot(f,4);
+    rt("rt_sb_need"); E(f,"push dword [rt_sb_len]");
+    E(f,"mov dword [ebp%+d],1",first);
+    for(int i=0;i<pr->n;i++){
+        Iter I; int star=pr->star[i];
+        if(star){ iter_begin(f,pr->args[i],&I); }
+        int l=new_label();
+        E(f,"cmp dword [ebp%+d],0",first); E(f,"jne L%d",l);
+        if(pr->sep) gen_into_sb(f,pr->sep); else { E(f,"mov al,' '"); CALLRT(f,"rt_sb_char"); }
+        LBL(f,l); E(f,"mov dword [ebp%+d],0",first);
+        if(star){ iter_value(f,&I,0); gen_fmt(f,I.elem,0); iter_end(f,&I); LBL(f,I.exit); iter_release(f,&I); }
+        else gen_into_sb(f,pr->args[i]);
+    }
+    if(pr->end) gen_into_sb(f,pr->end); else { E(f,"mov al,10"); CALLRT(f,"rt_sb_char"); }
+    E(f,"pop eax"); CALLRT(f,"rt_sb_flush");
+}
 static void gen_print(F *f, APrint *pr){
     int n=pr->n;
+    for(int i=0;i<n;i++) if(pr->star[i]){ gen_print_star(f,pr); return; }
     if(!pr->sep && !pr->end){
         if(n==0){ E(f,"mov ecx,P%d",print_lit("")); E(f,"mov edx,1"); CALLRT(f,"rt_write"); return; }
         Expr *a=pr->args[0]; Ty *t=TY(a);
@@ -2148,9 +2452,11 @@ static void gen_try(F *f, Stmt *s){
 }
 static int loop_tries(F *f){ int i=f->ntries; while(i>0 && f->tries[i-1].nloops>=f->nloops) i--; return i; }
 
+static void moves_begin(F *f, Stmt *s);
 static void gen_stmt(F *f, Stmt *s){
     AotUnit *u=f->fn->mod->unit;
     int mark=scope_open(f);
+    moves_begin(f,s);
     switch(s->kind){
         case STMT_EXPR:{
             APrint *pr=aot_print(u,s);
@@ -2187,7 +2493,7 @@ static void gen_stmt(F *f, Stmt *s){
         case STMT_CONTINUE: if(!f->nloops) cg_fail(s->line,"'continue' outside a loop"); leave_tries(f,loop_tries(f)); E(f,"jmp L%d",f->loops[f->nloops-1].lcont); break;
         case STMT_TRY: gen_try(f,s); break;
         case STMT_RETURN:{
-            Ty *rt_=ty_find(f->fn->ret);
+            Ty *rt_=ty_find(f->ret);
             if(s->expr){
                 Expr *e=aot_expr(u,&s->expr);
                 if(rt_->k==TY_VOID){ int o=gen(f,e); drop_value(f,TY(e),o); }
@@ -2243,33 +2549,623 @@ static void gen_stmt(F *f, Stmt *s){
                 E(f,"mov eax,[ebp%+d]",slots[i]); E(f,"mov dword [ebp%+d],0",slots[i]); CALLRT(f,"rt_decref"); }
             break; }
         case STMT_IMPORT: case STMT_FROM_IMPORT: gen_import(f,s); break;
-        case STMT_PASS: case STMT_GLOBAL: case STMT_FUNCTION_DEF: case STMT_CLASS_DEF: break;
+        case STMT_FUNCTION_DEF:
+            if(s->expr2){                                /* decorated: name = d1(d2(function)) */
+                if(is_fn_body(f->fn) && ((AFunc*)s->aux)->unused) break;
+                gen_owned(f,s->expr2); store_var(f,find_var(f,s->name,s->line));
+            } else if(is_fn_body(f->fn)){                /* a nested def: its closure into its variable */
+                AFunc *inner=(AFunc*)s->aux;
+                if(inner->unused) break;
+                AVar *v=find_var(f,s->name,s->line);
+                int o=gen_funcref(f,inner); if(!o) incref(f);
+                store_var(f,v);
+            }
+            break;
+        case STMT_CLASS_DEF:                             /* decorated methods: Class.name = decorators(method) */
+            for(int i=0;i<f->fn->mod->syms.n;i++){ ASym *x=&f->fn->mod->syms.v[i];
+                if(x->kind!=AS_CLASS || strcmp(x->name,s->name)) continue;
+                AClass *cls=(AClass*)x->p;
+                for(int k=0;k<cls->nmethods;k++){ AFunc *m=cls->methods[k];
+                    if(m->decovar){ gen_owned(f,m->def->expr2); store_var(f,m->decovar); } }
+            }
+            break;
+        case STMT_YIELD:{
+            Ty *yt=f->fn->yield_ty;
+            if(!s->expr){ int o=gen_zero(f,yt); if(is_ptr(yt)&&!o) incref(f); gen_yield_value(f,yt); break; }
+            Expr *e=aot_expr(u,&s->expr);
+            if(s->block_tag==7){                          /* yield from: each item */
+                Iter I; iter_begin(f,e,&I);
+                iter_value(f,&I,0); if(is_ptr(I.elem)) incref(f); conv(f,I.elem,yt);
+                gen_yield_value(f,yt);
+                iter_end(f,&I); LBL(f,I.exit); iter_release(f,&I);
+                break;
+            }
+            gen_as(f,e,yt,1); gen_yield_value(f,yt);
+            break; }
+        case STMT_NONLOCAL: case STMT_PASS: case STMT_GLOBAL: break;
         default: cg_fail(s->line,"unsupported statement");
     }
+    f->live_after=NULL;
     scope_close(f,mark);
 }
 static void gen_stmts(F *f, Stmt **b, int n){ for(int i=0;i<n;i++) gen_stmt(f,b[i]); }
 
 /* ---------------------------------------------------------------- functions and classes */
 
+/* ---------------------------------------------------------------- reference counts the compiler can drop
+   A loop variable normally holds a reference of its own to the current item
+   (incref when it takes the item, decref when it moves on). It can simply
+   borrow the item from the container when the container keeps every item
+   alive for the whole loop: nobody else can reach it (a fresh list, a fresh
+   generator), it cannot change (str, tuple), or the loop's body cannot remove
+   anything from any container (no user code runs, no pop/remove/del/x[i]=...).
+   The variable must also be used only inside the loops that bind it. */
+
+static int fmt_pure(Ty *t){                      /* formatting t runs no user code (__str__/__repr__) */
+    t=ty_find(t);
+    switch(t->k){
+        case TY_OBJ: for(AClass *c=t->cls;c;c=c->base) for(int i=0;i<c->nmethods;i++)
+                         if(!strcmp(c->methods[i]->name,"__str__")||!strcmp(c->methods[i]->name,"__repr__")) return 0;
+                     return 1;
+        case TY_DICT: return fmt_pure(ty_dkey(t)) && fmt_pure(t->elem);
+        case TY_LIST: case TY_SET: return fmt_pure(t->elem);
+        case TY_TUPLE: for(int i=0;i<t->nelems;i++) if(!fmt_pure(t->elems[i])) return 0; return 1;
+        default: return 1;
+    }
+}
+static int iterates_code(Ty *t){ t=ty_find(t); return t->k==TY_GEN||t->k==TY_OBJ; }   /* iterating it runs user code */
+static int pure_expr(Expr *e);
+static int pure_exprs(Expr **v, int n){ for(int i=0;i<n;i++) if(!pure_expr(v[i])) return 0; return 1; }
+static int pure_call(Expr *e){
+    XInfo *xi=xinfo(e);
+    if(!pure_exprs(e->items,e->count)) return 0;
+    const char *n=xi->name?xi->name:"";
+    switch(xi->kind){
+        case X_BUILTIN:
+            if(!strcmp(n,"next")) return 0;
+            if(!strcmp(n,"len") && xi->fn) return 0;                     /* __len__ */
+            if((!strcmp(n,"str")||!strcmp(n,"repr")||!strcmp(n,"format")) && e->count && !fmt_pure(TY(e->items[0]))) return 0;
+            if(xi->key){ if(e->a && xi->key->kind==EXPR_LAMBDA) { if(!pure_expr(xi->key->a)) return 0; } else if(strcmp(n,"reduce")) return 0; }
+            if(!strcmp(n,"reduce") && !pure_expr(xi->key)) return 0;
+            for(int i=0;i<e->count;i++) if(TY(e->items[i])->k==TY_GEN) return 0;   /* draining a generator runs its code */
+            return 1;
+        case X_TMETHOD:{
+            static const char *removing[]={"pop","remove","clear","discard","update",NULL};
+            for(int i=0;removing[i];i++) if(!strcmp(n,removing[i])) return 0;
+            if(!strcmp(n,"sort") && xi->key && (xi->key->kind!=EXPR_LAMBDA || !pure_expr(xi->key->a))) return 0;
+            if(!strcmp(n,"format")) for(int i=0;i<e->count;i++) if(!fmt_pure(TY(e->items[i]))) return 0;
+            return pure_expr(e->a->a); }
+        case X_SYS: case X_SYSCALL: return 1;
+        case X_BMOD: return pure_expr(e->a);
+        case X_CTOR: return !xi->fn && xi->cls && aot_is_exception(xi->cls) && (!e->count || fmt_pure(TY(e->items[0])));
+        default: return 0;                                              /* user code */
+    }
+}
+static int pure_expr(Expr *e){
+    if(!e) return 1;
+    XInfo *xi=(XInfo*)e->ty;
+    XKind k=xi?xi->kind:X_NONE;
+    switch(e->kind){
+        case EXPR_LITERAL: case EXPR_TRUE: case EXPR_FALSE: case EXPR_NONE: case EXPR_NAME: case EXPR_LAMBDA: return 1;
+        case EXPR_UNARY: return k!=X_OPMETHOD && pure_expr(e->a);
+        case EXPR_BINARY:
+            if(k==X_OPMETHOD) return 0;
+            if(e->op==T_PERCENT && TY(e)->k==TY_STR){
+                if(e->b->kind==EXPR_TUPLE){ for(int i=0;i<e->b->count;i++) if(!fmt_pure(TY(e->b->items[i]))) return 0; }
+                else if(!fmt_pure(TY(e->b))) return 0; }
+            return pure_expr(e->a) && pure_expr(e->b);
+        case EXPR_BOOL: return pure_expr(e->a) && pure_expr(e->b);
+        case EXPR_COMPARE: if(xi && xi->cmpfn) for(int i=0;i<e->count;i++) if(xi->cmpfn[i]) return 0;
+            return pure_exprs(e->items,e->count);
+        case EXPR_TERNARY: return pure_expr(e->a) && pure_expr(e->b) && pure_expr(e->c);
+        case EXPR_ATTRIBUTE: return k!=X_PROP && pure_expr(e->a);
+        case EXPR_INDEX: return k!=X_OPMETHOD && pure_expr(e->a) && pure_expr(e->b);
+        case EXPR_SLICE: return pure_expr(e->a) && pure_expr(e->b) && pure_expr(e->c) && pure_expr(e->d);
+        case EXPR_LIST: case EXPR_SET: case EXPR_TUPLE: return pure_exprs(e->items,e->count);
+        case EXPR_DICT: return pure_exprs(e->items,e->count) && pure_exprs(e->vals,e->count);
+        case EXPR_COMPREHENSION:
+            if(e->comp_kind=='G') return pure_expr(e->clauses[0].iter);       /* making the generator runs nothing else */
+            for(int i=0;i<e->nclause;i++){ CompClause *cl=&e->clauses[i];
+                if(!pure_expr(cl->iter) || iterates_code(TY(cl->iter)) || !pure_exprs(cl->conds,cl->ncond)) return 0; }
+            return pure_expr(e->a) && pure_expr(e->b);
+        case EXPR_CALL: return pure_call(e);
+        default: return 0;
+    }
+}
+static int pure_stmts(AotUnit *u, Stmt **b, int n);
+static int pure_target(Expr *t){
+    switch(t->kind){
+        case EXPR_NAME: return 1;
+        case EXPR_ATTRIBUTE: return xinfo(t)->kind!=X_PROP && pure_expr(t->a);   /* a field's old value goes, items stay */
+        case EXPR_TUPLE: case EXPR_LIST: for(int i=0;i<t->count;i++) if(!pure_target(t->items[i])) return 0; return 1;
+        default: return 0;                                                     /* x[i] = ... replaces an item */
+    }
+}
+static int pure_stmt(AotUnit *u, Stmt *s){
+    switch(s->kind){
+        case STMT_EXPR:{
+            APrint *pr=aot_print(u,s);
+            if(pr){ for(int i=0;i<pr->n;i++){ if(!pure_expr(pr->args[i])) return 0;
+                        Ty *t=TY(pr->args[i]); if(pr->star[i]){ if(iterates_code(t)) return 0; t=ty_find(t)->k==TY_TUPLE?t:ty_find(t)->elem; }
+                        if(!fmt_pure(t)) return 0; }
+                    return pure_expr(pr->sep) && pure_expr(pr->end); }
+            if(aot_is_annotation_only(u,s)) return 1;
+            return pure_expr(s->expr); }
+        case STMT_ASSIGN:{ AAssign *a=aot_assign(u,s);
+            for(int k=0;k<a->ntarget;k++) if(!pure_target(a->target[k])) return 0;
+            if(a->opfn) return 0;
+            return pure_expr(a->value); }
+        case STMT_IF: case STMT_WHILE: return pure_expr(s->expr) && pure_stmts(u,s->body,s->body_count) && pure_stmts(u,s->orelse,s->orelse_count);
+        case STMT_FOR:{ Expr *it=s->expr; XInfo *xi=xinfo(it);
+            if(xi->kind==X_BUILTIN && (!strcmp(xi->name,"enumerate")||!strcmp(xi->name,"zip"))){ for(int i=0;i<it->count;i++) if(iterates_code(TY(it->items[i]))) return 0; }
+            else if(!(xi->kind==X_TMETHOD && !strcmp(xi->name,"items")) && iterates_code(TY(it))) return 0;
+            return pure_expr(it) && pure_stmts(u,s->body,s->body_count) && pure_stmts(u,s->orelse,s->orelse_count); }
+        case STMT_RETURN: case STMT_ASSERT: case STMT_RAISE: return pure_expr(s->expr) && pure_expr(s->expr2);
+        case STMT_TRY: case STMT_BLOCK: return pure_stmts(u,s->body,s->body_count) && pure_stmts(u,s->orelse,s->orelse_count);
+        case STMT_WITH:{ AWith *w=aot_with(u,s); for(int i=0;i<w->n;i++) if(!pure_expr(w->e[i])) return 0; return pure_stmts(u,s->body,s->body_count); }
+        case STMT_PASS: case STMT_BREAK: case STMT_CONTINUE: case STMT_GLOBAL: case STMT_NONLOCAL: return 1;
+        case STMT_FUNCTION_DEF: return s->expr2==NULL;
+        default: return 0;                                                     /* yield (the consumer runs), del, ... */
+    }
+}
+static int pure_stmts(AotUnit *u, Stmt **b, int n){ for(int i=0;i<n;i++) if(!pure_stmt(u,b[i])) return 0; return 1; }
+
+/* an expression giving a new object nothing else refers to */
+static int fresh_expr(Expr *e){
+    switch(e->kind){
+        case EXPR_COMPREHENSION: case EXPR_LIST: case EXPR_SET: case EXPR_DICT: case EXPR_TUPLE: case EXPR_SLICE: return 1;
+        case EXPR_BINARY: return xinfo(e)->kind!=X_OPMETHOD && TY(e)->k==TY_LIST;
+        case EXPR_CALL:{ XInfo *xi=xinfo(e); const char *n=xi->name?xi->name:"";
+            if(xi->kind==X_BUILTIN){ static const char *fresh[]={"sorted","list","set","reversed","range_list","dict_copy",NULL};
+                for(int i=0;fresh[i];i++) if(!strcmp(n,fresh[i])) return 1; return 0; }
+            if(xi->kind==X_TMETHOD){ static const char *fresh[]={"split","splitlines","keys","values","items","copy","union","intersection","difference","readlines",NULL};
+                for(int i=0;fresh[i];i++) if(!strcmp(n,fresh[i])) return 1; return 0; }
+            return (xi->kind==X_FUNC||xi->kind==X_METHOD||xi->kind==X_STATIC||xi->kind==X_CALLNEST||xi->kind==X_SUPER) && xi->fn && xi->fn->is_gen; }
+        default: return 0;
+    }
+}
+/* the items of x stay alive for the whole loop, whatever the loop does */
+static int src_safe(Expr *x){
+    Ty *t=TY(x);
+    if(t->k==TY_STR||t->k==TY_TUPLE||t->k==TY_FILE) return 1;              /* static 1-char strings; immutable; a fresh list of lines */
+    if(t->k==TY_OBJ) return 0;
+    return fresh_expr(x);
+}
+static int iter_safe(Expr *it){
+    XInfo *xi=xinfo(it);
+    if(xi->kind==X_BUILTIN && (!strcmp(xi->name,"range")||!strcmp(xi->name,"reversed_range"))) return 1;
+    if(xi->kind==X_BUILTIN && (!strcmp(xi->name,"enumerate")||!strcmp(xi->name,"zip"))) return src_safe(it->items[0]) && (xi->name[0]=='e' || src_safe(it->items[1]));
+    if(xi->kind==X_TMETHOD && !strcmp(xi->name,"items") && ty_find(xi->ty)->k==TY_VOID) return src_safe(it->a->a);
+    return src_safe(it);
+}
+
+typedef struct { AFunc *fn; AotUnit *u; char *only, *ok; AVar *stack[64]; int nstack; } Plan;
+static int plan_index(Plan *pl, AVar *v){ return v && !v->src && !v->global && v->owner==pl->fn && v->id>=0 && v->id<pl->fn->nvars && pl->fn->vars[v->id]==v ? v->id : -1; }
+static int plan_active(Plan *pl, AVar *v){ for(int i=0;i<pl->nstack;i++) if(pl->stack[i]==v) return 1; return 0; }
+static void plan_use(Plan *pl, AVar *v){ int i=plan_index(pl,v); if(i>=0 && !plan_active(pl,v)) pl->only[i]=0; }
+static void plan_store(Plan *pl, AVar *v){ int i=plan_index(pl,v); if(i>=0) pl->only[i]=0; }
+static void plan_expr(Plan *pl, Expr *e);
+/* loop variables vars (n), bound per item; safe: the items stay alive meanwhile; then the body */
+static void plan_bind(Plan *pl, AVar **vars, int n, int safe){
+    for(int k=0;k<n;k++){ int i=plan_index(pl,vars[k]); if(i<0) continue;
+        if(plan_active(pl,vars[k])) pl->only[i]=0;                              /* bound again inside its own loop */
+        if(!safe) pl->ok[i]=0; }
+    for(int k=0;k<n && pl->nstack<64;k++) pl->stack[pl->nstack++]=vars[k];
+}
+static void plan_comp(Plan *pl, Expr *e){                                       /* a comprehension's clauses, then its items */
+    XInfo *xi=xinfo(e); int save=pl->nstack;
+    for(int i=0;i<e->nclause;i++){ CompClause *cl=&e->clauses[i];
+        plan_expr(pl,cl->iter);
+        int safe=iter_safe(cl->iter);
+        if(!safe){ safe=pure_expr(e->a) && pure_expr(e->b);                    /* the rest of the comprehension runs per item */
+            for(int k=i;k<e->nclause && safe;k++){ CompClause *c2=&e->clauses[k];
+                if(!pure_exprs(c2->conds,c2->ncond) || (k>i && (!pure_expr(c2->iter) || iterates_code(TY(c2->iter))))) safe=0; } }
+        plan_bind(pl,&xi->cvars[2*i],cl->nvars,safe);
+        for(int k=0;k<cl->ncond;k++) plan_expr(pl,cl->conds[k]);
+    }
+    plan_expr(pl,e->a); plan_expr(pl,e->b);
+    pl->nstack=save;
+}
+static void plan_expr(Plan *pl, Expr *e){
+    if(!e) return;
+    XInfo *xi=(XInfo*)e->ty;
+    switch(e->kind){
+        case EXPR_NAME: if(xi && xi->kind==X_VAR) plan_use(pl,xi->var); return;
+        case EXPR_LAMBDA: return;                                               /* its own function */
+        case EXPR_COMPREHENSION:
+            if(e->comp_kind=='G'){ if(xi->key) plan_expr(pl,e->clauses[0].iter); return; }   /* the rest is the generator's function */
+            plan_comp(pl,e); return;
+        case EXPR_CALL:
+            plan_expr(pl,e->a);
+            for(int i=0;i<e->count;i++) plan_expr(pl,e->items[i]);
+            if(xi && xi->key && xi->key->kind==EXPR_LAMBDA && xinfo(xi->key)->var){  /* key=lambda k: ...: k takes each item */
+                int save=pl->nstack; AVar *kv=xinfo(xi->key)->var;
+                plan_bind(pl,&kv,1,pure_expr(xi->key->a));
+                plan_expr(pl,xi->key->a); pl->nstack=save; }
+            else if(xi && xi->key && xi->kind==X_BUILTIN && xi->name && !strcmp(xi->name,"reduce")){
+                int save=pl->nstack;
+                plan_store(pl,xi->cvars[0]);                                    /* the accumulator takes results */
+                plan_bind(pl,&xi->cvars[1],1,pure_expr(xi->key));               /* the item: one per element */
+                plan_expr(pl,xi->key); pl->nstack=save; }
+            else if(xi && xi->key) plan_expr(pl,xi->key);
+            if(xi && xi->rev) plan_expr(pl,xi->rev);
+            return;
+        default:
+            plan_expr(pl,e->a); plan_expr(pl,e->b); plan_expr(pl,e->c); plan_expr(pl,e->d);
+            for(int i=0;i<e->count;i++) plan_expr(pl,e->items[i]);
+            for(int i=0;i<e->vcount;i++) plan_expr(pl,e->vals[i]);
+            return;
+    }
+}
+static void plan_target(Plan *pl, Expr *t){
+    if(t->kind==EXPR_NAME){ XInfo *xi=(XInfo*)t->ty; if(xi && xi->var) plan_store(pl,xi->var); else plan_store(pl,NULL); return; }
+    if(t->kind==EXPR_TUPLE||t->kind==EXPR_LIST){ for(int i=0;i<t->count;i++) plan_target(pl,t->items[i]); return; }
+    plan_expr(pl,t->a); plan_expr(pl,t->b);
+}
+static void plan_stmts(Plan *pl, F *f, Stmt **b, int n);
+static void plan_stmt(Plan *pl, F *f, Stmt *s){
+    AotUnit *u=pl->u;
+    switch(s->kind){
+        case STMT_EXPR:{ APrint *pr=aot_print(u,s);
+            if(pr){ for(int i=0;i<pr->n;i++) plan_expr(pl,pr->args[i]); plan_expr(pl,pr->sep); plan_expr(pl,pr->end); return; }
+            if(aot_is_annotation_only(u,s)){ AAssign *a=aot_assign(u,s); for(int k=0;k<a->ntarget;k++) plan_target(pl,a->target[k]); return; }
+            plan_expr(pl,s->expr); return; }
+        case STMT_ASSIGN:{ AAssign *a=aot_assign(u,s);
+            for(int k=0;k<a->ntarget;k++){ plan_target(pl,a->target[k]); if(a->aug) plan_expr(pl,a->target[k]); }
+            plan_expr(pl,a->value); return; }
+        case STMT_FOR:{
+            Expr *it=s->expr; plan_expr(pl,it);
+            AVar *vars[16]; int n=s->param_count<16?s->param_count:16;
+            for(int k=0;k<n;k++) vars[k]=find_var(f,s->params[k],s->line);
+            int safe=iter_safe(it) || (pure_stmts(u,s->body,s->body_count) && pure_stmts(u,s->orelse,s->orelse_count));
+            int save=pl->nstack;
+            plan_bind(pl,vars,n,safe);
+            plan_stmts(pl,f,s->body,s->body_count); plan_stmts(pl,f,s->orelse,s->orelse_count);
+            pl->nstack=save; return; }
+        case STMT_WITH:{ AWith *w=aot_with(u,s);
+            for(int i=0;i<w->n;i++){ plan_expr(pl,w->e[i]); if(w->as[i]) plan_store(pl,find_var(f,w->as[i],s->line)); }
+            plan_stmts(pl,f,s->body,s->body_count); return; }
+        case STMT_FUNCTION_DEF:
+            if(s->expr2) plan_expr(pl,s->expr2);
+            if(is_fn_body(f->fn)) plan_store(pl,find_var(f,s->name,s->line));
+            return;
+        case STMT_TRY:
+            plan_stmts(pl,f,s->body,s->body_count);
+            for(int i=0;i<s->orelse_count;i++){ Stmt *b=s->orelse[i]; if(b->name && b->aux) plan_store(pl,(AVar*)b->aux); plan_stmts(pl,f,b->body,b->body_count); }
+            return;
+        case STMT_YIELD: case STMT_RETURN: case STMT_RAISE: case STMT_IF: case STMT_WHILE: case STMT_ASSERT: case STMT_DEL: case STMT_BLOCK:
+            if(s->expr && s->expr->kind!=EXPR_TOKEN_RANGE) plan_expr(pl,s->expr);
+            if(s->kind==STMT_DEL){ ADel *d=aot_del(u,s); for(int i=0;i<d->n;i++) plan_expr(pl,d->t[i]); }
+            if(s->expr2 && s->expr2->kind!=EXPR_TOKEN_RANGE) plan_expr(pl,s->expr2);
+            plan_stmts(pl,f,s->body,s->body_count); plan_stmts(pl,f,s->orelse,s->orelse_count); return;
+        default: return;
+    }
+}
+static void plan_stmts(Plan *pl, F *f, Stmt **b, int n){ for(int i=0;i<n;i++) plan_stmt(pl,f,b[i]); }
+/* decide which of fn's loop variables borrow their items */
+static void plan_borrowed(F *f){
+    AFunc *fn=f->fn; if(!fn->nvars) return;
+    Plan pl; memset(&pl,0,sizeof pl); pl.fn=fn; pl.u=fn->mod->unit;
+    pl.only=(char*)xmalloc((size_t)fn->nvars); pl.ok=(char*)xmalloc((size_t)fn->nvars);
+    for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i]; Ty *t=ty_find(v->ty);
+        pl.only[i]=pl.ok[i]=(i>=fn->nparams && is_ptr(t) && t->k!=TY_FUNC && !v->cell && !v->captured); }
+    if(fn->lam) plan_expr(&pl,fn->lam->a);
+    else if(fn->genexp){                                                         /* its clauses: the body yields (anything may run) */
+        Expr *e=fn->genexp; XInfo *xi=xinfo(e); int save=pl.nstack;
+        for(int i=0;i<e->nclause;i++){ CompClause *cl=&e->clauses[i];
+            Expr *it=(i==0&&xi->key)?xi->key:cl->iter; plan_expr(&pl,it);
+            plan_bind(&pl,&xi->cvars[2*i],cl->nvars,iter_safe(it));
+            for(int k=0;k<cl->ncond;k++) plan_expr(&pl,cl->conds[k]); }
+        plan_expr(&pl,e->a); pl.nstack=save;
+    }
+    else plan_stmts(&pl,f,fn->body,fn->nbody);
+    for(int i=0;i<fn->nvars;i++) fn->vars[i]->borrowed=pl.only[i] && pl.ok[i];
+    free(pl.only); free(pl.ok);
+}
+/* ---- moves: a local variable's reference handed over on its last use ----
+   Backward liveness over the function's statements (loops to a fixpoint)
+   gives, after each simple statement, the variables still read later. Where
+   an owned value is wanted (y = x, return x, xs.append(x), yield x) and x is
+   dead after the statement and occurs in it once, x's reference moves: the
+   slot is cleared instead of an incref now and a decref later. */
+typedef struct LiveTab { Stmt **keys; unsigned **vals; int cap, n, W; } LiveTab;
+static unsigned **live_slot(LiveTab *t, Stmt *s){
+    if(t->n*2>=t->cap){
+        Stmt **ok=t->keys; unsigned **ov=t->vals; int oc=t->cap;
+        t->cap=t->cap?t->cap*2:64; t->n=0;
+        t->keys=(Stmt**)memset(xmalloc(sizeof(Stmt*)*(size_t)t->cap),0,sizeof(Stmt*)*(size_t)t->cap);
+        t->vals=(unsigned**)memset(xmalloc(sizeof(unsigned*)*(size_t)t->cap),0,sizeof(unsigned*)*(size_t)t->cap);
+        for(int i=0;i<oc;i++) if(ok[i]) *live_slot(t,ok[i])=ov[i];
+        free(ok); free(ov);
+    }
+    unsigned h=(unsigned)(((uintptr_t)s>>4)*2654435761u)&(unsigned)(t->cap-1);
+    while(t->keys[h] && t->keys[h]!=s) h=(h+1)&(unsigned)(t->cap-1);
+    if(!t->keys[h]){ t->keys[h]=s; t->vals[h]=NULL; t->n++; }
+    return &t->vals[h];
+}
+static unsigned *live_get(LiveTab *t, Stmt *s){
+    if(!t || !t->cap) return NULL;
+    unsigned h=(unsigned)(((uintptr_t)s>>4)*2654435761u)&(unsigned)(t->cap-1);
+    while(t->keys[h]){ if(t->keys[h]==s) return t->vals[h]; h=(h+1)&(unsigned)(t->cap-1); }
+    return NULL;
+}
+typedef struct { AFunc *fn; AotUnit *u; LiveTab *tab; int W; unsigned *brk[64], *cont[64]; int nloop; } Live;
+static unsigned *bs_new(Live *L){ unsigned *b=(unsigned*)xmalloc(sizeof(unsigned)*(size_t)L->W); memset(b,0,sizeof(unsigned)*(size_t)L->W); return b; }
+static unsigned *bs_dup(Live *L, unsigned *a){ unsigned *b=bs_new(L); memcpy(b,a,sizeof(unsigned)*(size_t)L->W); return b; }
+static void bs_or(Live *L, unsigned *a, unsigned *b){ for(int i=0;i<L->W;i++) a[i]|=b[i]; }
+static int bs_eq(Live *L, unsigned *a, unsigned *b){ return !memcmp(a,b,sizeof(unsigned)*(size_t)L->W); }
+static int live_index(Live *L, AVar *v){ return v && !v->src && !v->global && v->owner==L->fn && v->id>=0 && v->id<L->fn->nvars && L->fn->vars[v->id]==v ? v->id : -1; }
+static void live_uses(Live *L, Expr *e, unsigned *set){
+    if(!e || e->kind==EXPR_TOKEN_RANGE) return;
+    XInfo *xi=(XInfo*)e->ty;
+    if(e->kind==EXPR_NAME){ if(xi && xi->kind==X_VAR){ int i=live_index(L,xi->var); if(i>=0) set[i>>5]|=1u<<(i&31); } return; }
+    if(e->kind==EXPR_LAMBDA) return;                         /* its own function (captured variables never move) */
+    if(e->kind==EXPR_COMPREHENSION){ for(int i=0;i<e->nclause;i++){ live_uses(L,e->clauses[i].iter,set); for(int k=0;k<e->clauses[i].ncond;k++) live_uses(L,e->clauses[i].conds[k],set); } }
+    live_uses(L,e->a,set); live_uses(L,e->b,set); live_uses(L,e->c,set); live_uses(L,e->d,set);
+    for(int i=0;i<e->count;i++) live_uses(L,e->items[i],set);
+    for(int i=0;i<e->vcount;i++) live_uses(L,e->vals[i],set);
+    if(e->kind==EXPR_CALL && xi){ live_uses(L,xi->key,set); live_uses(L,xi->rev,set); }
+}
+static void live_kill(Live *L, AVar *v, unsigned *set){ int i=live_index(L,v); if(i>=0) set[i>>5]&=~(1u<<(i&31)); }
+static void live_target(Live *L, Expr *t, unsigned *kill, unsigned *use){   /* names assigned; the rest of a target is read */
+    if(t->kind==EXPR_NAME){ XInfo *xi=(XInfo*)t->ty; if(xi && xi->var){ int i=live_index(L,xi->var); if(i>=0) kill[i>>5]|=1u<<(i&31); } return; }
+    if(t->kind==EXPR_TUPLE||t->kind==EXPR_LIST){ for(int i=0;i<t->count;i++) live_target(L,t->items[i],kill,use); return; }
+    live_uses(L,t->a,use); live_uses(L,t->b,use);
+}
+static void live_stmts(Live *L, F *f, Stmt **b, int n, unsigned *live);
+static void live_stmt(Live *L, F *f, Stmt *s, unsigned *live){
+    AotUnit *u=L->u;
+    switch(s->kind){
+        case STMT_ASSIGN:{
+            *live_slot(L->tab,s)=bs_dup(L,live);
+            AAssign *a=aot_assign(u,s); if(!a->value) return;
+            unsigned *kill=bs_new(L), *use=bs_new(L);
+            for(int k=0;k<a->ntarget;k++){ live_target(L,a->target[k],kill,use); if(a->aug) live_uses(L,a->target[k],use); }
+            if(!a->aug) for(int i=0;i<L->W;i++) live[i]&=~kill[i];
+            live_uses(L,a->value,use); bs_or(L,live,use); free(kill); free(use); return; }
+        case STMT_EXPR:{
+            *live_slot(L->tab,s)=bs_dup(L,live);
+            APrint *pr=aot_print(u,s);
+            if(pr){ for(int i=0;i<pr->n;i++) live_uses(L,pr->args[i],live); live_uses(L,pr->sep,live); live_uses(L,pr->end,live); return; }
+            if(aot_is_annotation_only(u,s)) return;
+            live_uses(L,s->expr,live); return; }
+        case STMT_RETURN:
+            memset(live,0,sizeof(unsigned)*(size_t)L->W);
+            *live_slot(L->tab,s)=bs_dup(L,live);
+            live_uses(L,s->expr,live); return;
+        case STMT_YIELD: *live_slot(L->tab,s)=bs_dup(L,live); live_uses(L,s->expr,live); return;
+        case STMT_RAISE: memset(live,0,sizeof(unsigned)*(size_t)L->W); live_uses(L,s->expr,live); return;
+        case STMT_ASSERT: case STMT_DEL:
+            if(s->kind==STMT_DEL){ ADel *d=aot_del(u,s); for(int i=0;i<d->n;i++) live_uses(L,d->t[i],live); }
+            else { live_uses(L,s->expr,live); live_uses(L,s->expr2,live); }
+            return;
+        case STMT_IF:{
+            unsigned *el=bs_dup(L,live);
+            live_stmts(L,f,s->orelse,s->orelse_count,el); live_stmts(L,f,s->body,s->body_count,live);
+            bs_or(L,live,el); free(el); live_uses(L,s->expr,live); return; }
+        case STMT_WHILE: case STMT_FOR:{
+            unsigned *after=bs_dup(L,live), *head=bs_new(L);
+            AVar *vars[16]; int nv=0;
+            if(s->kind==STMT_FOR) for(int k=0;k<s->param_count && k<16;k++) vars[nv++]=find_var(f,s->params[k],s->line);
+            for(int round=0;round<64;round++){
+                if(L->nloop<64){ L->brk[L->nloop]=after; L->cont[L->nloop]=head; } L->nloop++;
+                unsigned *bd=bs_dup(L,head); live_stmts(L,f,s->body,s->body_count,bd);
+                for(int k=0;k<nv;k++) live_kill(L,vars[k],bd);
+                unsigned *el=bs_dup(L,after); live_stmts(L,f,s->orelse,s->orelse_count,el);
+                L->nloop--;
+                bs_or(L,bd,el); if(s->kind==STMT_WHILE) live_uses(L,s->expr,bd);
+                int same=bs_eq(L,bd,head); free(el); free(head); head=bd;
+                if(same) break;
+            }
+            memcpy(live,head,sizeof(unsigned)*(size_t)L->W);
+            if(s->kind==STMT_FOR) live_uses(L,s->expr,live);
+            free(head); free(after); return; }
+        case STMT_BREAK: if(L->nloop>0 && L->nloop<=64) memcpy(live,L->brk[L->nloop-1],sizeof(unsigned)*(size_t)L->W); return;
+        case STMT_CONTINUE: if(L->nloop>0 && L->nloop<=64) memcpy(live,L->cont[L->nloop-1],sizeof(unsigned)*(size_t)L->W); return;
+        case STMT_TRY:{                     /* no moves inside; before it: what the body, the handlers and finally read */
+            unsigned *fin=bs_dup(L,live), *all=bs_new(L);
+            Stmt *finb=NULL, *elb=NULL;
+            for(int i=0;i<s->orelse_count;i++){ Stmt *b=s->orelse[i]; if(b->block_tag==3) finb=b; else if(b->block_tag==2) elb=b; }
+            if(finb) live_stmts(L,f,finb->body,finb->body_count,fin);
+            bs_or(L,all,fin);
+            for(int i=0;i<s->orelse_count;i++){ Stmt *b=s->orelse[i]; if(b->block_tag!=1) continue;
+                unsigned *h=bs_dup(L,fin); live_stmts(L,f,b->body,b->body_count,h); bs_or(L,all,h); free(h); }
+            unsigned *bd=bs_dup(L,fin);
+            if(elb) live_stmts(L,f,elb->body,elb->body_count,bd);
+            bs_or(L,bd,all); live_stmts(L,f,s->body,s->body_count,bd); bs_or(L,bd,all);
+            memcpy(live,bd,sizeof(unsigned)*(size_t)L->W); free(bd); free(fin); free(all); return; }
+        case STMT_WITH:{ AWith *w=aot_with(u,s);
+            live_stmts(L,f,s->body,s->body_count,live);
+            for(int i=0;i<w->n;i++){ if(w->as[i]) live_kill(L,find_var(f,w->as[i],s->line),live); live_uses(L,w->e[i],live); }
+            return; }
+        case STMT_FUNCTION_DEF:
+            if(is_fn_body(f->fn)) live_kill(L,find_var(f,s->name,s->line),live);
+            if(s->expr2) live_uses(L,s->expr2,live);
+            return;
+        default: return;
+    }
+}
+static void live_stmts(Live *L, F *f, Stmt **b, int n, unsigned *live){ for(int i=n-1;i>=0;i--) live_stmt(L,f,b[i],live); }
+static void plan_moves(F *f){
+    AFunc *fn=f->fn;
+    if(!fn->def || !fn->nvars) return;
+    Live L; memset(&L,0,sizeof L); L.fn=fn; L.u=fn->mod->unit; L.W=(fn->nvars+31)/32;
+    f->live=MPY_NEW0(LiveTab); L.tab=f->live;
+    unsigned *live=bs_new(&L);
+    live_stmts(&L,f,fn->body,fn->nbody,live);
+    free(live);
+}
+/* occurrences of the movable variables in a statement's expressions (2: several, or evaluated repeatedly) */
+static void occ_count(F *f, Expr *e, int repeat){
+    if(!e || e->kind==EXPR_TOKEN_RANGE) return;
+    XInfo *xi=(XInfo*)e->ty;
+    if(e->kind==EXPR_NAME){ if(xi && xi->kind==X_VAR){ AVar *v=xi->var; if(v->owner==f->fn && !v->src && !v->global && v->id>=0 && v->id<f->fn->nvars && f->fn->vars[v->id]==v){
+            int c=f->occ[v->id]+(repeat?2:1); f->occ[v->id]=(unsigned char)(c>2?2:c); } } return; }
+    if(e->kind==EXPR_LAMBDA) return;
+    if(e->kind==EXPR_COMPREHENSION){
+        for(int i=0;i<e->nclause;i++){ occ_count(f,e->clauses[i].iter,repeat||(i>0)||e->comp_kind=='G'); for(int k=0;k<e->clauses[i].ncond;k++) occ_count(f,e->clauses[i].conds[k],1); }
+        occ_count(f,e->a,1); occ_count(f,e->b,1); return; }
+    occ_count(f,e->a,repeat); occ_count(f,e->b,repeat); occ_count(f,e->c,repeat); occ_count(f,e->d,repeat);
+    for(int i=0;i<e->count;i++) occ_count(f,e->items[i],repeat);
+    for(int i=0;i<e->vcount;i++) occ_count(f,e->vals[i],repeat);
+    if(e->kind==EXPR_CALL && xi){ occ_count(f,xi->key,1); occ_count(f,xi->rev,repeat); }
+}
+static void occ_target(F *f, Expr *t){
+    if(t->kind==EXPR_NAME) return;
+    if(t->kind==EXPR_TUPLE||t->kind==EXPR_LIST){ for(int i=0;i<t->count;i++) occ_target(f,t->items[i]); return; }
+    occ_count(f,t->a,0); occ_count(f,t->b,0);
+}
+/* entering simple statement s: may its variables move? */
+static void moves_begin(F *f, Stmt *s){
+    f->live_after=NULL;
+    if(!f->live || f->ntries) return;
+    unsigned *la=live_get(f->live,s); if(!la) return;
+    AotUnit *u=f->fn->mod->unit;
+    if(!f->occ) f->occ=(unsigned char*)xmalloc((size_t)f->fn->nvars+1);
+    memset(f->occ,0,(size_t)f->fn->nvars+1);
+    switch(s->kind){
+        case STMT_ASSIGN:{ AAssign *a=aot_assign(u,s); if(!a->value) return;
+            for(int k=0;k<a->ntarget;k++){ occ_target(f,a->target[k]); if(a->aug) occ_count(f,a->target[k],0); }
+            occ_count(f,a->value,0); break; }
+        case STMT_EXPR:{ APrint *pr=aot_print(u,s);
+            if(pr){ for(int i=0;i<pr->n;i++) occ_count(f,pr->args[i],0); occ_count(f,pr->sep,0); occ_count(f,pr->end,0); }
+            else if(!aot_is_annotation_only(u,s)) occ_count(f,s->expr,0);
+            break; }
+        case STMT_RETURN: case STMT_YIELD: occ_count(f,s->expr,0); break;
+        default: return;
+    }
+    f->live_after=la;
+}
+/* the owned value of x: its reference itself when this is x's last use */
+static int try_move(F *f, Expr *e){
+    if(!f->live_after || e->kind!=EXPR_NAME) return 0;
+    XInfo *xi=(XInfo*)e->ty; if(!xi || xi->kind!=X_VAR) return 0;
+    AVar *v=xi->var; AFunc *fn=f->fn;
+    if(v->owner!=fn || v->src || v->global || v->cell || v->captured || v->borrowed || (v->id<fn->nparams && !v->consumed) || v->id>=fn->nvars || fn->vars[v->id]!=v) return 0;
+    if(!is_ptr(v->ty) || f->occ[v->id]!=1 || (f->live_after[v->id>>5]>>(v->id&31))&1) return 0;
+    E(f,"mov eax,[ebp%+d]",v->offset); E(f,"and dword [ebp%+d],0",v->offset);   /* moved */
+    return 1;
+}
+/* ---- parameters a function keeps ----
+   A function whose top-level statement stores a parameter away for good
+   (self.x = x, items[k] = x, xs.append(x), return x) as the parameter's last
+   use takes it owned: callers hand temporaries over (no incref there, no
+   decref after the call) and increfs move from the callee to the caller.
+   Only for functions every call of which is direct (not values, not virtual,
+   not operators, coroutines or generators). */
+static int has_return(Stmt **b, int n){
+    for(int i=0;i<n;i++){ Stmt *s=b[i]; if(s->kind==STMT_RETURN) return 1;
+        if(s->kind!=STMT_FUNCTION_DEF && (has_return(s->body,s->body_count)||has_return(s->orelse,s->orelse_count))) return 1; }
+    return 0;
+}
+static int consumes_param(Expr *v, AVar *p){ XInfo *xi=v?(XInfo*)v->ty:NULL; return v && v->kind==EXPR_NAME && xi && xi->kind==X_VAR && xi->var==p; }
+static void plan_consumed(AFunc *fn){
+    if(!fn->def || fn->value_used || fn->ndeco || fn->is_async || fn->is_gen || fn->is_property || fn->overridden || fn->outer) return;
+    if(fn->cls){
+        if(!strncmp(fn->name,"__",2) && strcmp(fn->name,"__init__")) return;   /* operators, __str__, __iter__ ...: called from the runtime */
+        if(fn->cls->base && aot_find_method(fn->cls->base,fn->name)) return;    /* overrides: called through the vtable */
+    }
+    int any=0; for(int i=0;i<fn->nparams;i++){ AVar *v=fn->params[i]; if(is_ptr(v->ty) && !v->cell && !v->captured && !v->nbind && i!=fn->star && i!=fn->dstar) any=1; }
+    if(!any) return;
+    F tmp; memset(&tmp,0,sizeof tmp); tmp.fn=fn;
+    plan_moves(&tmp);
+    AotUnit *u=fn->mod->unit;
+    for(int k=0;k<fn->nbody;k++){ Stmt *s=fn->body[k];
+        unsigned *la=live_get(tmp.live,s); if(!la) continue;
+        for(int i=0;i<fn->nparams;i++){ AVar *p=fn->params[i];
+            if(!is_ptr(p->ty) || p->cell || p->captured || p->nbind || i==fn->star || i==fn->dstar || (la[i>>5]>>(i&31))&1) continue;
+            if(i==0 && fn->cls && !fn->is_static) continue;                       /* self is always lent */
+            int keep=0;
+            if(s->kind==STMT_ASSIGN){ AAssign *a=aot_assign(u,s);
+                if(a->value && !a->aug && a->ntarget==1 && consumes_param(a->value,p) && (a->target[0]->kind==EXPR_ATTRIBUTE||a->target[0]->kind==EXPR_INDEX)) keep=1; }
+            else if(s->kind==STMT_EXPR && !aot_print(u,s) && !aot_is_annotation_only(u,s)){ Expr *e=s->expr; XInfo *xi=(XInfo*)e->ty;
+                if(e->kind==EXPR_CALL && xi && xi->kind==X_TMETHOD && !strcmp(xi->name,"append") && e->count==1 && consumes_param(e->items[0],p)) keep=1; }
+            else if(s->kind==STMT_RETURN && consumes_param(s->expr,p)) keep=1;
+            if(!keep) continue;
+            tmp.occ=NULL; tmp.live_after=NULL; moves_begin(&tmp,s);              /* it must be its only occurrence there */
+            if(tmp.live_after && tmp.occ[i]==1 && !p->consumed)
+                p->consumed=has_return(fn->body,k)?1:2;                              /* 2: always handed on before any exit */
+            free(tmp.occ);
+        }
+    }
+}
+/* yield: the value (owned) into the generator, then back to its consumer */
+static void gen_yield_value(F *f, Ty *yt){
+    E(f,"mov ecx,[rt_cur_gen]");
+    if(is_flt(yt)) E(f,"fstp qword [ecx+24]");
+    else if(is_ptr(yt)){ rt("rt_decref"); E(f,"xchg eax,[ecx+24]"); E(f,"call rt_decref"); }
+    else E(f,"mov [ecx+24],eax");
+    CALLRT(f,"rt_gen_yield");
+}
+static void iter_begin(F *f, Expr *it, Iter *I);
+/* the function of a generator expression: its loops, yielding each element */
+static void gen_genexp_body(F *f, AFunc *fn){
+    Expr *e=fn->genexp; XInfo *xi=xinfo(e);
+    Iter its[8]; int n=e->nclause;
+    if(n>8) cg_fail(e->line,"too many for clauses");
+    for(int i=0;i<n;i++){
+        CompClause *cl=&e->clauses[i];
+        iter_begin(f,(i==0&&xi->key)?xi->key:cl->iter,&its[i]);
+        iter_store_vars(f,&its[i],&xi->cvars[2*i],cl->nvars);
+        for(int k=0;k<cl->ncond;k++) gen_jump(f,cl->conds[k],its[i].cont,0);
+    }
+    int mark=scope_open(f);
+    gen_as(f,e->a,fn->yield_ty,1); gen_yield_value(f,fn->yield_ty);
+    scope_close(f,mark);
+    for(int i=n-1;i>=0;i--){ iter_end(f,&its[i]); LBL(f,its[i].exit); iter_release(f,&its[i]); }
+}
 static void emit_function(AFunc *fn){
     F *f=MPY_NEW0(F); f->fn=fn; f->lret=new_label();
+    f->ret=fn->is_gen ? TY_VOID_T : fn->ret;
     cg_path=fn->mod->unit->path?fn->mod->unit->path:fn->mod->name;
-    int off=8;
-    for(int i=0;i<fn->nparams;i++){ fn->params[i]->offset=off; off+=esize(fn->params[i]->ty); }
-    if(fn->def) for(int i=fn->nparams;i<fn->nvars;i++){ AVar *v=fn->vars[i]; v->offset=frame_slot(f,esize(v->ty)); if(is_ptr(v->ty)) add_ref_slot(f,v->offset); }
-    gen_stmts(f,fn->body,fn->nbody);
-    Ty *ret=ty_find(fn->ret);
-    if(ret->k!=TY_VOID){ int o=gen_zero(f,ret); if(is_ptr(ret)&&!o) incref(f); }   /* falling off the end returns None */
-    for(int i=0;i<fn->nparams;i++) if(f->param_stored[i] && is_ptr(fn->params[i]->ty)) add_ref_slot(f,fn->params[i]->offset);
+    int off=8, argpos[16];
+    for(int i=0;i<fn->nparams;i++){ fn->params[i]->offset=argpos[i]=off; off+=esize(fn->params[i]->ty); }
+    int argbytes=off-8;
+    if(fn->ncaps){ layout_caps(fn); f->env=frame_slot(f,4); }
+    if(is_fn_body(fn)){
+        if(!getenv("MPY_NO_BORROW")) plan_borrowed(f);
+        if(!getenv("MPY_NO_MOVE")) plan_moves(f);
+        for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i];
+            if(i<fn->nparams && !v->cell) continue;
+            if(v->cell){ v->offset=frame_slot(f,4); add_ref_slot(f,v->offset); }
+            else { v->offset=frame_slot(f,esize(v->ty)); if(is_ptr(v->ty) && !v->borrowed) add_ref_slot(f,v->offset); }
+        }
+    }
+    if(fn->lam){                                          /* lambda: return its expression */
+        Expr *b=fn->lam->a; Ty *r=ty_find(fn->ret); int mark=scope_open(f);
+        if(r->k==TY_VOID){ if(b->kind!=EXPR_NONE){ int o=gen(f,b); drop_value(f,TY(b),o); } } else gen_as(f,b,r,1);
+        if(f->tmp_used>mark){ if(!is_flt(r) && r->k!=TY_VOID) E(f,"push eax"); scope_close(f,mark); if(!is_flt(r) && r->k!=TY_VOID) E(f,"pop eax"); }
+    } else if(fn->genexp) gen_genexp_body(f,fn);
+    else {
+        gen_stmts(f,fn->body,fn->nbody);
+        Ty *ret=ty_find(f->ret);
+        if(ret->k!=TY_VOID){ int o=gen_zero(f,ret); if(is_ptr(ret)&&!o) incref(f); }   /* falling off the end returns None */
+    }
+    Ty *ret=ty_find(f->ret);
+    for(int i=0;i<fn->nparams;i++){ Ty *pt=fn->params[i]->ty;
+        if(!is_ptr(pt)) continue;
+        if(fn->is_gen || fn->params[i]->consumed==1) add_ref_slot(f,argpos[i]);   /* a generator owns its arguments; so does a function keeping one */
+        else if(f->param_stored[i] && !fn->params[i]->cell) add_ref_slot(f,argpos[i]); }
 
     Buf *o=&gg->text;
-    buf_printf(o,"\n; %s%s%s()\nF%d:\n",fn->cls?fn->cls->name:"",fn->cls?".":"",fn->def?fn->name:"<module>",fn->id);
+    const char *kind=fn->lam?"<lambda>":fn->genexp?"<genexpr>":fn->def?fn->name:"<module>";
+    buf_printf(o,"\n; %s%s%s()%s\n%s%d:\n",fn->cls?fn->cls->name:"",fn->cls?".":"",kind,fn->is_gen?": the generator's function":"",fn->is_gen?"GB":"F",fn->id);
     buf_printf(o,"        push ebp\n        mov ebp,esp\n        push ebx\n        push esi\n        push edi\n");
     int words=(f->frame+3)/4;
     if(words<=8) for(int i=0;i<words;i++) buf_printf(o,"        push 0\n");
     else buf_printf(o,"        sub esp,%d\n        mov edi,esp\n        mov ecx,%d\n        xor eax,eax\n        rep stosd\n",words*4,words);
-    for(int i=0;i<fn->nparams;i++) if(f->param_stored[i] && is_ptr(fn->params[i]->ty)){ rt("rt_incref"); buf_printf(o,"        mov eax,[ebp%+d]\n        call rt_incref\n",fn->params[i]->offset); }
+    if(f->env) buf_printf(o,"        mov [ebp%+d],edx\n",f->env);
+    if(!fn->is_gen) for(int i=0;i<fn->nparams;i++) if(f->param_stored[i] && is_ptr(fn->params[i]->ty) && !fn->params[i]->cell && !fn->params[i]->consumed){ rt("rt_incref"); buf_printf(o,"        mov eax,[ebp%+d]\n        call rt_incref\n",argpos[i]); }
+    for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i]; if(!v->cell) continue;   /* cells of the variables closures share */
+        rt("rt_cell_new"); rt("rt_incref");
+        buf_printf(o,"        mov eax,%d\n        call rt_cell_new\n",is_ptr(v->ty)?1:0);
+        if(i<fn->nparams){
+            if(is_flt(v->ty)) buf_printf(o,"        fld qword [ebp%+d]\n        fstp qword [eax+8]\n",argpos[i]);
+            else { buf_printf(o,"        mov ecx,[ebp%+d]\n        mov [eax+8],ecx\n",argpos[i]);
+                if(is_ptr(v->ty)) buf_printf(o,"        push eax\n        mov eax,ecx\n        call rt_incref\n        pop eax\n"); }
+        }
+        buf_printf(o,"        mov [ebp%+d],eax\n",v->offset);
+    }
     buf_cat(o,&f->code);
     buf_printf(o,"L%d:\n",f->lret);
     if(f->nrefs){
@@ -2280,7 +3176,73 @@ static void emit_function(AFunc *fn){
         if(keep) buf_printf(o,"        pop eax\n");
     }
     buf_printf(o,"        lea esp,[ebp-12]\n        pop edi\n        pop esi\n        pop ebx\n        pop ebp\n        ret\n");
+    if(fn->is_gen){                                       /* F<id> makes the generator: arguments and closure kept in it */
+        Ty *yt=ty_find(fn->yield_ty);
+        rt("rt_gen_new"); rt("rt_gen_next"); rt("rt_incref");
+        buf_printf(&gg->data,"align 4\nGD%d dd GB%d,%d,%d",fn->id,fn->id,(is_ptr(yt)?1:0)|(is_flt(yt)?2:0),f->nrefs);
+        for(int i=0;i<f->nrefs;i++) buf_printf(&gg->data,",%d",f->refs[i]);
+        buf_printf(&gg->data,"   ; generator %s\n",kind);
+        buf_printf(o,"F%d:                            ; %s(): a new generator\n",fn->id,kind);
+        buf_printf(o,"        push ebx\n        mov ebx,edx\n        mov eax,%d\n        mov edx,GD%d\n        call rt_gen_new\n        push eax\n        mov ecx,[eax+36]\n",argbytes,fn->id);
+        for(int w=0;w<argbytes;w+=4) buf_printf(o,"        mov edx,[esp+%d]\n        mov [ecx+%d],edx\n",12+w,w);
+        for(int i=0;i<fn->nparams;i++) if(is_ptr(fn->params[i]->ty)) buf_printf(o,"        mov eax,[esp+%d]\n        call rt_incref\n",12+argpos[i]-8);
+        if(fn->ncaps) buf_printf(o,"        mov eax,ebx\n        call rt_incref\n        mov ecx,[esp]\n        mov [ecx+44],ebx\n");
+        buf_printf(o,"        pop eax\n        pop ebx\n        ret\n");
+    }
     free(f->code.s); free(f->tmp); free(f->refs); free(f);
+}
+static int adapter_index(Ty *to, Ty *from){
+    for(int i=0;i<gg->nadapters;i++) if(ty_same(gg->adapters[i].to,to) && ty_same(gg->adapters[i].from,from)) return i;
+    if(gg->nadapters==gg->cadapters){ gg->cadapters=gg->cadapters?gg->cadapters*2:4; gg->adapters=xrealloc(gg->adapters,sizeof(*gg->adapters)*(size_t)gg->cadapters); }
+    gg->adapters[gg->nadapters].to=to; gg->adapters[gg->nadapters].from=from;
+    rt("rt_alloc"); rt("rt_incref"); rt("rt_decref"); rt("rt_free");
+    return gg->nadapters++;
+}
+/* AD<k>: called as `to`, calls the function at [env+16] (a `from`, which takes *args) */
+static void emit_adapter(int k){
+    Ty *to=gg->adapters[k].to, *from=gg->adapters[k].from;
+    F ff; memset(&ff,0,sizeof ff); F *f=&ff;
+    int star=1, dstar=(from->tup>>1)&1, nreg=from->nelems-star-dstar, toff[16], foff[17], tot=0, a=8;
+    for(int i=0;i<to->nelems;i++){ toff[i]=a; a+=esize(to->elems[i]); }
+    for(int i=0;i<from->nelems;i++){ foff[i]=tot; tot+=i<nreg?esize(from->elems[i]):4; }
+    Ty *sel=from->elems[nreg];
+    buf_printf(&f->code,"\nAD%d:                          ; %s as %s\n",k,ty_name(from),ty_name(to));
+    E(f,"push ebp"); E(f,"mov ebp,esp"); E(f,"push ebx"); E(f,"push esi"); E(f,"push edi"); E(f,"mov ebx,edx");
+    E(f,"mov eax,%s",list_destroy(sel)); CALLRT(f,"rt_list_new"); E(f,"mov esi,eax");
+    for(int i=nreg;i<to->nelems;i++){ Ty *pt=to->elems[i];
+        E(f,"push esi"); load_mem(f,pt,"ebp",toff[i]); if(is_ptr(pt)) incref(f); conv_num(f,pt,sel); list_append_top(f,sel); E(f,"add esp,4"); }
+    E(f,"xor edi,edi");
+    if(dstar){ Ty *dt=ty_dict(TY_STR_T,from->elems[nreg+1]); new_dict(f,dt); E(f,"mov edi,eax"); }
+    if(tot) E(f,"sub esp,%d",tot);
+    for(int i=0;i<nreg;i++){ Ty *pt=from->elems[i]; load_mem(f,to->elems[i],"ebp",toff[i]); conv_num(f,to->elems[i],pt); put_arg(f,pt,foff[i]); }
+    E(f,"mov [esp+%d],esi",foff[nreg]);
+    if(dstar) E(f,"mov [esp+%d],edi",foff[nreg+1]);
+    E(f,"mov edx,[ebx+16]"); E(f,"call dword [edx+8]");
+    if(tot) E(f,"add esp,%d",tot);
+    E(f,"push eax"); E(f,"mov eax,esi"); CALLRT(f,"rt_decref"); E(f,"mov eax,edi"); CALLRT(f,"rt_decref"); E(f,"pop eax");
+    E(f,"pop edi"); E(f,"pop esi"); E(f,"pop ebx"); E(f,"pop ebp"); E(f,"ret");
+    buf_cat(&gg->text,&f->code); free(f->code.s);
+}
+/* BM<id>: the code of method m's bound values: the object (+16) first, then the arguments */
+static void emit_bound_method(AFunc *m){
+    Buf *o=&gg->text; int argbytes=0;
+    for(int i=1;i<m->nparams;i++) argbytes+=esize(m->params[i]->ty);
+    buf_printf(o,"\nBM%d:                          ; %s.%s bound to an object\n        push ebp\n        mov ebp,esp\n        sub esp,%d\n        mov eax,[edx+16]\n        mov [esp],eax\n",m->id,m->cls?m->cls->name:"",m->name,argbytes+4);
+    for(int w=0;w<argbytes;w+=4) buf_printf(o,"        mov ecx,[ebp+%d]\n        mov [esp+%d],ecx\n",8+w,4+w);
+    if(m->overridden) buf_printf(o,"        mov eax,[eax+8]\n        call dword [eax+%d]\n",8+4*m->vslot);
+    else buf_printf(o,"        call F%d\n",m->id);
+    buf_printf(o,"        leave\n        ret\n");
+}
+/* CD<id>: destroy routine of fn's closures */
+static void emit_closure_destroy(AFunc *fn){
+    Buf *o=&gg->text; int any=0;
+    rt("rt_free"); rt("rt_decref");
+    buf_printf(o,"\nCD%d:                          ; destroy a closure of %s\n",fn->id,fn->lam?"<lambda>":fn->genexp?"<genexpr>":fn->name);
+    for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; if(!root_var(v)->cell && !is_ptr(v->ty)) continue;
+        if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
+        buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",v->capoff); }
+    if(any) buf_printf(o,"        mov eax,ebx\n        pop ebx\n");
+    buf_printf(o,"        jmp rt_free\n");
 }
 
 static void emit_class(AClass *c){
@@ -2324,19 +3286,31 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     g.p=p; g.target=opt->target; g.stack=opt->stack_size?opt->stack_size:65536;
     g.rt=aot_rt_new(opt->target);
     g.class_used=(int*)xmalloc(sizeof(int)*(size_t)(p->nclasses+1)); memset(g.class_used,0,sizeof(int)*(size_t)(p->nclasses+1));
+    g.fv_used=(char*)xmalloc((size_t)p->nfuncs+1); memset(g.fv_used,0,(size_t)p->nfuncs+1);
+    g.cd_used=(char*)xmalloc((size_t)p->nfuncs+1); memset(g.cd_used,0,(size_t)p->nfuncs+1);
+    g.bm_used=(char*)xmalloc((size_t)p->nfuncs+1); memset(g.bm_used,0,(size_t)p->nfuncs+1);
     AFunc *main_body=p->mods[0]->body;
     use_fn(main_body);
     rt("rt_exit");
-    int nf=0, ns=0;
-    for(;;){                                   /* functions, formatters and task entries pull in more of each other */
+    if(!getenv("MPY_NO_CONSUME")) for(int i=0;i<p->nfuncs;i++) if(!p->funcs[i]->unused) plan_consumed(p->funcs[i]);
+    int nf=0, ns=0, na=0;
+    for(;;){                                   /* functions, formatters, task entries and adapters pull in more of each other */
         int progress=0;
         for(int i=0;i<g.nq;i++) if(g.queue[i]){ AFunc *fn=g.queue[i]; g.queue[i]=NULL; emit_function(fn); progress=1; }
         for(;nf<g.nfmts;nf++){ emit_formatter(nf); progress=1; }
         for(;ns<g.nstubs;ns++){ emit_task_stub(ns); progress=1; }
+        for(;na<g.nadapters;na++){ emit_adapter(na); progress=1; }
         if(!progress) break;
     }
+    for(int i=0;i<p->nfuncs;i++) if(g.bm_used[i]) emit_bound_method(p->funcs[i]);
+    if(g.nadapters || memchr(g.bm_used,1,(size_t)p->nfuncs)){ rt("rt_decref"); rt("rt_free"); }
+    if(g.nadapters || memchr(g.bm_used,1,(size_t)p->nfuncs)) buf_printf(&g.text,"\nADFREE:                        ; destroy an adapter\n        push eax\n        mov eax,[eax+16]\n        call rt_decref\n        pop eax\n        jmp rt_free\n");
+    for(int i=0;i<p->nfuncs;i++){
+        if(g.cd_used[i]) emit_closure_destroy(p->funcs[i]);
+        if(g.fv_used[i]) buf_printf(&g.data,"align 4\nFV%d dd 0x40000000,rt_static,F%d,S%d   ; %s as a value\n",i,i,str_lit(fn_display_name(p->funcs[i])),fn_display_name(p->funcs[i]));
+    }
     if(aot_rt_used(g.rt,"rt_throw")){                   /* run-time errors raise built-in exceptions */
-        static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError",NULL};
+        static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError","StopIteration","TypeError",NULL};
         rt("rt_raise_builtin");
         for(int k=0;rtexc[k];k++) for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !strcmp(p->classes[i]->name,rtexc[k])){
             use_class(p->classes[i]);
@@ -2351,13 +3325,15 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     Buf o; memset(&o,0,sizeof o);
     int heap=aot_rt_used(g.rt,"rt_os_alloc")||aot_rt_used(g.rt,"rt_con_open");
     buf_printf(&o,"; generated by minipy --compile from %s\n",p->mods[0]->unit->path?p->mods[0]->unit->path:"?");
+    const char *report="";
+    if(opt->count_allocs && aot_rt_used(g.rt,"rt_alloc")){ rt("rt_live_report"); report="        call rt_live_report\n"; buf_printf(&g.data,"RT_COUNT_ALLOCS = 1\n"); }
     if(g.target==AOT_TARGET_LINUX){
         buf_printf(&o,"format ELF executable 3\nentry start\n\nsegment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
-        buf_printf(&o,"        call F%d\n        xor ebx,ebx\n        jmp rt_exit\n",main_body->id);
+        buf_printf(&o,"        call F%d\n%s        xor ebx,ebx\n        jmp rt_exit\n",main_body->id,report);
     } else {
         buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,0,0\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
         if(heap) buf_printf(&o,"        mov eax,68\n        mov ebx,11\n        int 0x40\n");
-        buf_printf(&o,"        call F%d\n        xor ebx,ebx\n        jmp rt_exit\n",main_body->id);
+        buf_printf(&o,"        call F%d\n%s        xor ebx,ebx\n        jmp rt_exit\n",main_body->id,report);
     }
     buf_cat(&o,&g.text);
     buf_printf(&o,"\n; ---- runtime\n");

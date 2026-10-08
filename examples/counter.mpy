@@ -1,0 +1,30 @@
+# A KolibriOS window described with decorators:
+#   minipy --compile --target kolibri examples/counter.mpy
+from kui import Window
+
+win = Window("Counter", 100, 100, 260, 160)
+count = 0
+
+@win.on_paint
+def paint() -> None:
+    win.bar(20, 30, 220, 20, 0x334455)
+    win.text(24, 36, "Count: " + str(count))
+
+@win.button("+1", x=20, y=80)
+def increment() -> None:
+    global count
+    count += 1
+    win.redraw()
+
+@win.button("Reset", x=140, y=80)
+def reset() -> None:
+    global count
+    count = 0
+    win.redraw()
+
+@win.on_key("q")
+def leave() -> None:
+    win.close()
+
+win.run()
+print("final count:", count)

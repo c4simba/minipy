@@ -1,0 +1,104 @@
+# kui - a small decorator-based UI toolkit for KolibriOS (typed: minipy --compile).
+#
+#   win = Window("Counter", 100, 100, 260, 160)
+#
+#   @win.button("+1", x=20, y=80)        # a button and what pressing it does
+#   def increment() -> None: ...
+#
+#   @win.on_key("q")                      # a key
+#   def leave() -> None:
+#       win.close()
+#
+#   @win.on_paint                         # drawing on every redraw
+#   def paint() -> None:
+#       win.text(20, 30, "hello")
+#
+#   win.run()                             # the event loop, until close()
+#
+# Everything ends up as KolibriOS system calls (sys.syscall -> int 0x40):
+# https://wiki.kolibrios.org/wiki/SysFn
+import sys
+from typing import Callable
+
+def _pk(hi: int, lo: int) -> int:
+    return (hi << 16) | (lo & 0xFFFF)          # a coordinate pair in one register
+
+class Button:
+    def __init__(self, ident: int, label: str, x: int, y: int, w: int, h: int, color: int, handler: Callable[[], None]):
+        self.ident = ident
+        self.label = label
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.color = color
+        self.handler = handler
+
+class Window:
+    def __init__(self, title: str, x: int, y: int, w: int, h: int, color: int = 0x223344):
+        self.title = title
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.color = color
+        self.buttons: list[Button] = []
+        self.keys: dict[int, Callable[[], None]] = {}
+        self.painters: list[Callable[[], None]] = []
+        self.running = True
+
+    # ---- decorators: describe the window ----
+    def button(self, label: str, x: int, y: int, w: int = 100, h: int = 30, color: int = 0x5588CC):
+        def register(handler: Callable[[], None]) -> Callable[[], None]:
+            self.buttons.append(Button(len(self.buttons) + 2, label, x, y, w, h, color, handler))   # id 1 is the close box
+            return handler
+        return register
+
+    def on_key(self, key: str):
+        def register(handler: Callable[[], None]) -> Callable[[], None]:
+            self.keys[ord(key)] = handler
+            return handler
+        return register
+
+    def on_paint(self, painter: Callable[[], None]) -> Callable[[], None]:
+        self.painters.append(painter)
+        return painter
+
+    # ---- drawing (inside a paint handler) ----
+    def text(self, x: int, y: int, s: str, color: int = 0xFFFFFF) -> None:
+        sys.syscall(4, _pk(x, y), color & 0xFFFFFF, s, len(s))      # fn 4: text
+
+    def bar(self, x: int, y: int, w: int, h: int, color: int) -> None:
+        sys.syscall(13, _pk(x, w), _pk(y, h), color & 0xFFFFFF)     # fn 13: filled rectangle
+
+    # ---- running ----
+    def close(self) -> None:
+        self.running = False
+
+    def redraw(self) -> None:
+        sys.syscall(12, 1)                                          # fn 12.1: redraw begins
+        sys.syscall(0, _pk(self.x, self.w), _pk(self.y, self.h), 0x14000000 | (self.color & 0xFFFFFF), 0, self.title)
+        for b in self.buttons:
+            sys.syscall(8, _pk(b.x, b.w), _pk(b.y, b.h), b.ident, b.color & 0xFFFFFF)
+            self.text(b.x + 10, b.y + b.h // 2 - 4, b.label)
+        for paint in self.painters:
+            paint()
+        sys.syscall(12, 2)                                          # fn 12.2: redraw ends
+
+    def run(self) -> None:
+        self.redraw()
+        while self.running:
+            event = sys.syscall(10)[0]                              # fn 10: wait for an event
+            if event == 1:                                          # the window needs repainting
+                self.redraw()
+            elif event == 2:                                        # a key: al = 0, ah = its code
+                key = sys.syscall(2)[0]
+                if key & 0xFF == 0 and (key >> 8) & 0xFF in self.keys:
+                    self.keys[(key >> 8) & 0xFF]()
+            elif event == 3:                                        # a button: its id above bit 8
+                ident = sys.syscall(17)[0] >> 8
+                if ident == 1:
+                    self.close()
+                for b in self.buttons:
+                    if b.ident == ident:
+                        b.handler()

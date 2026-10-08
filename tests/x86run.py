@@ -211,9 +211,13 @@ class Emu:
 
     # A headless desktop: window calls are logged, events come from X86RUN_EVENTS
     # ("1,3" by default: redraw, then a press of button 1 - the close box).
+    # An event may carry what it delivers: "3:2" presses button 2, "2:113" key 'q'.
     def gui(self, a, b, c, d, si, di):
         if not hasattr(self, 'events'):
-            self.events = [int(x) for x in os.environ.get('X86RUN_EVENTS', '1,3').split(',') if x]
+            self.events = []
+            for x in os.environ.get('X86RUN_EVENTS', '1,3').split(','):
+                if x: code, _, arg = x.partition(':'); self.events.append((int(code), int(arg) if arg else None))
+            self.button, self.key = 1, None
         def log(text): os.write(1, ('[gui] ' + text + '\n').encode())
         if a == 12: log('redraw %s' % ('begin' if b == 1 else 'end')); return None
         if a == 0: log('window x=%d w=%d y=%d h=%d style=%#x caption=%r' % (b >> 16, b & 0xFFFF, c >> 16, c & 0xFFFF, d, self.cstr(di) if di else '')); return None
@@ -223,10 +227,15 @@ class Emu:
         if a == 71: log('title %r' % self.cstr(c)); return None
         if a in (10, 11, 23):
             self.shell_poll()
-            if self.events: return self.events.pop(0)
-            raise Exit(3)                                    # out of scripted events
-        if a == 17: return 1 << 8                            # the pressed button: 1
-        if a == 2: return 1                                  # no key
+            if not self.events: raise Exit(3)                # out of scripted events
+            code, arg = self.events.pop(0)
+            if code == 3: self.button = arg if arg is not None else 1
+            if code == 2: self.key = arg
+            return code
+        if a == 17: return self.button << 8                  # the pressed button (1 unless the event says)
+        if a == 2:                                           # the key: al = 0, ah = its code (1: none)
+            k, self.key = self.key, None
+            return 1 if k is None else k << 8
         return False
 
     def f70(self, info):

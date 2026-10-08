@@ -15,7 +15,7 @@ Expr *expr_new_range(int start,int end,int line){
 }
 Stmt *stmt_new(StmtKind k,const char *name,int line,int start){
     Stmt *s=(Stmt*)xmalloc(sizeof(Stmt)); memset(s,0,sizeof(Stmt));
-    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; s->star_index=-1; s->dstar_index=-1; return s;
+    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; s->star_index=-1; s->dstar_index=-1; s->kwonly_index=-1; return s;
 }
 void stmt_add_body(Stmt *s,Stmt *child){
     if(!child) return;
@@ -39,9 +39,11 @@ void stmt_set_annotation(Stmt *s,int param,Expr *e){
         s->annotation_cap=n; }
     s->annotations[param]=e;
 }
-void stmt_add_decorator(Stmt *s,const char *name){
+void stmt_add_decorator(Stmt *s,const char *name,Expr *e){
     if(!name) return;
-    if(s->decorator_count==s->decorator_cap){ s->decorator_cap=s->decorator_cap?s->decorator_cap*2:4; s->decorators=(char**)xrealloc(s->decorators,sizeof(char*)*(size_t)s->decorator_cap); }
+    if(s->decorator_count==s->decorator_cap){ s->decorator_cap=s->decorator_cap?s->decorator_cap*2:4; s->decorators=(char**)xrealloc(s->decorators,sizeof(char*)*(size_t)s->decorator_cap);
+        s->decorator_exprs=(Expr**)xrealloc(s->decorator_exprs,sizeof(Expr*)*(size_t)s->decorator_cap); }
+    s->decorator_exprs[s->decorator_count]=e;
     s->decorators[s->decorator_count++]=xstrdup2(name);
 }
 SymScope *scope_new(SymScopeKind k,const char *name,int line){

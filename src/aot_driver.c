@@ -40,6 +40,7 @@ static void usage(const char *program){
         "  --fasm-args A    fasm arguments, {in} {out} {dir} replaced  [env MPY_FASM_ARGS]\n"
         "  --stack BYTES    kolibri: application stack size (default 65536)\n"
         "  -v               print the commands being run\n"
+        "  --count-allocs   debugging: the program reports its live heap blocks at exit\n"
         "Compiled programs are statically typed: every variable, parameter, field and\n"
         "container element keeps one type (annotated or inferred), None is the zero\n"
         "value of that type, and imports must be at the top of a module.\n",
@@ -60,7 +61,7 @@ static AotUnit *add_unit(Units *us, const char *name, const char *path, char *sr
     return u;
 }
 static int is_builtin_module(const char *name){
-    static const char *mods[]={"sys","thread","asyncio","math","time","random",NULL};
+    static const char *mods[]={"sys","thread","asyncio","math","time","random","typing","functools","__future__","collections","collections.abc",NULL};
     for(int i=0;mods[i];i++) if(!strcmp(mods[i],name)) return 1;
     return 0;
 }
@@ -75,7 +76,7 @@ static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line
         int leaf=(dot==NULL);
         if(!find_unit(us,prefix)){
             if(is_builtin_module(prefix)){
-                if(!leaf){ fprintf(stderr,"%s:%d: error: built-in module '%s' has no submodules\n",from->path,line,prefix); ok=0; }
+                if(!leaf && strcmp(dotted,"collections.abc")){ fprintf(stderr,"%s:%d: error: built-in module '%s' has no submodules\n",from->path,line,prefix); ok=0; }
             } else {
                 char *path=mpy_fs_module_path(dir,prefix), *err=NULL;
                 char *src=mpy_fs_try_read_file(path,&err);
@@ -189,6 +190,7 @@ static int run_tool(const char *program, const char *args, const char *option, i
 int aot_main(int argc, char **argv, const char *program){
     const char *src_path=NULL, *out=NULL, *fasm=getenv("MPY_FASM"), *fasm_tmpl=getenv("MPY_FASM_ARGS");
     int only_asm=0, verbose=0; unsigned stack=0;
+    int count_allocs=0;
 #if defined(MPY_KOLIBRI)
     AotTarget target=AOT_TARGET_KOLIBRI;
 #else
@@ -206,6 +208,7 @@ int aot_main(int argc, char **argv, const char *program){
         else if(!strcmp(a,"--fasm-args")){ if(!(fasm_tmpl=NEXT())) return 2; }
         else if(!strcmp(a,"--stack")){ const char *v=NEXT(); if(!v) return 2; stack=(unsigned)strtoul(v,NULL,0); }
         else if(!strcmp(a,"-v")) verbose=1;
+        else if(!strcmp(a,"--count-allocs")) count_allocs=1;
         else if(!strcmp(a,"-h")||!strcmp(a,"--help")){ usage(program); return 0; }
         else if(a[0]=='-'){ fprintf(stderr,"minipy: unknown option '%s'\n",a); usage(program); return 2; }
         else if(!src_path) src_path=a;
@@ -224,7 +227,7 @@ int aot_main(int argc, char **argv, const char *program){
     for(int i=0;i<us.n;i++) if(us.v[i]->ast && !scan_imports(&us,us.v[i])) return 1;
 
     /* 2. types, then one listing for the whole program */
-    AotCodegenOptions co; co.target=target; co.stack_size=stack;
+    AotCodegenOptions co; co.target=target; co.stack_size=stack; co.count_allocs=count_allocs;
     char *listing=NULL; size_t len=0;
     if(aot_compile(&co,us.v,us.n,&listing,&len)) return 1;
     char *base=out?xstrdup2(out):strip_ext(src_path);

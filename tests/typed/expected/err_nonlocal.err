@@ -1,0 +1,1 @@
+err_nonlocal.mpy:3: error: no binding for nonlocal 'missing' in an enclosing function
