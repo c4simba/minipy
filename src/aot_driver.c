@@ -224,7 +224,9 @@ static int run_tool(const char *program, const char *args, const char *option, i
 
 /* ---------------------------------------------------------------- entry */
 
+int capi_main(int argc, char **argv);
 int aot_main(int argc, char **argv, const char *program){
+    for(int i=0;i+1<argc;i++) if(!strcmp(argv[i],"--target") && !strcmp(argv[i+1],"cpython")) return capi_main(argc,argv);   /* capi_driver.c */
     const char *src_path=NULL, *out=NULL, *fasm=getenv("MPY_FASM"), *fasm_tmpl=getenv("MPY_FASM_ARGS");
     const char *cc=getenv("MPY_CC"), *cc_tmpl=getenv("MPY_CC_ARGS");
     int only_asm=0, verbose=0; unsigned stack=0;

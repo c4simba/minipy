@@ -19,7 +19,7 @@ HOST_TARGET ?= minipy
 
 CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
            compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread \
-           vm_stdlib aot_driver aot_types aot_codegen aot_rtlib aot_x2c main
+           vm_stdlib aot_driver aot_types aot_codegen aot_rtlib aot_x2c py_lex py_parse py_dump capi_sym capi_codegen capi_driver main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
 
@@ -31,6 +31,8 @@ INCLUDES = -Isrc -I$(BUILD_DIR)/gen
 RTLIB_INC = $(BUILD_DIR)/gen/aot_rtlib.inc
 # ... and the start of the C programs of the macos target (src/aot_x2c.c)
 X2C_INC = $(BUILD_DIR)/gen/aot_x2c_rt.inc
+# ... and the runtime and build-time helper of the cpython target (src/capi_driver.c)
+CAPI_INC = $(BUILD_DIR)/gen/capi_helper.inc $(BUILD_DIR)/gen/capi_rt_c.inc $(BUILD_DIR)/gen/capi_rt_h.inc
 
 .PHONY: all test test-update test-typed clean kolibrios kolibrios-debug clean-kolibri debug
 
@@ -41,6 +43,16 @@ $(RTLIB_INC): src/aot_rtlib.asm
 	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
 
 $(X2C_INC): src/aot_x2c_rt.c
+	@mkdir -p $(dir $@)
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
+
+$(BUILD_DIR)/gen/capi_helper.inc: src/capi_helper.py
+	@mkdir -p $(dir $@)
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
+$(BUILD_DIR)/gen/capi_rt_c.inc: src/capi_rt.c
+	@mkdir -p $(dir $@)
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
+$(BUILD_DIR)/gen/capi_rt_h.inc: src/capi_rt.h
 	@mkdir -p $(dir $@)
 	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
 
@@ -55,6 +67,7 @@ HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLAT
 
 $(BUILD_DIR)/host/aot_rtlib.o: $(RTLIB_INC)
 $(BUILD_DIR)/host/aot_x2c.o: $(X2C_INC)
+$(BUILD_DIR)/host/capi_driver.o: $(CAPI_INC)
 
 $(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -109,6 +122,7 @@ KOS_OBJ = $(addprefix $(KOS_BUILD_DIR)/,$(addsuffix .o,$(CORE_SRC) $(KOLIBRI_PLA
 
 $(KOS_BUILD_DIR)/aot_rtlib.o: $(RTLIB_INC)
 $(KOS_BUILD_DIR)/aot_x2c.o: $(X2C_INC)
+$(KOS_BUILD_DIR)/capi_driver.o: $(CAPI_INC)
 
 $(KOS_BUILD_DIR)/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)

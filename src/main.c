@@ -9,6 +9,7 @@
 #include "fs.h"
 #include "gc.h"
 #include "aot.h"
+#include "py_ast.h"
 
 #ifndef MPY_VERSION
 #define MPY_VERSION "0.1"
@@ -46,6 +47,8 @@ static int mpy_run(int argc,char **argv){
 
     /* Typed ahead-of-time compilation to a standalone executable (fasm). */
     if(argc>=2 && strcmp(argv[1],"--compile")==0) return aot_main(argc-2,argv+2,program);
+    /* The full Python parser of the cpython target: its tree (tests/pyast_check.py) */
+    if(argc>=2 && strcmp(argv[1],"--pyast")==0) return py_dump_main(argc-2,argv+2);
 
     if(argc<2){
         script_path = mpy_platform_default_script();
