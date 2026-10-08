@@ -19,7 +19,7 @@ HOST_TARGET ?= minipy
 
 CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
            compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread \
-           aot_driver aot_types aot_codegen aot_rtlib main
+           vm_stdlib aot_driver aot_types aot_codegen aot_rtlib main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
 
@@ -53,8 +53,11 @@ $(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -pthread $(INCLUDES) -c $< -o $@
 
+# ctypes in the interpreter (vm_stdlib.c): dlopen is in -ldl on older glibc
+HOST_LDLIBS ?= $(if $(filter Linux,$(shell uname -s)),-ldl,)
+
 $(HOST_TARGET): $(HOST_OBJ)
-	$(CC) $(CFLAGS) -pthread $^ -o $@
+	$(CC) $(CFLAGS) -pthread $^ -o $@ $(HOST_LDLIBS)
 
 # ---------------------------- Tests -----------------------------------------
 test: $(HOST_TARGET)

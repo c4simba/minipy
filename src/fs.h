@@ -25,6 +25,12 @@ char       *mpy_fs_read_file(const char *path);
 char       *mpy_fs_try_read_file(const char *path, char **error_message);
 char       *mpy_fs_dirname(const char *path);
 char       *mpy_fs_module_path(const char *importer_dir, const char *module_name);
+/* The file of module `name` (dotted): <dir>/a/b.mpy or <dir>/a/b/__init__.mpy
+   (or .py) for dir = the importing module's folder, then each folder of
+   MINIPYPATH (separated by ':' or ';'), then the `lib` folder next to the
+   minipy executable. NULL if there is none. */
+char       *mpy_fs_find_module(const char *importer_dir, const char *module_name);
+void        mpy_fs_set_program(const char *argv0);
 const char *mpy_fs_backend_name(void);
 /* Writing (used by `--compile`): 0 on success. */
 int         mpy_fs_write_file(const char *path, const char *data, size_t len, char **error_message);

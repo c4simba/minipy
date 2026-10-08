@@ -57,12 +57,15 @@ class Emu:
         entry, phoff = struct.unpack_from('<II', data, 24)
         phentsize, phnum = struct.unpack_from('<HH', data, 42)
         top = 0
+        dynamic = None
         for i in range(phnum):
             p_type, p_off, p_vaddr, _, p_filesz, p_memsz, _, _ = struct.unpack_from('<8I', data, phoff + i * phentsize)
+            if p_type == 2: dynamic = p_vaddr                # PT_DYNAMIC: imports (ctypes)
             if p_type != 1: continue                         # PT_LOAD
             self.map(down(p_vaddr), up(p_vaddr + p_memsz))
             uc.mem_write(p_vaddr, data[p_off:p_off + p_filesz])
             top = max(top, up(p_vaddr + p_memsz))
+        if dynamic is not None: self.link_dynamic(dynamic)
         self.brk = self.brk_min = top
         self.mmap_next = 0x40000000
         stack_top, stack_size = 0xC0000000, 0x800000
@@ -105,6 +108,16 @@ class Emu:
     def cstr(self, addr): return self.cstr_bytes(addr).decode('utf-8', 'replace')
 
     def intr(self, uc, intno, _):
+        if intno == 0x81 and not self.kolibri:              # a C library function (see link_dynamic)
+            eip = uc.reg_read(UC_X86_REG_EIP)
+            name = self.imports[(eip - 2 - self.LIBC_STUBS) // 4]
+            try:
+                ret = self.libc(name)
+            except Exit as e:
+                self.code = e.code; uc.emu_stop(); return
+            if self.trace: sys.stderr.write('[libc %s -> %r]\n' % (name, ret))
+            if ret is not None: uc.reg_write(UC_X86_REG_EAX, ret & 0xFFFFFFFF)
+            return
         if intno == 0x40 and self.kolibri:
             r = [uc.reg_read(x) for x in (UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EBP)]
             try:
@@ -127,6 +140,120 @@ class Emu:
             ret = -(e.errno or errno.EIO)
         if self.trace: sys.stderr.write('[sys %d %x %x %x -> %d]\n' % (r[0], r[1], r[2], r[3], ret if ret < 2**31 else ret - 2**32))
         uc.reg_write(UC_X86_REG_EAX, ret & 0xFFFFFFFF)
+
+    # ---- dynamically linked programs (ctypes): a small C library in Python.
+    # The import slots (R_386_32 relocations of PT_DYNAMIC) point at stubs
+    # `int 0x81; ret`; the functions read their cdecl arguments off the stack.
+    # Sockets serve a scripted HTTP client: X86RUN_REQUESTS names a file with
+    # one request per line ("GET /items/5?q=x"); each is a connection accept()
+    # returns (none left: the program ends), the answer is printed
+    # ("[http] GET /items/5?q=x" and the response) when the program closes it.
+    LIBC_STUBS, LIBC_DATA = 0xE0000000, 0xE0100000
+
+    def link_dynamic(self, dyn):
+        uc = self.uc
+        tags = {}
+        while True:
+            tag, val = struct.unpack('<II', bytes(uc.mem_read(dyn, 8))); dyn += 8
+            if tag == 0: break
+            tags.setdefault(tag, val)
+        strtab, symtab, rel, relsz = tags.get(5), tags.get(6), tags.get(17, 0), tags.get(18, 0)
+        self.imports = []
+        self.map(self.LIBC_STUBS, self.LIBC_STUBS + PAGE)
+        self.map(self.LIBC_DATA, self.LIBC_DATA + 16 * PAGE)
+        self.libc_next = self.LIBC_DATA + 64                 # +0: errno
+        self.conns, self.next_fd = {}, 100
+        path = os.environ.get('X86RUN_REQUESTS')
+        self.requests = [l.rstrip('\n') for l in open(path)] if path else []
+        self.requests = [l for l in self.requests if l.strip()]
+        for k in range(relsz // 8):
+            off, info = struct.unpack('<II', bytes(uc.mem_read(rel + 8 * k, 8)))
+            name = self.cstr(strtab + struct.unpack('<I', bytes(uc.mem_read(symtab + 16 * (info >> 8), 4)))[0])
+            stub = self.LIBC_STUBS + 4 * len(self.imports)
+            self.imports.append(name)
+            uc.mem_write(stub, b'\xcd\x81\xc3\x90')
+            uc.mem_write(off, struct.pack('<I', stub))
+
+    def cstring(self, text):
+        data = text.encode() + b'\0'
+        addr = self.libc_next; self.libc_next += (len(data) + 3) & ~3
+        self.uc.mem_write(addr, data)
+        return addr
+
+    def cformat(self, fmt, first):
+        """printf's format with the arguments from stack word `first` on."""
+        import re
+        esp = self.uc.reg_read(UC_X86_REG_ESP); k = first
+        def word():
+            nonlocal k
+            v = struct.unpack('<I', bytes(self.uc.mem_read(esp + 4 + 4 * k, 4)))[0]; k += 1; return v
+        out = []
+        for m in re.finditer(r'%([-+ 0#]*)(\d*)(?:\.(\d+))?(hh|h|ll|l|z)?([diuxXscpf%])|[^%]+', fmt):
+            if not m.group(5): out.append(m.group(0)); continue
+            flags, width, prec, size, conv = m.groups()
+            spec = '%' + flags + width + ('.' + prec if prec else '')
+            if conv == '%': out.append('%'); continue
+            if conv == 's': out.append((spec + 's') % self.cstr(word())); continue
+            if conv == 'c': out.append(chr(word() & 255)); continue
+            if conv == 'f':
+                lo, hi = word(), word(); out.append((spec + 'f') % struct.unpack('<d', struct.pack('<II', lo, hi))[0]); continue
+            v = word()
+            if size == 'll': v |= word() << 32
+            if conv in 'di': v = v - 2**32 if v >= 2**31 and size != 'll' else v
+            out.append((spec + ('d' if conv in 'diu' else 'x' if conv == 'p' else conv)) % v)
+        return ''.join(out).encode()
+
+    def libc(self, name):
+        uc = self.uc
+        esp = uc.reg_read(UC_X86_REG_ESP)
+        a = lambda i: struct.unpack('<I', bytes(uc.mem_read(esp + 4 + 4 * i, 4)))[0]
+        s32 = lambda v: v - 2**32 if v >= 2**31 else v
+        if name == 'getpid': return 4242
+        if name == 'fflush': return 0
+        if name == '__errno_location': return self.LIBC_DATA
+        if name == 'strlen': return len(self.cstr_bytes(a(0)))
+        if name == 'abs': return abs(s32(a(0)))
+        if name == 'getenv': return self.cstring('/home/test') if self.cstr(a(0)) == 'HOME' else 0
+        if name == 'strerror': return self.cstring(os.strerror(s32(a(0))))
+        if name == 'puts': os.write(1, self.cstr_bytes(a(0)) + b'\n'); return 1
+        if name == 'printf': data = self.cformat(self.cstr(a(0)), 1); os.write(1, data); return len(data)
+        if name == 'snprintf':
+            data = self.cformat(self.cstr(a(2)), 3); n = a(1)
+            if n: uc.mem_write(a(0), data[:n - 1] + b'\0')
+            return len(data)
+        if name == 'open':
+            try: return os.open(self.cstr(a(0)), a(1) & 3)
+            except OSError as e: uc.mem_write(self.LIBC_DATA, struct.pack('<I', e.errno)); return -1
+        if name in ('write', 'send'):
+            fd, data = a(0), bytes(uc.mem_read(a(1), a(2)))
+            if fd in self.conns: self.conns[fd]['out'] += data; return len(data)
+            return os.write(fd, data)
+        if name in ('read', 'recv'):
+            fd, n = a(0), a(2)
+            if fd in self.conns:
+                c = self.conns[fd]; data, c['in'] = c['in'][:n], c['in'][n:]
+            else: data = os.read(fd, n)
+            uc.mem_write(a(1), data); return len(data)
+        if name == 'socket': self.next_fd += 1; return self.next_fd
+        if name in ('setsockopt', 'bind', 'listen'): return 0
+        if name == 'accept':
+            if not self.requests: raise Exit(0)              # the script is over
+            line = self.requests.pop(0)
+            method, _, target = line.partition(' ')
+            self.next_fd += 1; fd = self.next_fd
+            self.conns[fd] = {'in': ('%s %s HTTP/1.1\r\nHost: test\r\n\r\n' % (method, target)).encode(), 'out': b'', 'line': line}
+            if a(1): uc.mem_write(a(1), struct.pack('<H', 2) + struct.pack('>H', 40000 + fd) + bytes([127, 0, 0, 1]) + bytes(8))
+            return fd
+        if name == 'close':
+            fd = a(0)
+            if fd in self.conns:
+                c = self.conns.pop(fd)
+                os.write(1, ('[http] %s\n' % c['line']).encode() + c['out'].replace(b'\r\n', b'\n') + b'\n')
+                return 0
+            try: os.close(fd); return 0
+            except OSError: return -1
+        sys.stderr.write('x86run: C function %s is not in the fake C library\n' % name)
+        raise Exit(127)
 
     # ---- Linux (int 0x80)
     def syscall(self, n, b, c, d, si, di, bp):

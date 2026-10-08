@@ -23,6 +23,10 @@
 
 ;;; code rt_exit linux
 rt_exit:                        ; ebx = exit status
+if defined CI_fflush
+        push    0               ; the C library's stdio buffers (ctypes)
+        call    dword [CI_fflush]
+end if
         mov     eax,1
         int     0x80
 
@@ -1545,6 +1549,150 @@ rt_sb_cstr:                     ; eax = NUL-terminated bytes
         jmp     @b
 @@:     sub     edx,eax
         jmp     rt_sb_bytes
+
+;;; code rt_sb_json_str : rt_sb_char
+rt_sb_json_str:                 ; eax = str (0: ""), edx = 1: non-ASCII as \uXXXX -> a JSON string literal
+        push    ebx esi edi ebp
+        mov     ebp,edx
+        xor     ebx,ebx
+        test    eax,eax
+        jz      @f
+        lea     esi,[eax+12]
+        mov     ebx,[eax+8]
+@@:     mov     al,'"'
+        call    rt_sb_char
+.next:  test    ebx,ebx
+        jz      .done
+        movzx   eax,byte [esi]
+        inc     esi
+        dec     ebx
+        cmp     al,'"'
+        je      .esc
+        cmp     al,'\'
+        je      .esc
+        cmp     al,0x20
+        jb      .ctrl
+        cmp     al,0x80
+        jb      .plain
+        test    ebp,ebp
+        jz      .plain
+        cmp     al,0xE0                 ; UTF-8: the code point
+        jb      .two
+        cmp     al,0xF0
+        jb      .three
+        and     eax,0x07
+        mov     edi,3
+        jmp     .cont
+.three: and     eax,0x0F
+        mov     edi,2
+        jmp     .cont
+.two:   and     eax,0x1F
+        mov     edi,1
+.cont:  test    edi,edi
+        jz      .cp
+        test    ebx,ebx
+        jz      .cp
+        movzx   ecx,byte [esi]
+        and     ecx,0x3F
+        shl     eax,6
+        or      eax,ecx
+        inc     esi
+        dec     ebx
+        dec     edi
+        jmp     .cont
+.cp:    cmp     eax,0x10000
+        jb      .bmp
+        sub     eax,0x10000             ; a surrogate pair
+        push    eax
+        shr     eax,10
+        add     eax,0xD800
+        call    .u4
+        pop     eax
+        and     eax,0x3FF
+        add     eax,0xDC00
+.bmp:   call    .u4
+        jmp     .next
+.plain: call    rt_sb_char
+        jmp     .next
+.esc:   push    eax
+        mov     al,'\'
+        call    rt_sb_char
+        pop     eax
+        call    rt_sb_char
+        jmp     .next
+.ctrl:  mov     ecx,'n'
+        cmp     al,10
+        je      .short
+        mov     ecx,'r'
+        cmp     al,13
+        je      .short
+        mov     ecx,'t'
+        cmp     al,9
+        je      .short
+        mov     ecx,'b'
+        cmp     al,8
+        je      .short
+        mov     ecx,'f'
+        cmp     al,12
+        je      .short
+        call    .u4
+        jmp     .next
+.short: push    ecx
+        mov     al,'\'
+        call    rt_sb_char
+        pop     eax
+        call    rt_sb_char
+        jmp     .next
+.done:  mov     al,'"'
+        call    rt_sb_char
+        pop     ebp edi esi ebx
+        ret
+.u4:    push    eax                     ; eax = a UTF-16 unit -> \uxxxx
+        mov     al,'\'
+        call    rt_sb_char
+        mov     al,'u'
+        call    rt_sb_char
+        mov     ecx,12
+.hex:   mov     eax,[esp]
+        shr     eax,cl
+        and     eax,15
+        mov     al,[rt_json_hex+eax]
+        push    ecx
+        call    rt_sb_char
+        pop     ecx
+        sub     ecx,4
+        jns     .hex
+        pop     eax
+        ret
+;;; data rt_sb_json_str
+rt_json_hex     db '0123456789abcdef'
+
+;;; code rt_sb_jfloat : rt_sb_float rt_sb_cstr
+rt_sb_jfloat:                   ; st0 (popped) -> a JSON number (as Python's json: NaN, Infinity, -Infinity)
+        sub     esp,8
+        fst     qword [esp]
+        mov     eax,[esp+4]
+        and     eax,0x7FF00000
+        cmp     eax,0x7FF00000
+        jne     .num
+        fstp    st0
+        mov     eax,rt_json_nan
+        test    dword [esp+4],0x000FFFFF
+        jnz     .out
+        cmp     dword [esp],0
+        jne     .out
+        mov     eax,rt_json_inf
+        test    dword [esp+4],0x80000000
+        jz      .out
+        mov     eax,rt_json_ninf
+.out:   add     esp,8
+        jmp     rt_sb_cstr
+.num:   add     esp,8
+        jmp     rt_sb_float
+;;; data rt_sb_jfloat
+rt_json_inf     db 'Infinity',0
+rt_json_ninf    db '-Infinity',0
+rt_json_nan     db 'NaN',0
 
 ;;; code rt_sb_repr_str : rt_sb_char
 rt_sb_repr_str:                 ; eax = str: Python's repr - 'text' ("text" if it has ' but no "), escapes
@@ -4847,13 +4995,19 @@ rt_task_result:                 ; eax = task -> eax = task, which must be done
 ;;; data rt_task_result
 rt_msg_notdone  db 'InvalidStateError: result is not set',0
 
-;;; code rt_async_sleep : rt_task_yield rt_task_ready rt_now_ms
+;;; code rt_async_sleep : rt_task_yield rt_task_ready rt_now_ms rt_idle_sleep
 rt_async_sleep:                 ; st0 = seconds (popped): suspend the running task that long
         push    1000
         fimul   dword [esp]
         fistp   dword [esp]
         pop     eax
-        test    eax,eax
+        cmp     dword [rt_cur_task],0
+        jne     .task
+        test    eax,eax         ; no event loop (a coroutine called directly): just sleep
+        jle     .none
+        jmp     rt_idle_sleep
+.none:  ret
+.task:  test    eax,eax
         jg      @f
         mov     eax,[rt_cur_task] ; sleep(0): to the back of the run queue
         call    rt_task_ready
@@ -5717,7 +5871,7 @@ rt_float_parse_x:
         jmp     .frac
 .exp:   pop     ecx
         test    edx,edx
-        jz      .bad1
+        jz      .word
         cmp     esi,edi
         jae     .apply
         mov     al,[esi]
@@ -5765,6 +5919,41 @@ rt_float_parse_x:
         fchs
 @@:     pop     ebp edi esi ebx
         ret
+.word:  mov     ecx,edi         ; no digits: inf, infinity, nan (any case)?
+        sub     ecx,esi
+        cmp     ecx,3
+        jb      .bad1
+        mov     eax,[esi]
+        or      eax,0x202020
+        and     eax,0xFFFFFF
+        cmp     eax,'inf'
+        je      .inf
+        cmp     eax,'nan'
+        jne     .bad1
+        fstp    st0
+        fldz
+        fdiv    st0,st0         ; 0/0: a NaN (exceptions are masked)
+        add     esi,3
+        jmp     .tail
+.inf:   fstp    st0
+        fld1
+        fldz
+        fdivp   st1,st0         ; 1/0
+        add     esi,3
+        mov     ecx,edi
+        sub     ecx,esi
+        cmp     ecx,5
+        jb      .tail
+        mov     eax,[esi]
+        or      eax,0x20202020
+        cmp     eax,'init'
+        jne     .tail
+        mov     al,[esi+4]
+        or      al,32
+        cmp     al,'y'
+        jne     .tail
+        add     esi,5
+        jmp     .tail
 .bad1:  fstp    st0
 .bad:   mov     esi,rt_msg_float
         jmp     rt_panic_value

@@ -67,6 +67,13 @@ extern Native N_BUFFER, N_POKE, N_PEEK, N_POKE_STR, N_PEEK_STR, N_ADDR;
 extern Native N_PEEK_AT, N_POKE_AT, N_PEEK_STR_AT, N_POKE_STR_AT, N_CSTR_AT;
 extern Native N_STR, N_REPR, N_INT, N_FLOAT, N_BOOL, N_LIST, N_TUPLE, N_SET, N_DICT;
 extern Native N_ABS, N_MIN, N_MAX, N_SUM, N_SORTED, N_REVERSED, N_ENUMERATE, N_ZIP, N_MAP, N_FILTER;
+/* vm_stdlib.c: asyncio, json, minipy, _ctypes and sys.exit of the interpreter */
+void  mpy_stdlib_register(Dict *sysd);
+int   is_exc_instance(Value v);                   /* vm_exc.c: an instance of a user exception class */
+int   stdlib_call_kw(Native *n, List *pos, Dict *kw, Value *out);
+Value mpy_json_dumps(Value v, const char *isep, const char *ksep, int ascii);
+Value mpy_endpoint_call(Value fn, int argc, Value *argv);
+void  mpy_float_repr(char *out, size_t n, double f);
 int native_call_kw(Native *n, List *pos, Dict *kw, Value *out);
 void mpy_sort_items(List *l, Value key, int reverse);
 extern Native N_TYPE, N_ISINSTANCE, N_ORD, N_CHR, N_ROUND, N_ANY, N_ALL;

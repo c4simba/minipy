@@ -345,7 +345,7 @@ static void emit_expr(Parser *p, Expr *e){
             emit_arg(p->chunk,OP_DEF,add_const(p->chunk,objv(fn->owner)),line);
             break;
         }
-        case EXPR_AWAIT: fprintf(stderr,"parse error at line %d: await is supported by the compiler only (minipy --compile)\n",line); exit(1);
+        case EXPR_AWAIT: emit_expr(p,e->a); break;       /* coroutines run when called: `await x` is x */
         default: fprintf(stderr,"internal error: cannot emit expr kind %d\n",e->kind); exit(1);
     }
 }
@@ -467,4 +467,28 @@ void from_import_stmt(Parser *p){
     need(p,T_NEWLINE,"newline");
 }
 /* print(EXPR): keyword-statement form. Enter with the cursor at `print`. */
-void print_stmt(Parser *p){ need(p,T_PRINT,"print"); int line=prev(p)->line; need(p,T_LP,"("); expr(p); need(p,T_RP,")"); emit_op(p->chunk,OP_PRINT,line); need(p,T_NEWLINE,"newline"); }
+/* print(a, b, ..., sep=..., end=..., file=..., flush=...): one value is OP_PRINT,
+   anything else OP_PRINT_EX (file= and flush= are evaluated and ignored). */
+void print_stmt(Parser *p){
+    need(p,T_PRINT,"print"); int line=prev(p)->line; need(p,T_LP,"(");
+    int n=0, flags=0, packed=0, kw=0;
+    while(peek(p)->kind!=T_RP){
+        if(peek(p)->kind==T_NAME && p->tv.v[p->pos+1].kind==T_ASSIGN){
+            const char *k=peek(p)->text; p->pos+=2;
+            if(!packed){ emit_arg(p->chunk,OP_MAKE_TUPLE,n,line); packed=1; }
+            expr(p); kw=1;
+            if(!strcmp(k,"sep")){ if(flags&1) die("print(): sep given twice"); flags|=1; }
+            else if(!strcmp(k,"end")){ if(flags&2) die("print(): end given twice"); if(!(flags&1)) flags|=4; flags|=2; }
+            else if(!strcmp(k,"file")||!strcmp(k,"flush")) emit_op(p->chunk,OP_POP,line);
+            else { fprintf(stderr,"parse error at line %d: print() has no argument '%s'\n",line,k); exit(1); }
+        } else {
+            if(kw){ fprintf(stderr,"parse error at line %d: positional argument after a keyword in print()\n",line); exit(1); }
+            expr(p); n++;
+        }
+        if(!match(p,T_COMMA)) break;
+    }
+    need(p,T_RP,")");
+    if(n==1 && !packed) emit_op(p->chunk,OP_PRINT,line);
+    else { if(!packed) emit_arg(p->chunk,OP_MAKE_TUPLE,n,line); emit_arg(p->chunk,OP_PRINT_EX,flags,line); }
+    need(p,T_NEWLINE,"newline");
+}

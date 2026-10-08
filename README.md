@@ -20,7 +20,11 @@ source code
 - Decorators: `@name`, `@obj.attr`, factories with arguments (`@win.button("OK", x=10)`), stacked
 - Python's line joining: statements continue inside brackets and after a `\`; triple-quoted strings may span lines; adjacent string literals are joined
 - `sorted` / `min` / `max` / `list.sort` with `key=` and `reverse=`; `from typing import ...` and annotated attributes (`self.items: list[str] = []`) are accepted (annotations are not evaluated)
-- Exception objects: `BaseException`, `RuntimeError`, `StopIteration`
+- `print(a, b, sep=..., end=...)`; bytes literals (`b"..."`, the same bytes as a `str`); `match` / `case` are soft keywords
+- `async def` / `await`: a coroutine runs when it is called (`await x` is `x`); `asyncio.run`, `sleep`, `gather`, `create_task`
+- Built-in `json` (`dumps` with `separators=` / `ensure_ascii=`, `loads`), `minipy` (`endpoint`) and, on host builds, `ctypes` (`lib/ctypes.mpy` over dlopen)
+- Modules are found next to the importing file, then in `MINIPYPATH`, then in `lib/` next to the `minipy` executable (`.mpy`, then `.py`)
+- Exception objects: `BaseException`, `RuntimeError`, `StopIteration`; user classes derived from them (`class NotFound(Exception)`, `super().__init__(message)`) are raised and caught as themselves
 - `try` / `except` / `finally` with protected bytecode regions
 - `iter()` / `next()` builtins and `for` loops via iterator objects
 - Object protocol hooks: `__len__`, `__add__`, `__eq__`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__next__`
@@ -135,6 +139,13 @@ count = 0                              # int, inferred
 count = "zero"                         # error: variable 'count' is int, cannot take str
 ```
 
+- a dict literal with str-literal keys whose values have types no one type
+  covers (`{"item_id": 5, "q": "x"}`) is a *record*: a dict of fixed keys,
+  indexed by key literals (`r["q"]`), printed, compared and written as JSON
+  like a dict (not iterated, not extended); a function returns one shape;
+- `Optional[str]` (`str | None`, `Union[str, None]`) is a `str` whose `None`
+  prints as `None` and is written as `null` by `json.dumps` (a plain `str`'s
+  zero value is `""`);
 - types: `int`, `bool`, `float`, `str`, `list[T]`, `set[T]`, `dict[K, V]`
   (keys: `int`, `str`, tuples or objects), `tuple[A, B, ...]`, `tuple[T, ...]`,
   `Callable[[A, B], R]` (functions as values), `Iterator[T]` /
@@ -282,7 +293,9 @@ when it sleeps or waits for another task. The loop sleeps with `nanosleep`
 
 ### Built-in modules
 
-`sys` (below), `asyncio`, `math` (`sqrt sin cos tan asin acos atan atan2 exp
+`sys` (below), `asyncio`, `json` (`json.dumps(value, separators=..., ensure_ascii=...)`:
+written by type at compile time, CPython's output, objects as their fields),
+`ctypes` (next section), `minipy` (`Endpoint`, `endpoint`: see FastAPI), `math` (`sqrt sin cos tan asin acos atan atan2 exp
 log log10 log2 pow hypot fmod fabs floor ceil trunc degrees radians gcd isqrt
 pi e tau`, on the x87), `time` (`time`, `monotonic`, `perf_counter`, `sleep`;
 on KolibriOS `time()` counts from boot) and `random` (`seed random randint
@@ -297,7 +310,56 @@ imports (and theirs, transitively) and emits every module into the one
 listing; a module's body runs when it is first imported, as in Python.
 Therefore every `import` / `from ... import` must be at the top of its module
 (an optional docstring may precede them) - never inside a function, class,
-`if`, loop or `try`, and not after other statements.
+`if`, loop or `try`, and not after other statements. The one exception is an
+`if __name__ == "__main__":` block at the top level: in the program's main
+module it runs (its imports join the module's others), in an imported module
+it is left out.
+
+A module is looked for next to the importing file, then in each folder of
+`MINIPYPATH` (separated by `:` or `;`), then in `lib/` next to the `minipy`
+executable - the interpreter does the same. `name.mpy`, `name/__init__.mpy`,
+`name.py` and `name/__init__.py` are accepted, so `minipy --compile main.py`
+builds `main`:
+
+```sh
+MINIPYPATH=$HOME/mylibs:/opt/shared ./minipy --compile app.py
+```
+
+### C libraries: `ctypes`
+
+On the Linux target a program calls C functions the way CPython's `ctypes`
+does, and `minipy --compile` makes a dynamically linked executable
+(`/lib/ld-linux.so.2` loads the libraries and fills in the functions'
+addresses; `fflush(NULL)` runs at exit):
+
+```python
+import ctypes
+
+libc = ctypes.CDLL("libc.so.6")              # a module-level name, a literal library name
+libc.strlen.restype = ctypes.c_size_t        # declarations: module-level statements
+libc.strlen.argtypes = [ctypes.c_char_p]
+getenv = libc.getenv                         # an alias shares them
+getenv.restype = ctypes.c_char_p             # a char * result is copied into a str (NULL: None)
+libm = ctypes.CDLL("libm.so.6")
+libm.pow.restype = ctypes.c_double
+
+buf = ctypes.create_string_buffer(64)
+libc.snprintf(buf, 64, b"%d %s", 7, "seven")
+print(libc.strlen("hello"), getenv("HOME"), ctypes.string_at(ctypes.addressof(buf)), libm.pow(2.0, 10.0))
+```
+
+Calls are cdecl with the stack aligned to 16 bytes. Arguments: `int`/`bool`
+(`c_int` without argtypes), `float` (`c_double`), `str` / bytes and buffers
+(their bytes, NUL-terminated), `None` (NULL); with argtypes `c_int c_uint
+c_long c_size_t c_ssize_t c_short c_byte c_char c_bool c_longlong c_double
+c_float c_char_p c_void_p` (and the `c_intN` / `c_uintN` names). Results as
+the restype says (`c_int` by default, `None` for void). Also
+`create_string_buffer`, `string_at`, `addressof` and `get_errno`. Not
+supported: callbacks (C calling Python), structures and pointers as ctypes
+objects (use buffers and `sys.peek`/`sys.poke`), passing a library around as
+a value. The interpreter has the same API on host builds (`lib/ctypes.mpy`
+over dlopen; up to 8 integer/pointer arguments, variadic functions need
+argtypes for their fixed arguments, as CPython on arm64 Macs).
 
 ### System calls: the `sys` module
 
@@ -355,6 +417,15 @@ FASM="$X /path/to/fasm" RUN="$X" sh tests/run_typed_tests.sh
 TARGET=kolibri FASM="$X /path/to/fasm" RUN="$X" sh tests/run_typed_tests.sh
 ```
 
+Dynamically linked programs (ctypes) run under `tests/x86run.py` too: their
+imports point at a small fake C library written in Python (string, stdio,
+`snprintf`, `getenv`, `open`, errno, sockets). Its sockets serve scripted HTTP
+clients - `X86RUN_REQUESTS` names a file of requests, one per line (`GET
+/items/5?q=x`), a test's `tests/typed/<name>.requests` sets it - and print
+each answer. `tests/glibc_docker.sh` runs the ctypes test and the FastAPI
+example against a real i386 glibc in a Docker image (`IMAGE=`, e.g. Ubuntu with
+`libc6-i386`).
+
 `--count-allocs` makes a program report at exit how many heap blocks are
 still allocated and how many allocations, `incref` and `decref` calls it made
 (a leak check: the count of live blocks must not grow with the work done).
@@ -362,6 +433,59 @@ still allocated and how many allocations, `incref` and `decref` calls it made
 On KolibriOS itself the KolibriOS build of `minipy` compiles the same way,
 running `/sys/develop/fasm` with KolibriOS fasm's `infile,outfile,path`
 arguments; nothing else has to be installed.
+
+## FastAPI
+
+`lib/fastapi.mpy` and `lib/uvicorn.mpy` are FastAPI's routing API and a
+uvicorn-like HTTP/1.1 server written in MiniPy (the server over libc sockets
+through ctypes). FastAPI's own hello world compiles unchanged:
+
+```python
+from typing import Union
+
+from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int, q: Union[str, None] = None):
+    return {"item_id": item_id, "q": q}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+```sh
+./minipy --compile examples/fastapi/main.py     # a 28 KB i386 Linux executable
+./main                                          # or: ./minipy examples/fastapi/main.py (interpreter, host)
+curl 'http://localhost:8000/items/5?q=somequery'   # {"item_id":5,"q":"somequery"}
+```
+
+Path parameters (`{name}` in the path) and query parameters are `int`,
+`float`, `bool` or `str`, with defaults; endpoints may be `async def`; results
+are written as JSON (dicts and records, lists, numbers, strings, `None`,
+objects as their fields); `HTTPException(status_code, detail)`; unknown paths
+give 404, wrong methods 405, missing or invalid parameters 422 with FastAPI's
+error details. `tests/typed/fastapi_handle.mpy` checks the answers against
+real FastAPI's (its TestClient on the same app): equal status codes and bodies,
+compiled for Linux and KolibriOS and in the interpreter. Not supported:
+request bodies (pydantic models), dependencies, response models, OpenAPI /
+`/docs`, middleware; the server handles one connection at a time.
+
+How it works: `app.get(path)` returns a `Callable[[Endpoint], Endpoint]`, and
+passing a function where a `minipy.Endpoint` is expected makes the compiler
+write an adapter for it in Python - parameters converted from a dict of
+strings by their annotations, the function called (an async one directly: the
+server runs in a task), the result `json.dumps`ed - so every route has one
+type. In the interpreter `minipy.endpoint(f)` does the same at run time.
 
 ## KolibriOS API: `examples/kolibri.mpy`
 
@@ -477,6 +601,7 @@ mpy_fs_read_file(path)
 mpy_fs_try_read_file(path, &error_message)
 mpy_fs_dirname(path)
 mpy_fs_module_path(importer_dir, module_name)
+mpy_fs_find_module(importer_dir, module_name)   /* + MINIPYPATH and <minipy>/lib */
 mpy_fs_backend_name()
 ```
 

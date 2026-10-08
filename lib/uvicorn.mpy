@@ -1,0 +1,169 @@
+# uvicorn for MiniPy: serves a fastapi.FastAPI app over HTTP/1.1, one
+# connection at a time, with the C library's sockets (ctypes).
+#
+#   uvicorn.run(app, host="0.0.0.0", port=8000)
+#
+# It logs like uvicorn ("INFO:     127.0.0.1:50312 - "GET / HTTP/1.1" 200 OK")
+# and stops on Ctrl+C (the default SIGINT). Linux only (libc.so.6).
+import asyncio
+import ctypes
+import sys
+from fastapi import FastAPI, Response
+
+libc = ctypes.CDLL("libc.so.6")
+libc.socket.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+libc.setsockopt.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+libc.bind.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+libc.listen.argtypes = [ctypes.c_int, ctypes.c_int]
+libc.accept.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+libc.recv.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+libc.recv.restype = ctypes.c_ssize_t
+libc.send.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+libc.send.restype = ctypes.c_ssize_t
+libc.close.argtypes = [ctypes.c_int]
+libc.write.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+libc.strerror.restype = ctypes.c_char_p
+
+AF_INET = 2
+SOCK_STREAM = 1
+SOL_SOCKET = 1
+SO_REUSEADDR = 2
+SO_RCVTIMEO = 20
+MSG_NOSIGNAL = 0x4000
+TIMEOUT_KEEP_ALIVE = 5          # seconds a client gets to send its request
+
+REASONS = {200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401: "Unauthorized",
+           403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict",
+           422: "Unprocessable Entity", 500: "Internal Server Error"}
+
+def log(text: str, level: str = "INFO:     ") -> None:
+    line = level + text + "\n"
+    libc.write(2, line, len(line))
+
+def fail(what: str) -> None:
+    line = "ERROR:    " + what + ": " + libc.strerror(ctypes.get_errno()) + "\n"
+    libc.write(2, line, len(line))
+    sys.exit(1)
+
+def ipv4(host: str) -> int:
+    """The address as sin_addr holds it (network order: the first octet first)."""
+    if host == "localhost":
+        host = "127.0.0.1"
+    parts = host.split(".")
+    if len(parts) != 4:
+        return -1
+    v = 0
+    for i in range(4):
+        v = v | ((int(parts[i]) & 255) << (8 * i))
+    return v
+
+def sockaddr(host: str, port: int) -> buffer:
+    a = sys.buffer(16)
+    sys.poke(a, 0, AF_INET, 2)
+    sys.poke(a, 2, ((port & 255) << 8) | ((port >> 8) & 255), 2)
+    sys.poke(a, 4, ipv4(host), 4)
+    return a
+
+def peer(a: buffer) -> str:
+    p = sys.peek(a, 2, 2)
+    port = ((p & 255) << 8) | ((p >> 8) & 255)
+    return str(sys.peek(a, 4, 1)) + "." + str(sys.peek(a, 5, 1)) + "." + str(sys.peek(a, 6, 1)) + "." + str(sys.peek(a, 7, 1)) + ":" + str(port)
+
+def receive(fd: int, chunk: buffer) -> str:
+    """The request head (up to the empty line) and its body (Content-Length)."""
+    data = ""
+    head_end = -1
+    while head_end < 0:
+        n = libc.recv(fd, chunk, len(chunk), 0)
+        if n <= 0:
+            return data
+        data += sys.peek_str(chunk, 0, n)
+        head_end = data.find("\r\n\r\n")
+        if len(data) > 65536:
+            return data
+    length = 0
+    for line in data[:head_end].split("\r\n"):
+        colon = line.find(":")
+        if colon > 0 and line[:colon].strip().lower() == "content-length":
+            length = int(line[colon + 1:].strip())
+    while len(data) < head_end + 4 + length:
+        n = libc.recv(fd, chunk, len(chunk), 0)
+        if n <= 0:
+            break
+        data += sys.peek_str(chunk, 0, n)
+    return data
+
+def send_all(fd: int, text: str) -> None:
+    out = sys.buffer(text)
+    sent = 0
+    total = len(out)
+    while sent < total:
+        n = libc.send(fd, sys.addr(out) + sent, total - sent, MSG_NOSIGNAL)
+        if n <= 0:
+            return
+        sent += n
+
+def answer(r: Response, head_only: bool) -> str:
+    reason = REASONS.get(r.status_code, "")
+    body = r.body
+    if head_only:
+        body = ""
+    return ("HTTP/1.1 " + str(r.status_code) + " " + reason + "\r\n" +
+            "server: uvicorn\r\n" +
+            "content-length: " + str(len(r.body)) + "\r\n" +
+            "content-type: " + r.media_type + "\r\n" +
+            "connection: close\r\n\r\n" + body)
+
+def serve_one(app: FastAPI, fd: int, client: str, chunk: buffer) -> None:
+    request = receive(fd, chunk)
+    line_end = request.find("\r\n")
+    if line_end < 0:
+        return
+    words = request[:line_end].split(" ")
+    if len(words) != 3:
+        send_all(fd, answer(Response(400, "Invalid HTTP request received.", "text/plain; charset=utf-8"), False))
+        return
+    method = words[0]
+    target = words[1]
+    try:
+        r = app.handle(method, target)
+    except Exception as e:
+        log("Exception in ASGI application: " + str(e), "ERROR:    ")
+        r = Response(500, "Internal Server Error", "text/plain; charset=utf-8")
+    send_all(fd, answer(r, method == "HEAD"))
+    log(client + " - \"" + method + " " + target + " " + words[2] + "\" " + str(r.status_code) + " " + REASONS.get(r.status_code, ""))
+
+async def serve(app: FastAPI, host: str, port: int) -> None:
+    log("Started server process [" + str(libc.getpid()) + "]")
+    log("Waiting for application startup.")
+    log("Application startup complete.")
+    fd = libc.socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0:
+        fail("socket")
+    one = sys.buffer(4)
+    sys.poke(one, 0, 1, 4)
+    libc.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
+    if ipv4(host) == -1:
+        log("only IPv4 addresses are supported: " + host, "ERROR:    ")
+        sys.exit(1)
+    if libc.bind(fd, sockaddr(host, port), 16) != 0:
+        fail("[Errno " + str(ctypes.get_errno()) + "] error while attempting to bind on address ('" + host + "', " + str(port) + ")")
+    if libc.listen(fd, 128) != 0:
+        fail("listen")
+    log("Uvicorn running on http://" + host + ":" + str(port) + " (Press CTRL+C to quit)")
+    chunk = sys.buffer(16384)
+    addr = sys.buffer(16)
+    addrlen = sys.buffer(4)
+    timeout = sys.buffer(8)                     # struct timeval
+    sys.poke(timeout, 0, TIMEOUT_KEEP_ALIVE, 4)
+    while True:
+        sys.poke(addrlen, 0, 16, 4)
+        c = libc.accept(fd, addr, addrlen)
+        if c < 0:
+            continue
+        libc.setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, timeout, 8)
+        serve_one(app, c, peer(addr), chunk)
+        libc.close(c)
+
+def run(app: FastAPI, host: str = "127.0.0.1", port: int = 8000, log_level: str = "info") -> None:
+    asyncio.run(serve(app, host, port))

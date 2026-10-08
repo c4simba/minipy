@@ -1,0 +1,7 @@
+pid: True
+strlen: 11 9 0
+getenv: True None
+abs: 42 7
+snprintf: 17 12|   ab|ff  |A|% 17 -3|   ab|ff  |A|%
+printf: from C 2026
+open: -1 2 No such file or directory

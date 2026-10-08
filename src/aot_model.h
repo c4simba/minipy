@@ -27,7 +27,8 @@ typedef enum {
 typedef struct AClass AClass;
 typedef struct Ty Ty;
 struct Ty { TyKind k; Ty *elem; AClass *cls; Ty *link; int id; Ty **elems; int nelems; Ty *key;
-            int tup;        /* TY_LIST: tuple[T, ...] (a variable-length tuple: *args) */ };
+            int tup;        /* TY_LIST: tuple[T, ...] (a variable-length tuple: *args) */
+            char **names;   /* TY_TUPLE: a record - a dict literal with fixed str keys and values of different types */ };
 Ty  *ty_tuple(Ty **elems, int n);
 Ty  *ty_dict(Ty *key, Ty *val);                /* dict[key, val] */
 Ty  *ty_dkey(Ty *dict);                        /* its key type (str unless given) */
@@ -71,7 +72,22 @@ struct AVar {
     int consumed;           /* code generator: a parameter the function keeps (stores in a field...): callers hand it over owned */
 };
 
-typedef enum { AS_VAR, AS_FUNC, AS_CLASS, AS_MODULE, AS_SYS /* built-in module, p = its name */ } SymKind;
+typedef enum { AS_VAR, AS_FUNC, AS_CLASS, AS_MODULE, AS_SYS /* built-in module, p = its name */,
+               AS_CLIB /* ctypes.CDLL(...): p = ACLib */, AS_CFUNC /* a function of one: p = ACFunc */ } SymKind;
+
+/* ctypes: a shared library (lib = ctypes.CDLL("libc.so.6") at module level)
+   and the functions called through it. A function's restype / argtypes are
+   module-level declarations (lib.f.restype = ctypes.c_char_p), so they are
+   known before anything is checked. Calls are cdecl, through the dynamic
+   linker (Linux: ld-linux.so.2). */
+typedef enum { CT_DEFAULT, CT_INT, CT_UINT, CT_SHORT, CT_USHORT, CT_BYTE, CT_UBYTE, CT_BOOL,
+               CT_LONGLONG, CT_ULONGLONG, CT_DOUBLE, CT_FLOAT, CT_CHARP, CT_VOIDP, CT_VOID } CType;
+typedef struct ACLib { char *soname; int id; int used; } ACLib;
+typedef struct ACFunc {
+    ACLib *lib; char *sym; int id, used;
+    CType restype;                      /* CT_DEFAULT: c_int */
+    CType argtypes[16]; int nargtypes;  /* nargtypes -1: no argtypes (each argument by its type) */
+} ACFunc;
 typedef struct { char *name; SymKind kind; void *p; } ASym;
 typedef struct { ASym *v; int n, cap; } SymTab;
 ASym *symtab_find(SymTab *t, const char *name);
@@ -96,6 +112,8 @@ struct AFunc {
     char **globals_decl; int nglobals_decl;
     int is_static;          /* @staticmethod */
     int is_async;           /* async def: runs on a task's stack; await = a plain call */
+    int calls_coroutines;   /* may call async functions without await (an endpoint adapter: it runs on a task) */
+    struct AFunc *ep_adapter; /* minipy.Endpoint: the adapter made for this function (dict of str -> JSON) */
     int is_property;        /* @property: obj.name calls it */
     int ncalls;             /* call sites seen by the checker */
     int unused;             /* a module function nothing calls whose types are unknown: not compiled */
@@ -174,7 +192,8 @@ typedef enum {
     X_YIELDFROM,    /* (statement) yield from: iterate the expression */
     X_CALLDECO,     /* obj.m(args) of a decorated method: var(obj, args) */
     X_BOUND,        /* obj.m as a value: a closure of the object calling method fn */
-    X_CONST_STR     /* compile-time string (sys.platform) */
+    X_CONST_STR,    /* compile-time string (sys.platform) */
+    X_CCALL         /* call of a C function through ctypes: cfn, argmap[i] = the CType of argument i */
 } XKind;
 
 typedef struct XInfo {
@@ -195,6 +214,7 @@ typedef struct XInfo {
     int splat, dsplat;      /* call: index+1 of the f(*xs) / f(**d) argument feeding *args / **kwargs, else 0 */
     int argelem[16];        /* call: parameter i comes from element argelem[i]-1 of the f(*tuple) argument argmap[i] (0: the argument itself) */
     int emptysplat;         /* call: index+1 of an f(*list) argument with no parameter left (it must be empty) */
+    struct ACFunc *cfn;     /* X_CCALL */
 } XInfo;
 
 XInfo *xinfo(Expr *e);
@@ -213,6 +233,8 @@ typedef struct AProg {
     AFunc **funcs; int nfuncs, fcap;
     AClass **classes; int nclasses, ccap;
     AVar **globals; int nglobals, gcap;
+    ACLib **clibs; int nclibs;           /* ctypes libraries and functions */
+    ACFunc **cfuncs; int ncfuncs;
 } AProg;
 
 /* aot_types.c: build the model and infer/check every type. Returns NULL after

@@ -52,16 +52,47 @@ static void usage(const char *program){
 typedef struct { AotUnit **v; int n, cap; } Units;
 
 static AotUnit *find_unit(Units *us, const char *name){ for(int i=0;i<us->n;i++) if(!strcmp(us->v[i]->name,name)) return us->v[i]; return NULL; }
+/* `if __name__ == "__main__":` at the top level of a module */
+static int is_main_guard(AotUnit *u, Stmt *s){
+    if(s->kind!=STMT_IF || !s->expr || s->expr->end-s->expr->start!=3) return 0;
+    Tok *t=u->tv.v+s->expr->start;
+    int i=t[0].kind==T_NAME ? 0 : 2;
+    return t[1].kind==T_EQ && t[i].kind==T_NAME && !strcmp(t[i].text,"__name__") && t[2-i].kind==T_STRING && !strcmp(t[2-i].text,"__main__");
+}
+static int is_docstring(AotUnit *u, Stmt *s);
+/* The guard's body runs in the program's main module and never in an imported
+   one: it is put in place of the if (or its else part is). Imports in it move
+   up to the module's other imports - a compiled module imports at its top. */
+static void apply_main_guards(AotUnit *u, int is_main){
+    Ast *m=u->ast; int n=m->body_count, header=0, any=0;
+    for(int i=0;i<n;i++) if(is_main_guard(u,m->body[i])) any=1;
+    if(!any) return;
+    while(header<n && (m->body[header]->kind==STMT_IMPORT || m->body[header]->kind==STMT_FROM_IMPORT || (header==0 && is_docstring(u,m->body[0])))) header++;
+    int cap=n; for(int i=0;i<n;i++) if(is_main_guard(u,m->body[i])) cap+=m->body[i]->body_count+m->body[i]->orelse_count;
+    Stmt **out=MPY_NEW_ARR(Stmt*,cap), **rest=MPY_NEW_ARR(Stmt*,cap); int k=0, r=0;
+    for(int i=0;i<header;i++) out[k++]=m->body[i];
+    for(int i=header;i<n;i++){ Stmt *s=m->body[i];
+        if(!is_main_guard(u,s)){ rest[r++]=s; continue; }
+        Stmt **b=is_main?s->body:s->orelse; int bn=is_main?s->body_count:s->orelse_count;
+        for(int j=0;j<bn;j++){
+            if(b[j]->kind==STMT_IMPORT || b[j]->kind==STMT_FROM_IMPORT) out[k++]=b[j];
+            else rest[r++]=b[j];
+        }
+    }
+    for(int i=0;i<r;i++) out[k++]=rest[i];
+    free(rest);
+    m->body=out; m->body_count=k; m->body_cap=cap;
+}
 static AotUnit *add_unit(Units *us, const char *name, const char *path, char *src){
     AotUnit *u=MPY_NEW0(AotUnit);
     u->name=xstrdup2(name); u->path=path?xstrdup2(path):NULL; u->src=src;
-    if(src){ u->tv=lex(src); SymTable st; memset(&st,0,sizeof st); u->ast=build_ast_and_symbols(&u->tv,&st); }
+    if(src){ u->tv=lex(src); SymTable st; memset(&st,0,sizeof st); u->ast=build_ast_and_symbols(&u->tv,&st); apply_main_guards(u,!strcmp(name,"__main__")); }
     if(us->n==us->cap){ us->cap=us->cap?us->cap*2:8; us->v=(AotUnit**)xrealloc(us->v,sizeof(AotUnit*)*(size_t)us->cap); }
     us->v[us->n++]=u;
     return u;
 }
 static int is_builtin_module(const char *name){
-    static const char *mods[]={"sys","thread","asyncio","math","time","random","typing","functools","__future__","collections","collections.abc",NULL};
+    static const char *mods[]={"sys","thread","asyncio","math","time","random","typing","functools","__future__","collections","collections.abc","ctypes","json","minipy",NULL};
     for(int i=0;mods[i];i++) if(!strcmp(mods[i],name)) return 1;
     return 0;
 }
@@ -78,15 +109,9 @@ static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line
             if(is_builtin_module(prefix)){
                 if(!leaf && strcmp(dotted,"collections.abc")){ fprintf(stderr,"%s:%d: error: built-in module '%s' has no submodules\n",from->path,line,prefix); ok=0; }
             } else {
-                char *path=mpy_fs_module_path(dir,prefix), *err=NULL;
-                char *src=mpy_fs_try_read_file(path,&err);
-                if(!src){
-                    free(err); err=NULL; free(path);
-                    size_t L=strlen(prefix); char *pkg=(char*)xmalloc(L+10);
-                    memcpy(pkg,prefix,L); memcpy(pkg+L,".__init__",10);
-                    path=mpy_fs_module_path(dir,pkg); free(pkg);
-                    src=mpy_fs_try_read_file(path,&err); free(err);
-                }
+                char *path=mpy_fs_find_module(dir,prefix), *err=NULL;   /* the importer's folder, MINIPYPATH, <minipy>/lib */
+                char *src=path?mpy_fs_try_read_file(path,&err):NULL;
+                free(err);
                 if(src) add_unit(us,prefix,path,src);
                 else if(!leaf) add_unit(us,prefix,NULL,NULL);          /* namespace package */
                 else { fprintf(stderr,"%s:%d: error: No module named '%s'\n",from->path,line,prefix); ok=0; }
@@ -148,7 +173,7 @@ static int scan_imports(Units *us, AotUnit *u){
 
 static char *strip_ext(const char *path){
     size_t n=strlen(path); const char *slash=strrchr(path,'/'), *dot=strrchr(path,'.');
-    if(dot && (!slash || dot>slash) && strcmp(dot,".mpy")==0) n=(size_t)(dot-path);
+    if(dot && (!slash || dot>slash) && (strcmp(dot,".mpy")==0 || strcmp(dot,".py")==0)) n=(size_t)(dot-path);
     return xstrndup2(path,(int)n);
 }
 static char *concat(const char *a, const char *b){ size_t la=strlen(a), lb=strlen(b); char *r=(char*)xmalloc(la+lb+1); memcpy(r,a,la); memcpy(r+la,b,lb+1); return r; }

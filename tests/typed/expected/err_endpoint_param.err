@@ -1,0 +1,1 @@
+err_endpoint_param.mpy:11: error: endpoint total(): parameter 'values' is list[int]; path and query parameters are int, float, bool or str

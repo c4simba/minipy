@@ -72,7 +72,8 @@ typedef struct G {
     Lit *zlits; int nzlits, czlits;         /* NUL-terminated strings Z<i> */
     Lit *rlits; int nrlits, crlits;         /* raw bytes RL<i> (format string pieces) */
     AFunc **queue; int nq, cq;              /* functions to emit */
-    Fmt *fmts; int nfmts, cfmts;            /* generated formatters FMT<i> */
+    Fmt *fmts; int nfmts, cfmts;            /* generated formatters FMT<i> (repr 2+v: JSON, variant v) */
+    struct JVar { const char *isep, *ksep; int ascii; } *jvars; int njvars, cjvars;   /* json.dumps options */
     struct { AFunc *fn; int virt; } *stubs; int nstubs, cstubs;   /* task entries TS<i> */
     Ty **tdescs; int ntdescs, ctdescs;      /* tuple descriptors TD<i> */
     int *class_used;
@@ -332,8 +333,16 @@ static void conv_func(F *f, Ty *from, Ty *to, int owned){
 /* the value in eax/st0 (owned) as a `to` */
 static void conv(F *f, Ty *from, Ty *to){ conv_num(f,from,to); conv_func(f,from,to,1); }
 static int gen_zero(F *f, Ty *t);
+static int is_endpoint_ty(Ty *t){ t=ty_find(t); return t->k==TY_FUNC && (t->tup&4); }
 static void gen_as(F *f, Expr *e, Ty *want, int owned){
     if(e->kind==EXPR_NONE){ int o=gen_zero(f,want); if(o && !owned) hold(f); return; }
+    if(is_endpoint_ty(want) && !is_endpoint_ty(TY(e))){                /* a function as a minipy.Endpoint: its adapter */
+        XInfo *x=xinfo(e);
+        if(x->kind!=X_FUNCREF || !x->fn || !x->fn->ep_adapter) cg_fail(e->line,"a minipy.Endpoint is made from a function given by its name");
+        AFunc *ad=x->fn->ep_adapter; use_fn(ad); gg->fv_used[ad->id]=1;
+        E(f,"mov eax,FV%d",ad->id);
+        return;
+    }
     if(owned) gen_owned(f,e); else gen_borrow(f,e);
     conv_num(f,TY(e),want); conv_func(f,TY(e),want,owned);
 }
@@ -492,7 +501,9 @@ static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
             conv_num(f,tb,TY_FLOAT_T);
             if(ta->k==TY_FLOAT){ E(f,"fld qword [esp]"); E(f,"add esp,8"); } else { E(f,"fild dword [esp]"); E(f,"add esp,4"); }
             E(f,"fcompp"); E(f,"fnstsw ax"); E(f,"sahf");
-            E(f,"set%s al",cc_of(code,1)); E(f,"movzx eax,al"); return;
+            E(f,"set%s al",cc_of(code,1));                     /* a NaN (unordered: PF) is unequal to everything */
+            if(code==CMP_NE){ E(f,"setp cl"); E(f,"or al,cl"); } else { E(f,"setnp cl"); E(f,"and al,cl"); }
+            E(f,"movzx eax,al"); return;
         }
         E(f,"mov ecx,eax"); E(f,"pop eax"); E(f,"cmp eax,ecx"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
     }
@@ -788,9 +799,10 @@ static int tdesc(Ty *t){
 }
 static int gen_tuple(F *f, Expr *e){
     Ty *t=TY(e);
+    Expr **items=e->kind==EXPR_DICT ? e->vals : e->items;          /* a record: {"key": value, ...} */
     E(f,"mov eax,TD%d",tdesc(t)); E(f,"mov edx,%d",tuple_size(t)); CALLRT(f,"rt_tuple_new");
     E(f,"push eax");
-    for(int i=0;i<e->count;i++){ Ty *et=t->elems[i]; gen_as(f,e->items[i],et,1); E(f,"mov ecx,[esp]"); store_new(f,et,"ecx",tuple_off(t,i)); }
+    for(int i=0;i<e->count;i++){ Ty *et=t->elems[i]; gen_as(f,items[i],et,1); E(f,"mov ecx,[esp]"); store_new(f,et,"ecx",tuple_off(t,i)); }
     E(f,"pop eax");
     return 1;
 }
@@ -1263,7 +1275,7 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
     }
     if(!strcmp(n,"str")||!strcmp(n,"repr")){
         if(!a0){ E(f,"xor eax,eax"); return 0; }
-        if(t0->k==TY_STR && n[0]=='s') return gen(f,a0);
+        if(t0->k==TY_STR && !ty_find(t0)->tup && n[0]=='s') return gen(f,a0);
         rt("rt_sb_need"); E(f,"push dword [rt_sb_len]");
         gen_borrow(f,a0); gen_fmt(f,t0,n[0]=='r');
         E(f,"pop eax"); CALLRT(f,"rt_sb_take"); return 1;
@@ -1430,6 +1442,7 @@ static int gen_tmethod(F *f, Expr *e, XInfo *xi){
             if(a0){ E(f,"push eax"); gen_borrow(f,a0); E(f,"mov ecx,eax"); E(f,"pop eax"); } else E(f,"xor ecx,ecx");
             E(f,"mov edx,%d",m[0]=='s'?3:m[0]=='l'?1:2); CALLRT(f,"rt_str_strip"); return 1;
         }
+        if(!strcmp(m,"encode")||!strcmp(m,"decode")) return gen(f,obj);       /* str and bytes are the same bytes */
         gen_borrow(f,obj);
         if(!strcmp(m,"upper")||!strcmp(m,"lower")||!strcmp(m,"capitalize")||!strcmp(m,"title")||!strcmp(m,"swapcase")){
             E(f,"mov edx,%d",m[0]=='u'?0:m[0]=='l'?1:m[0]=='c'?2:m[0]=='t'?3:4); CALLRT(f,"rt_str_case"); return 1; }
@@ -1570,8 +1583,59 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
     CALLRT(f,"rt_buf_peek_str"); return 1;
 }
 
+/* A C function through ctypes (cdecl, i386 System V): the arguments are
+   built in a block the call finds 16-byte aligned, the old esp saved above
+   it; the function is reached through its slot CI<id>, which the dynamic
+   linker fills in. Results: eax (edx:eax for 64 bits: the low half), st0 for
+   floating point, a char * copied into a new str. */
+static int csize(int k){ return k==CT_DOUBLE||k==CT_LONGLONG||k==CT_ULONGLONG ? 8 : 4; }
+static int gen_ccall(F *f, Expr *e, XInfo *xi){
+    ACFunc *cf=xi->cfn; int off[16], size=0;
+    for(int i=0;i<e->count;i++){ off[i]=size; size+=csize(xi->argmap[i]); }
+    E(f,"mov eax,esp"); E(f,"sub esp,%d",size+4); E(f,"and esp,-16"); E(f,"mov [esp+%d],eax",size);
+    for(int i=0;i<e->count;i++){ Expr *a=e->items[i]; int k=xi->argmap[i]; Ty *t=TY(a);
+        if(k==CT_DOUBLE||k==CT_FLOAT){ gen_as(f,a,TY_FLOAT_T,0); E(f,k==CT_DOUBLE?"fstp qword [esp+%d]":"fstp dword [esp+%d]",off[i]); continue; }
+        gen_borrow(f,a);
+        if(t->k==TY_STR){ int l=new_label(), l2=new_label();                 /* the bytes, NUL-terminated ("" too) */
+            E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
+        else if(t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
+        E(f,"mov [esp+%d],eax",off[i]);
+        if(k==CT_LONGLONG){ E(f,"cdq"); E(f,"mov [esp+%d],edx",off[i]+4); }
+        else if(k==CT_ULONGLONG) E(f,"mov dword [esp+%d],0",off[i]+4);
+    }
+    E(f,"call [CI%d]   ; %s",cf->id,cf->sym);
+    E(f,"mov esp,[esp+%d]",size);
+    switch(cf->restype){
+        case CT_SHORT: E(f,"movsx eax,ax"); break;
+        case CT_USHORT: E(f,"movzx eax,ax"); break;
+        case CT_BYTE: E(f,"movsx eax,al"); break;
+        case CT_UBYTE: E(f,"movzx eax,al"); break;
+        case CT_BOOL: E(f,"test al,al"); E(f,"setnz al"); E(f,"movzx eax,al"); break;
+        case CT_CHARP:{ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); LBL(f,l); return 1; }
+        default: break;
+    }
+    return 0;
+}
+/* ctypes.create_string_buffer / string_at / addressof / get_errno */
+static int gen_ctypes_fn(F *f, Expr *e, XInfo *xi){
+    const char *m=xi->name+7;
+    if(!strcmp(m,"create_string_buffer")){ Ty *t0=TY(e->items[0]); gen_borrow(f,e->items[0]);
+        if(t0->k==TY_STR){ CALLRT(f,"rt_buf_from_str"); E(f,"inc dword [eax+8]"); }   /* and its 0 byte (a buffer has one more) */
+        else CALLRT(f,"rt_buf_new");
+        return 1; }
+    if(!strcmp(m,"addressof")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); return 0; }
+    if(!strcmp(m,"string_at")){ gen(f,e->items[0]); E(f,"push eax");
+        if(e->count==2){ gen(f,e->items[1]); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_mem_peek_str"); return 1; }
+        E(f,"pop eax"); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); return 1; }
+    if(!strcmp(m,"get_errno")){ E(f,"mov eax,esp"); E(f,"and esp,-16"); E(f,"sub esp,12"); E(f,"push eax");
+        E(f,"call [CI%d]   ; __errno_location",xi->cfn->id); E(f,"pop esp"); E(f,"mov eax,[eax]"); return 0; }
+    cg_fail(e->line,"unsupported ctypes function");
+    return 0;
+}
+
 static int gen_asyncio(F *f, Expr *e, XInfo *xi);
 static int gen_bmod(F *f, Expr *e, XInfo *xi);
+static int gen_json_dumps(F *f, Expr *e, XInfo *xi);
 static int gen_call(F *f, Expr *e){
     XInfo *xi=xinfo(e); Ty *t=TY(e);
     switch(xi->kind){
@@ -1592,7 +1656,11 @@ static int gen_call(F *f, Expr *e){
         case X_SYSCALL: gen_syscall_regs(f,e); E(f,"mov eax,esp"); CALLRT(f,"rt_syscall_list"); E(f,"add esp,28"); return 1;
         case X_SYS: return gen_sys(f,e,xi);
         case X_ASYNC: return gen_asyncio(f,e,xi);
-        case X_BMOD: return gen_bmod(f,e,xi);
+        case X_BMOD: if(!strncmp(xi->name,"ctypes.",7)) return gen_ctypes_fn(f,e,xi);
+            if(!strcmp(xi->name,"json.dumps")) return gen_json_dumps(f,e,xi);
+            if(!strcmp(xi->name,"minipy.endpoint")){ gen_as(f,e->items[0],TY(e),1); return 1; }
+            return gen_bmod(f,e,xi);
+        case X_CCALL: return gen_ccall(f,e,xi);
         default: cg_fail(e->line,"unsupported call");
     }
 }
@@ -1815,7 +1883,8 @@ static int gen(F *f, Expr *e){
             return 0;
         case EXPR_INDEX: return gen_index(f,e);
         case EXPR_SLICE: return gen_slice(f,e);
-        case EXPR_LIST: case EXPR_SET: case EXPR_DICT: return gen_literal_container(f,e);
+        case EXPR_DICT: if(t->k==TY_TUPLE) return gen_tuple(f,e); return gen_literal_container(f,e);
+        case EXPR_LIST: case EXPR_SET: return gen_literal_container(f,e);
         case EXPR_TUPLE: return t->k==TY_TUPLE ? gen_tuple(f,e) : gen_literal_container(f,e);
         case EXPR_COMPREHENSION:
             if(e->comp_kind=='G'){                       /* a generator expression: call its generator function with the first iterable */
@@ -1870,14 +1939,14 @@ static int gen_concat(F *f, Expr *e){
 }
 /* eax = str(x) (owned or borrowed: returns owned) */
 static int gen_str_of(F *f, Expr *x){
-    if(TY(x)->k==TY_STR) return gen(f,x);
+    if(TY(x)->k==TY_STR && !ty_find(TY(x))->tup) return gen(f,x);
     return gen_concat(f,x);
 }
 
 /* formatters of containers and objects: FMT<i>, eax = value */
 static int fmt_index(Ty *t, int repr){
     t=ty_find(t);
-    if(t->k!=TY_OBJ) repr=1;
+    if(t->k!=TY_OBJ && repr<2) repr=1;
     for(int i=0;i<gg->nfmts;i++) if(gg->fmts[i].repr==repr && ty_same(gg->fmts[i].ty,t)) return i;
     if(gg->nfmts==gg->cfmts){ gg->cfmts=gg->cfmts?gg->cfmts*2:16; gg->fmts=(Fmt*)xrealloc(gg->fmts,sizeof(Fmt)*(size_t)gg->cfmts); }
     gg->fmts[gg->nfmts].ty=t; gg->fmts[gg->nfmts].repr=repr;
@@ -1890,7 +1959,11 @@ static void gen_fmt(F *f, Ty *t, int repr){
         case TY_INT: CALLRT(f,"rt_sb_int"); return;
         case TY_BOOL: CALLRT(f,"rt_sb_bool"); return;
         case TY_FLOAT: CALLRT(f,"rt_sb_float"); return;
-        case TY_STR: CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); return;
+        case TY_STR:
+            if(t->tup){ int l=new_label(), l2=new_label();       /* Optional[str]: None prints as None */
+                E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",l2);
+                LBL(f,l); CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); LBL(f,l2); return; }
+            CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); return;
         case TY_BUF: E(f,"mov eax,Z%d",zlit("<buffer>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_TASK: E(f,"mov eax,Z%d",zlit("<Task>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_FILE: E(f,"mov eax,Z%d",zlit("<file>")); CALLRT(f,"rt_sb_cstr"); return;
@@ -1901,7 +1974,100 @@ static void gen_fmt(F *f, Ty *t, int repr){
         default: E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); return;     /* a bare None */
     }
 }
+/* ---- json.dumps: JSON writers by type (JSON formatters FMT<i> have repr 2+variant) */
+static int json_variant(const char *isep, const char *ksep, int ascii){
+    for(int i=0;i<gg->njvars;i++) if(!strcmp(gg->jvars[i].isep,isep) && !strcmp(gg->jvars[i].ksep,ksep) && gg->jvars[i].ascii==ascii) return i;
+    if(gg->njvars==gg->cjvars){ gg->cjvars=gg->cjvars?gg->cjvars*2:4; gg->jvars=xrealloc(gg->jvars,sizeof(*gg->jvars)*(size_t)gg->cjvars); }
+    gg->jvars[gg->njvars].isep=isep; gg->jvars[gg->njvars].ksep=ksep; gg->jvars[gg->njvars].ascii=ascii;
+    return gg->njvars++;
+}
+static void sb_cstr_lit(F *f, const char *s){ E(f,"mov eax,Z%d",zlit(s)); CALLRT(f,"rt_sb_cstr"); }
+/* append the JSON text of the value in eax/st0 (borrowed) */
+static void gen_json(F *f, Ty *t, int v){
+    t=ty_find(t);
+    switch(t->k){
+        case TY_INT: CALLRT(f,"rt_sb_int"); return;
+        case TY_BOOL:{ int l=new_label(); E(f,"mov ecx,Z%d",zlit("true")); E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov ecx,Z%d",zlit("false")); LBL(f,l); E(f,"mov eax,ecx"); CALLRT(f,"rt_sb_cstr"); return; }
+        case TY_FLOAT: CALLRT(f,"rt_sb_jfloat"); return;
+        case TY_STR:
+            if(t->tup){ int l=new_label(), l2=new_label();                 /* Optional[str]: None is null */
+                E(f,"test eax,eax"); E(f,"jnz L%d",l); sb_cstr_lit(f,"null"); E(f,"jmp L%d",l2); LBL(f,l);
+                E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); LBL(f,l2); return; }
+            E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); return;
+        case TY_LIST: case TY_DICT: case TY_OBJ: case TY_TUPLE: rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(t,2+v)); return;
+        default: sb_cstr_lit(f,"null"); return;
+    }
+}
+static void emit_json_formatter(int i){
+    F ff; memset(&ff,0,sizeof ff); F *f=&ff;
+    Ty *t=gg->fmts[i].ty; int v=gg->fmts[i].repr-2;
+    const char *isep=gg->jvars[v].isep, *ksep=gg->jvars[v].ksep;
+    buf_printf(&f->code,"\nFMT%d:                         ; JSON of %s\n",i,ty_name(t));
+    int lnull=new_label();
+    E(f,"test eax,eax"); E(f,"jz L%d",lnull);
+    if(t->k==TY_OBJ || (t->k==TY_TUPLE && t->names)){        /* {"field": value, ...} */
+        E(f,"push eax"); E(f,"mov al,'{'"); CALLRT(f,"rt_sb_char");
+        AField *fl[256]; int nf=0;
+        if(t->k==TY_OBJ){ AClass *chain[32]; int nc=0; for(AClass *k=t->cls;k && nc<32;k=k->base) chain[nc++]=k;
+            for(int c=nc-1;c>=0;c--) for(int k=0;k<chain[c]->nfields && nf<256;k++) if(chain[c]->fields[k]->name[0]!='_') fl[nf++]=chain[c]->fields[k]; }
+        int n=t->k==TY_OBJ?nf:t->nelems;
+        for(int k=0;k<n;k++){
+            const char *name=t->k==TY_OBJ?fl[k]->name:t->names[k];
+            Ty *ft=t->k==TY_OBJ?fl[k]->ty:t->elems[k]; int off=t->k==TY_OBJ?fl[k]->offset:tuple_off(t,k);
+            char key[400]; snprintf(key,sizeof key,"%s\"%s\"%s",k?isep:"",name,ksep);
+            sb_cstr_lit(f,key);
+            E(f,"mov eax,[esp]"); load_mem(f,ft,"eax",off); gen_json(f,ft,v);
+        }
+        E(f,"pop eax"); E(f,"mov al,'}'"); E(f,"jmp rt_sb_char");
+    } else if(t->k==TY_TUPLE){                                 /* a tuple: a JSON array */
+        E(f,"push eax"); E(f,"mov al,'['"); CALLRT(f,"rt_sb_char");
+        for(int k=0;k<t->nelems;k++){
+            if(k) sb_cstr_lit(f,isep);
+            E(f,"mov eax,[esp]"); load_mem(f,t->elems[k],"eax",tuple_off(t,k)); gen_json(f,t->elems[k],v);
+        }
+        E(f,"pop eax"); E(f,"mov al,']'"); E(f,"jmp rt_sb_char");
+    } else {                                                   /* list / dict */
+        int ltop=new_label(), lend=new_label(), lskip=new_label(), isdict=t->k==TY_DICT;
+        Ty *el=t->elem;
+        E(f,"push ebx"); E(f,"push esi"); E(f,"mov ebx,eax");
+        E(f,"mov al,'%c'",isdict?'{':'['); CALLRT(f,"rt_sb_char");
+        E(f,"xor esi,esi");
+        LBL(f,ltop);
+        E(f,"cmp esi,[ebx+8]"); E(f,"jae L%d",lend);
+        E(f,"test esi,esi"); E(f,"jz L%d",lskip); sb_cstr_lit(f,isep); LBL(f,lskip);
+        if(isdict){
+            Ty *kt=ty_find(ty_dkey(t));
+            E(f,"mov eax,[ebx+16]"); E(f,"mov eax,[eax+esi*4]");
+            if(kt->k==TY_STR){ E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); }
+            else { E(f,"push eax"); E(f,"mov al,'\"'"); CALLRT(f,"rt_sb_char"); E(f,"pop eax");
+                if(kt->k==TY_FLOAT) E(f,"fld qword [eax]");
+                gen_json(f,kt,v); E(f,"mov al,'\"'"); CALLRT(f,"rt_sb_char"); }
+            sb_cstr_lit(f,ksep);
+            E(f,"mov eax,[ebx+20]");
+        } else E(f,"mov eax,[ebx+16]");
+        if(is_flt(el)) E(f,"fld qword [eax+esi*8]"); else E(f,"mov eax,[eax+esi*4]");
+        gen_json(f,el,v);
+        E(f,"inc esi"); E(f,"jmp L%d",ltop);
+        LBL(f,lend); E(f,"mov al,'%c'",isdict?'}':']'); CALLRT(f,"rt_sb_char");
+        E(f,"pop esi"); E(f,"pop ebx"); E(f,"ret");
+    }
+    LBL(f,lnull); E(f,"mov eax,Z%d",zlit("null")); E(f,"jmp rt_sb_cstr"); rt("rt_sb_cstr");
+    buf_cat(&gg->text,&f->code); free(f->code.s);
+}
+static int gen_json_dumps(F *f, Expr *e, XInfo *xi){
+    const char *isep=", ", *ksep=": ";
+    if(xi->key){ isep=xi->key->items[0]->tok->text; ksep=xi->key->items[1]->tok->text; }
+    int v=json_variant(isep,ksep,xi->argmap[0]);
+    Expr *x=e->items[0];
+    rt("rt_sb_need"); E(f,"push dword [rt_sb_len]");
+    if(x->kind==EXPR_NONE) sb_cstr_lit(f,"null");
+    else { gen_borrow(f,x); gen_json(f,TY(x),v); }
+    E(f,"pop eax"); CALLRT(f,"rt_sb_take");
+    return 1;
+}
+
 static void emit_formatter(int i){
+    if(gg->fmts[i].repr>=2){ emit_json_formatter(i); return; }
     F ff; memset(&ff,0,sizeof ff); F *f=&ff;
     Ty *t=gg->fmts[i].ty; int repr=gg->fmts[i].repr;
     buf_printf(&f->code,"\nFMT%d:                         ; %s of %s\n",i,repr?"repr":"str",ty_name(t));
@@ -1933,6 +2099,20 @@ static void emit_formatter(int i){
             E(f,"pop eax"); E(f,"mov eax,[eax+8]"); E(f,"mov eax,[eax]"); CALLRT(f,"rt_sb_str");
             E(f,"mov eax,Z%d",zlit(" object>")); CALLRT(f,"rt_sb_cstr"); E(f,"ret");
         }
+        LBL(f,lnone); E(f,"mov eax,Z%d",zlit("None")); E(f,"jmp rt_sb_cstr"); rt("rt_sb_cstr");
+        buf_cat(&gg->text,&f->code); free(f->code.s);
+        return;
+    }
+    if(t->k==TY_TUPLE && t->names){                       /* a record: {'key': value, ...} */
+        int lnone=new_label();
+        E(f,"test eax,eax"); E(f,"jz L%d",lnone);
+        E(f,"push eax"); E(f,"mov al,'{'"); CALLRT(f,"rt_sb_char");
+        for(int i=0;i<t->nelems;i++){
+            char key[300]; snprintf(key,sizeof key,"%s'%s': ",i?", ":"",t->names[i]);
+            E(f,"mov eax,Z%d",zlit(key)); CALLRT(f,"rt_sb_cstr");
+            E(f,"mov eax,[esp]"); load_mem(f,t->elems[i],"eax",tuple_off(t,i)); gen_fmt(f,t->elems[i],1);
+        }
+        E(f,"pop eax"); E(f,"mov al,'}'"); E(f,"jmp rt_sb_char");
         LBL(f,lnone); E(f,"mov eax,Z%d",zlit("None")); E(f,"jmp rt_sb_cstr"); rt("rt_sb_cstr");
         buf_cat(&gg->text,&f->code); free(f->code.s);
         return;
@@ -3294,6 +3474,48 @@ static void emit_lit_pools(void){
     for(int i=0;i<gg->nrlits;i++){ buf_printf(d,"RL%d ",i); buf_bytes(d,gg->rlits[i].s,gg->rlits[i].len,0); }
 }
 
+/* Dynamic linking (ctypes): the C functions the program calls are imported
+   from their libraries by ld-linux.so.2 - a PT_INTERP segment, a PT_DYNAMIC
+   one, and symbol / relocation / hash / string tables for the slots CI<id>
+   (R_386_32: the linker writes each function's address there at start). */
+static int dyn_used(AProg *p){ for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used) return 1; return 0; }
+static void emit_dynamic_header(Buf *o, AProg *p){
+    buf_printf(o,"segment interpreter readable\n        db '/lib/ld-linux.so.2',0\n\nsegment dynamic readable\n");
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used) buf_printf(o,"        dd 1,DYN_L%d-DYN_strtab       ; DT_NEEDED %s\n",i,p->clibs[i]->soname);
+    buf_printf(o,"        dd 5,DYN_strtab,10,DYN_strsz   ; DT_STRTAB, DT_STRSZ\n"
+                 "        dd 6,DYN_symtab,11,16          ; DT_SYMTAB, DT_SYMENT\n"
+                 "        dd 17,DYN_rel,18,DYN_relsz,19,8   ; DT_REL, DT_RELSZ, DT_RELENT\n"
+                 "        dd 4,DYN_hash                  ; DT_HASH\n"
+                 "        dd 0,0\n\n");
+}
+static void emit_dynamic_tables(Buf *o, AProg *p){
+    int n=0;
+    buf_printf(o,"\n; ---- imports of the dynamic linker\nalign 4\nDYN_symtab:\n        dd 0,0,0,0\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){ n++; buf_printf(o,"        dd DYN_S%d-DYN_strtab,0,0\n        db 0x12,0\n        dw 0\n",i); }   /* STB_GLOBAL, STT_FUNC */
+    buf_printf(o,"DYN_rel:\n");
+    int k=0;
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){ k++; buf_printf(o,"        dd CI%d,(%d shl 8) or 1   ; R_386_32 %s\n",i,k,p->cfuncs[i]->sym); }
+    buf_printf(o,"DYN_relsz = $-DYN_rel\nDYN_hash:\n        dd 1,%d,0\n",n+1);           /* one bucket, empty: nothing to export */
+    for(int i=0;i<=n;i++) buf_printf(o,"        dd 0\n");
+    buf_printf(o,"DYN_strtab db 0\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used) buf_printf(o,"DYN_S%d db '%s',0\n",i,p->cfuncs[i]->sym);
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used) buf_printf(o,"DYN_L%d db '%s',0\n",i,p->clibs[i]->soname);
+    buf_printf(o,"DYN_strsz = $-DYN_strtab\nalign 4\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){
+        buf_printf(o,"CI%d dd 0   ; %s\n",i,p->cfuncs[i]->sym);
+        if(!strcmp(p->cfuncs[i]->sym,"fflush")) buf_printf(o,"CI_fflush = CI%d\n",i);
+    }
+}
+/* With the C library linked, its stdio buffers are flushed at exit (fflush(NULL)). */
+static void import_fflush(AProg *p){
+    ACLib *libc=NULL;
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used && !strcmp(p->clibs[i]->soname,"libc.so.6")) libc=p->clibs[i];
+    if(!libc) return;
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->lib==libc && !strcmp(p->cfuncs[i]->sym,"fflush")){ p->cfuncs[i]->used=1; return; }
+    ACFunc *f=MPY_NEW0(ACFunc); f->lib=libc; f->sym=xstrdup2("fflush"); f->id=p->ncfuncs; f->used=1; f->nargtypes=-1;
+    p->cfuncs=(ACFunc**)xrealloc(p->cfuncs,sizeof(ACFunc*)*(size_t)(p->ncfuncs+1)); p->cfuncs[p->ncfuncs++]=f;
+}
+
 /* x87 rounding to double precision: float arithmetic gives Python's results */
 #define FPU_DOUBLE "        push 0x027F\n        fldcw [esp]\n        pop eax\n"
 
@@ -3343,8 +3565,12 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     buf_printf(&o,"; generated by minipy --compile from %s\n",p->mods[0]->unit->path?p->mods[0]->unit->path:"?");
     const char *report="";
     if(opt->count_allocs && aot_rt_used(g.rt,"rt_alloc")){ rt("rt_live_report"); report="        call rt_live_report\n"; buf_printf(&g.data,"RT_COUNT_ALLOCS = 1\n"); }
+    int dyn=g.target==AOT_TARGET_LINUX && dyn_used(p);
+    if(dyn) import_fflush(p);
     if(g.target==AOT_TARGET_LINUX){
-        buf_printf(&o,"format ELF executable 3\nentry start\n\nsegment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
+        buf_printf(&o,"format ELF executable 3\nentry start\n\n");
+        if(dyn) emit_dynamic_header(&o,p);
+        buf_printf(&o,"segment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
         buf_printf(&o,"        call F%d\n%s        xor ebx,ebx\n        jmp rt_exit\n",main_body->id,report);
     } else {
         buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,0,0\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
@@ -3356,6 +3582,7 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     aot_rt_emit(g.rt,0,put_cb,&o);
     if(g.target==AOT_TARGET_LINUX) buf_printf(&o,"\nsegment readable writeable\n\n");
     else buf_printf(&o,"\n; ---- data\n");
+    if(dyn) emit_dynamic_tables(&o,p);
     buf_cat(&o,&g.data);
     aot_rt_emit(g.rt,1,put_cb,&o);
     if(g.target==AOT_TARGET_KOLIBRI) buf_printf(&o,"\nalign 4\ni_end:\n");

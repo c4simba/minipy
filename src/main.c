@@ -76,7 +76,7 @@ static int mpy_run(int argc,char **argv){
     mpy_platform_banner(script_path);
     /* mpy_main_vm is zero-initialized (static) and cstack_base is already set,
        so no memset here -- it would wipe the C-stack base the GC needs. */
-    if(setjmp(vm.panic)){ print_traceback(is_obj(vm.pending_exception,O_EXCEPTION)?vm.pending_exception:exceptionv("RuntimeError",vm.error_msg?vm.error_msg:"error",nonev())); return 1; }
+    if(setjmp(vm.panic)){ print_traceback(is_obj(vm.pending_exception,O_EXCEPTION)||is_exc_instance(vm.pending_exception)?vm.pending_exception:exceptionv("RuntimeError",vm.error_msg?vm.error_msg:"error",nonev())); return 1; }
     vm.builtins=dict_new(); vm.modules=dict_new();
     dict_set(vm.builtins,"len",nativev(&N_LEN)); dict_set(vm.builtins,"range",nativev(&N_RANGE)); dict_set(vm.builtins,"next",nativev(&N_NEXT)); dict_set(vm.builtins,"iter",nativev(&N_ITER)); dict_set(vm.builtins,"input",nativev(&N_INPUT));
     dict_set(vm.builtins,"str",nativev(&N_STR)); dict_set(vm.builtins,"repr",nativev(&N_REPR)); dict_set(vm.builtins,"int",nativev(&N_INT)); dict_set(vm.builtins,"float",nativev(&N_FLOAT)); dict_set(vm.builtins,"bool",nativev(&N_BOOL));
@@ -86,7 +86,7 @@ static int mpy_run(int argc,char **argv){
     dict_set(vm.builtins,"type",nativev(&N_TYPE)); dict_set(vm.builtins,"isinstance",nativev(&N_ISINSTANCE)); dict_set(vm.builtins,"ord",nativev(&N_ORD)); dict_set(vm.builtins,"chr",nativev(&N_CHR)); dict_set(vm.builtins,"round",nativev(&N_ROUND)); dict_set(vm.builtins,"any",nativev(&N_ANY)); dict_set(vm.builtins,"all",nativev(&N_ALL));
     dict_set(vm.builtins,"super",nativev(&N_SUPER)); dict_set(vm.builtins,"staticmethod",nativev(&N_STATICMETHOD)); dict_set(vm.builtins,"classmethod",nativev(&N_CLASSMETHOD)); dict_set(vm.builtins,"property",nativev(&N_PROPERTY));
     {
-        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError",NULL};
+        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError","OSError",NULL};
         for(int i=0;excs[i];i++){ Obj *ec=new_obj(O_CLASS); ec->as.klass.name=xstrdup2(excs[i]); ec->as.klass.methods=dict_new(); dict_set(vm.builtins,excs[i],objv(ec)); }
     }
     /* Built-in `sys` module: the raw syscall gateway + platform tag. Preloaded
@@ -108,6 +108,7 @@ static int mpy_run(int argc,char **argv){
         dict_set(sysd,"poke_str_at",nativev(&N_POKE_STR_AT));
         dict_set(sysd,"cstr_at",nativev(&N_CSTR_AT));
         dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
+        mpy_stdlib_register(sysd);                         /* sys.exit, asyncio, json, minipy, _ctypes */
     }
     /* Built-in `thread` module: OS threads under a GIL (see vm_thread.c). */
     {
@@ -153,6 +154,7 @@ int main(int argc,char **argv){
     char cmdbuf[256]; char *kargv[32];
     const char *kcmd = mpy_platform_cmdline();
     if(kcmd){ argc=mpy_split_cmdline(kcmd,mpy_platform_exe_path(),cmdbuf,(int)sizeof(cmdbuf),kargv,32); argv=kargv; }
+    mpy_fs_set_program(argv[0]);          /* modules are also looked for in <minipy's folder>/lib */
 
     int rc = mpy_run(argc,argv);
     mpy_platform_shutdown();          /* closes the console on every return from mpy_run */

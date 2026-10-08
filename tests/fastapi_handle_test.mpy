@@ -1,0 +1,3 @@
+# The FastAPI app of tests/typed/fastapi_linux.mpy in the interpreter: the same
+# answers as compiled code and as real FastAPI (tests/typed/fastapi_handle.mpy).
+import typed.fastapi_handle

@@ -229,6 +229,11 @@ Value builtin_str(Value v){
     Value r;
     if(call_instance_method0(v,"__str__",&r)) return r;
     if(call_instance_method0(v,"__repr__",&r)) return r;
+    if(is_obj(v,O_INSTANCE) && dict_get(v.as.obj->as.inst.fields,"args",&r) && is_obj(r,O_TUPLE)){   /* an exception: its message */
+        List *a=&r.as.obj->as.tuple;
+        if(a->count==1) return builtin_str(a->items[0]);
+        if(a->count==0) return stringv("");
+    }
     if(is_obj(v,O_STRING)) return v;
     char *s=value_repr(v,0); Value o=stringv(s); free(s); return o;
 }
@@ -293,7 +298,7 @@ int native_call_kw(Native *n, List *pos, Dict *kw, Value *out){
         for(int i=1;i<l->count;i++){ Value it=l->items[i], k=key.type==V_NONE?it:call_value(key,1,&it); if(truthy(compare(k,bk,n==&N_MIN?OP_LT:OP_GT))){ best=it; bk=k; } }
         *out=best; return 1;
     }
-    return 0;
+    return stdlib_call_kw(n,pos,kw,out);
 }
 static Value native_reversed(int argc,Value*argv){ (void)argc; List tmp; memset(&tmp,0,sizeof(tmp)); collect_iterable(argv[0],&tmp); Obj*o=new_list(); for(int i=tmp.count-1;i>=0;i--) list_push(&o->as.list,tmp.items[i]); return objv(o); }
 static Value native_enumerate(int argc,Value*argv){ int64_t start=argc>=2?as_int(argv[1]):0; List tmp; memset(&tmp,0,sizeof(tmp)); collect_iterable(argv[0],&tmp); Obj*o=new_list(); for(int i=0;i<tmp.count;i++){ Obj*pr=new_tuple(); list_push(&pr->as.tuple,intv(start+i)); list_push(&pr->as.tuple,tmp.items[i]); list_push(&o->as.list,objv(pr)); } return objv(o); }

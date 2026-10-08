@@ -25,26 +25,17 @@ static int64_t my_strtoll(const char *s, char **end, int base){
     if(end)*end=(char*)s; return neg?-v:v;
 }
 
-static double my_strtod(const char *s, char **end){
-    double v=0; int neg=0; while(*s==' '||*s=='\t')s++;
-    if(*s=='-'){neg=1;s++;} else if(*s=='+')s++;
-    while(*s>='0'&&*s<='9'){ v=v*10.0+(*s-'0'); s++; }
-    if(*s=='.'){ s++; double frac=0.1; while(*s>='0'&&*s<='9'){ v+=(*s-'0')*frac; frac*=0.1; s++; } }
-    if(end)*end=(char*)s; return neg?-v:v;
-}
 
-/* Parse a decimal/float literal that may carry an exponent (1e3, 1.5e-2). */
-static double lex_atof(const char *s){
-    char *e; double m=my_strtod(s,&e);
-    if(*e=='e'||*e=='E'){ e++; int neg=0; if(*e=='+')e++; else if(*e=='-'){neg=1;e++;} int ex=0; while(*e>='0'&&*e<='9'){ex=ex*10+(*e-'0');e++;} double p=1; for(int i=0;i<ex;i++)p*=10.0; m=neg?m/p:m*p; }
-    return m;
-}
+/* Parse a decimal/float literal that may carry an exponent (1e3, 1.5e-2):
+   correctly rounded, as the C library reads it. */
+static double lex_atof(const char *s){ return strtod(s,NULL); }
 static int lex_ishex(int c){ return (c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'); }
 static int lex_hv(int c){ if(c>='0'&&c<='9')return c-'0'; if(c>='a'&&c<='f')return c-'a'+10; return c-'A'+10; }
 static int lex_utf8(char *out,int cp){
     if(cp<0x80){ out[0]=(char)cp; return 1; }
     if(cp<0x800){ out[0]=(char)(0xC0|(cp>>6)); out[1]=(char)(0x80|(cp&0x3F)); return 2; }
-    out[0]=(char)(0xE0|(cp>>12)); out[1]=(char)(0x80|((cp>>6)&0x3F)); out[2]=(char)(0x80|(cp&0x3F)); return 3;
+    if(cp<0x10000){ out[0]=(char)(0xE0|(cp>>12)); out[1]=(char)(0x80|((cp>>6)&0x3F)); out[2]=(char)(0x80|(cp&0x3F)); return 3; }
+    out[0]=(char)(0xF0|(cp>>18)); out[1]=(char)(0x80|((cp>>12)&0x3F)); out[2]=(char)(0x80|((cp>>6)&0x3F)); out[3]=(char)(0x80|(cp&0x3F)); return 4;
 }
 /* Lex a string literal starting at *pp (which points at the opening quote).
    Handles single and triple quotes, escapes, and raw strings (a triple-quoted
@@ -65,7 +56,7 @@ static void lex_string(TokVec *tv, const char **pp, int line, int raw){
                 else if(e=='0'){buf[b++]='\0';p++;} else if(e=='a'){buf[b++]='\a';p++;} else if(e=='b'){buf[b++]='\b';p++;}
                 else if(e=='f'){buf[b++]='\f';p++;} else if(e=='v'){buf[b++]='\v';p++;}
                 else if(e=='x'){ p++; int h=0,cnt=0; while(cnt<2&&lex_ishex((unsigned char)*p)){h=h*16+lex_hv((unsigned char)*p);p++;cnt++;} buf[b++]=(char)h; }
-                else if(e=='u'){ p++; int h=0,cnt=0; while(cnt<4&&lex_ishex((unsigned char)*p)){h=h*16+lex_hv((unsigned char)*p);p++;cnt++;} b+=lex_utf8(buf+b,h); }
+                else if(e=='u'||e=='U'){ int digits=e=='u'?4:8; p++; int h=0,cnt=0; while(cnt<digits&&lex_ishex((unsigned char)*p)){h=h*16+lex_hv((unsigned char)*p);p++;cnt++;} if(h>0x10FFFF) h=0xFFFD; b+=lex_utf8(buf+b,h); }
                 else { buf[b++]='\\'; buf[b++]=e; p++; }
             }
         } else buf[b++]=*p++;
@@ -191,11 +182,15 @@ static void lex_fstring(TokVec *tv,const char **pp,int line){
 }
 
 static void lex_line(TokVec *tv,const char *p,int line){
+    const char *line_start=p;
     while(*p){
         if(*p==' '||*p=='\r'||*p=='\t'){p++;continue;}
         if(*p=='#')break; /* comment */
         if((*p=='f'||*p=='F') && (p[1]=='"'||p[1]=='\'')){ lex_fstring(tv,&p,line); continue; }
         if((*p=='r'||*p=='R') && (p[1]=='"'||p[1]=='\'')){ p++; lex_string(tv,&p,line,1); continue; }
+        if((*p=='b'||*p=='B') && (p[1]=='"'||p[1]=='\'')){ p++; lex_string(tv,&p,line,0); continue; }   /* bytes: a str here */
+        if(((*p=='b'||*p=='B') && (p[1]=='r'||p[1]=='R')) || ((*p=='r'||*p=='R') && (p[1]=='b'||p[1]=='B'))){
+            if(p[2]=='"'||p[2]=='\''){ p+=2; lex_string(tv,&p,line,1); continue; } }
         if(my_isdigit((unsigned char)*p)){
             const char *s=p;
             if(*p=='0' && (p[1]=='x'||p[1]=='X'||p[1]=='o'||p[1]=='O'||p[1]=='b'||p[1]=='B')){
@@ -211,7 +206,14 @@ static void lex_line(TokVec *tv,const char *p,int line){
             else { int64_t i=my_strtoll(tmp,NULL,10); addtok(tv,T_NUMBER,tmp,ti,i,0,0,line); }
             continue;
         }
-        if(my_isalpha((unsigned char)*p)||*p=='_'){ const char *s=p; while(my_isalnum((unsigned char)*p)||*p=='_')p++; int n=(int)(p-s); addtok(tv,kw(s,n),s,n,0,0,0,line); continue; }
+        if(my_isalpha((unsigned char)*p)||*p=='_'){ const char *s=p; while(my_isalnum((unsigned char)*p)||*p=='_')p++; int n=(int)(p-s);
+            TokKind k=kw(s,n);
+            if(k==T_MATCH||k==T_CASE){                  /* soft keywords: only `match x:` / `case p:` starting a line */
+                const char *q=p; while(*q==' '||*q=='\t') q++;
+                const char *e=q+my_strlen(q); while(e>q && (e[-1]==' '||e[-1]=='\t'||e[-1]=='\r')) e--;
+                if(s!=line_start || e==q || e[-1]!=':' || *q=='=' || *q=='.' || *q==':' || *q==',' || *q==')') k=T_NAME;
+            }
+            addtok(tv,k,s,n,0,0,0,line); continue; }
         if(*p=='"'||*p=='\''){
             lex_string(tv,&p,line,0); continue;
         }

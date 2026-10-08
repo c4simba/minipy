@@ -45,6 +45,7 @@ static Value str_method(Value recv,const char *name,int argc,Value *argv){
     if(!strcmp(name,"isdigit")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!(s[i]>='0'&&s[i]<='9')) return boolv(0); return boolv(1); }
     if(!strcmp(name,"isalpha")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!isalpha((unsigned char)s[i])) return boolv(0); return boolv(1); }
     if(!strcmp(name,"isspace")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!is_ws((unsigned char)s[i])) return boolv(0); return boolv(1); }
+    if(!strcmp(name,"encode")||!strcmp(name,"decode")) return stringv_len(s,n);   /* bytes are str here */
     if(!strcmp(name,"isalnum")){ if(n==0) return boolv(0); for(int i=0;i<n;i++) if(!isalnum((unsigned char)s[i])) return boolv(0); return boolv(1); }
     if(!strcmp(name,"isupper")||!strcmp(name,"islower")){ int up=name[2]=='u', cased=0; for(int i=0;i<n;i++){ unsigned char c=(unsigned char)s[i]; if(up? islower(c) : isupper(c)) return boolv(0); if(isalpha(c)) cased=1; } return boolv(cased); }
     if(!strcmp(name,"rfind")||!strcmp(name,"rindex")){ const char *sub=req_str(argv[0],"substring must be str"); int sl=(int)strlen(sub); for(int i=n-sl;i>=0;i--) if(memcmp(s+i,sub,(size_t)sl)==0) return intv(i); if(!strcmp(name,"rindex")) runtime_error("substring not found"); return intv(-1); }
@@ -120,6 +121,10 @@ static Value set_method(Value recv,const char *name,int argc,Value *argv){
 }
 
 Value call_builtin_method(Value recv,const char *name,int argc,Value *argv){
+    if(is_obj(recv,O_FUNCTION) && !strcmp(name,"__endpoint__")) return mpy_endpoint_call(recv,argc,argv);   /* minipy.endpoint(f) */
+    if(is_obj(recv,O_INSTANCE) && !strcmp(name,"__base_init__")){         /* super().__init__(...) of Exception & co: self.args */
+        Obj *t=new_tuple(); for(int i=0;i<argc;i++) list_push(&t->as.tuple,argv[i]);
+        dict_set(recv.as.obj->as.inst.fields,"args",objv(t)); return nonev(); }
     if(is_obj(recv,O_STRING)) return str_method(recv,name,argc,argv);
     if(is_obj(recv,O_LIST)) return list_method(recv,name,argc,argv);
     if(is_obj(recv,O_DICT)) return dict_method(recv,name,argc,argv);

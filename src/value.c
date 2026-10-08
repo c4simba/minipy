@@ -12,7 +12,8 @@ Value nativev(Native *n){ Value v; v.type=V_NATIVE; v.as.native=n; return v; }
 
 /* Format a double the way Python str()/repr() does: integral floats keep a
    trailing ".0" (2.0 -> "2.0", not "2"). */
-static void fmt_float(char *buf, size_t n, double f){ snprintf(buf,n,"%.15g",f); if(!strpbrk(buf,".eEnN")){ size_t l=strlen(buf); if(l+2<n){ buf[l]='.'; buf[l+1]='0'; buf[l+2]=0; } } }
+void mpy_float_repr(char *out, size_t n, double f);
+static void fmt_float(char *buf, size_t n, double f){ mpy_float_repr(buf,n,f); }   /* Python's repr: the shortest that reads back */
 
 Obj *new_obj(OType t){ Obj *o=MPY_NEW0(Obj); o->type=t; gc_track(o); return o; }
 Value class_to_value(Class *k){ Obj *o=(Obj*)((char*)k - offsetof(Obj,as)); return objv(o); }

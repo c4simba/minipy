@@ -1,0 +1,7 @@
+{'item_id': 5, 'q': 'x'}
+6 X 2
+[{'item_id': 1, 'q': 'a'}, {'item_id': 2, 'q': 'b'}] True True
+{'name': 'ann', 'age': 7} 7 y True
+{'a': '1', 'b': '2', 'c': '3'} 3
+{'item_id': 9, 'q': None} {'item_id': 10, 'q': 'z'}
+None None [None] q=None

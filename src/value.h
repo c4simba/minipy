@@ -19,7 +19,7 @@ typedef struct { char *s; int len; } String;
 typedef struct { Value *items; int count, cap; } List;
 typedef struct { char **keys; Value *vals; int count, cap; } Dict;
 
-struct Function { char *name; char **params; int arity; int min_arity; Value *defaults; int default_count; int star_index; int dstar_index; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Class *defining_class; Obj *owner; };
+struct Function { char *name; char **params; char **annots /* parameter i's annotated type (int, str ...) or NULL */; int arity; int min_arity; Value *defaults; int default_count; int star_index; int dstar_index; char **global_names; int global_count; char **nonlocal_names; int nonlocal_count; struct Chunk *chunk; Dict *globals; Dict *closure; char *module_dir; int store_globals; int is_generator; Class *defining_class; Obj *owner; };
 struct Class { char *name; Dict *methods; Class *base; };
 typedef struct { Class *klass; Dict *fields; } Instance;
 typedef struct { Value receiver; Function *fn; } BoundMethod;

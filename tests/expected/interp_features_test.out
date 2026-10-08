@@ -1,0 +1,19 @@
+MiniPy - Mini Python Interpreter
+Script: tests/interp_features_test.mpy
+
+a | 1 | [2, 3] ;
+
+bytes! café 3
+soft keywords 2
+4 **ab** 007 ('k', '=', 'v') ['x', 'y']
+True True True
+yes b ['yes', 'b']
+['Apple', 'banana', 'fig', 'pear'] ['banana', 'Apple', 'pear', 'fig'] fig banana
+['banana', 'Apple', 'fig', 'pear']
+{'k': 1, 'z': 2, 'a': 3} True
+0.30000000000000004 1e+16 1000000000000000.0 1e-05 0.0001 2.5 -0.0 0.3333333333333333 1e+100
+['x'] None
+[4, 10]
+AppError 500 boom
+NotFound 404 missing ('missing',)
+ValueError bad value True

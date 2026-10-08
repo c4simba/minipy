@@ -1,0 +1,1 @@
+err_ctypes_name.mpy:4: error: the library name must be a string literal (or None: the C library) in compiled code

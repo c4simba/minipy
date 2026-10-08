@@ -1,0 +1,1 @@
+err_endpoint_value.mpy:10: error: a minipy.Endpoint is made from a function given by its name

@@ -91,6 +91,53 @@ char *mpy_fs_module_path(const char *importer_dir,const char *module_name){
     return r;
 }
 
+/* ---- the module search path ---- */
+static char *mpy_fs_program_dir;
+static char **mpy_fs_search; static int mpy_fs_nsearch=-1;
+
+void mpy_fs_set_program(const char *argv0){
+    if(argv0 && (strchr(argv0,'/') || strchr(argv0,'\\'))) mpy_fs_program_dir=mpy_fs_dirname(argv0);
+}
+static void mpy_fs_add_search(const char *dir,int len){
+    if(len<=0) return;
+    mpy_fs_search=(char**)xrealloc(mpy_fs_search,sizeof(char*)*(size_t)(mpy_fs_nsearch+1));
+    mpy_fs_search[mpy_fs_nsearch++]=xstrndup2(dir,len);
+}
+static void mpy_fs_init_search(void){
+    if(mpy_fs_nsearch>=0) return;
+    mpy_fs_nsearch=0;
+    const char *env=getenv("MINIPYPATH");
+    for(const char *p=env; p && *p; ){
+        const char *e=p; while(*e && *e!=':' && *e!=';') e++;
+        if(e-p==1 && isalpha((unsigned char)*p) && *e==':' && (e[1]=='\\' || e[1]=='/')){ e++; while(*e && *e!=':' && *e!=';') e++; }   /* C:\dir */
+        mpy_fs_add_search(p,(int)(e-p));
+        p=*e?e+1:e;
+    }
+    if(mpy_fs_program_dir){ char *lib=mpy_fs_join_path(mpy_fs_program_dir,"lib"); mpy_fs_add_search(lib,(int)strlen(lib)); free(lib); }
+}
+static char *mpy_fs_try_module(const char *dir,const char *module_name){
+    static const char *forms[]={"%s.mpy","%s/__init__.mpy","%s.py","%s/__init__.py",NULL};
+    char *rel=mpy_fs_module_relpath(module_name);
+    rel[strlen(rel)-4]=0;                                   /* without ".mpy" */
+    for(int i=0;forms[i];i++){
+        size_t n=strlen(rel)+16; char *name=(char*)xmalloc(n); snprintf(name,n,forms[i],rel);
+        char *path=mpy_fs_join_path(dir,name);
+        free(name);
+        if(mpy_fs_exists(path)){ free(rel); return path; }
+        free(path);
+    }
+    free(rel);
+    return NULL;
+}
+char *mpy_fs_find_module(const char *importer_dir,const char *module_name){
+    const char *base=(importer_dir && importer_dir[0]) ? importer_dir : ".";
+    if(strcmp(base,".")==0 && strcmp(MPY_FS_DEFAULT_IMPORT_DIR,".")!=0) base=MPY_FS_DEFAULT_IMPORT_DIR;
+    char *found=mpy_fs_try_module(base,module_name);
+    mpy_fs_init_search();
+    for(int i=0;!found && i<mpy_fs_nsearch;i++) found=mpy_fs_try_module(mpy_fs_search[i],module_name);
+    return found;
+}
+
 static char *mpy_fs_format_error(const char *prefix,const char *path){
     const char *reason=(errno!=0)?strerror(errno):"I/O error";
     size_t n=strlen(prefix)+strlen(path)+strlen(reason)+8;

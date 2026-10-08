@@ -1,0 +1,15 @@
+# The app of fastapi_linux.mpy answering fastapi_linux.requests without a
+# server (FastAPI.handle): compiled for Linux and KolibriOS and in the
+# interpreter (tests/fastapi_handle_test.mpy). The expected output is real
+# FastAPI's (its TestClient on the same app and requests).
+from fastapi_linux import app
+
+for line in ["GET /", "GET /items/5", "GET /items/5?q=somequery", "GET /items/42?q=hello%20world%2B%C3%A9",
+             "GET /items/foo", "GET /items/", "GET /nothing", "POST /", "GET /catalog/foo",
+             "GET /catalog/bar?discount=0.5&verbose=yes", "GET /catalog/zzz", "GET /catalog/foo?verbose=maybe",
+             "GET /catalog/foo?discount=x", "GET /objects/foo", "POST /echo?text=hi&times=3", "POST /echo",
+             "GET /echo?text=hi", "GET /users/7/items/pen?short=0", "GET /users/7/items/pen"]:
+    method, target = line.split(" ")
+    r = app.handle(method, target)
+    print("[http]", line)
+    print(r.status_code, r.body)

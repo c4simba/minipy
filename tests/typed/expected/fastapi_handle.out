@@ -1,0 +1,38 @@
+[http] GET /
+200 {"Hello":"World"}
+[http] GET /items/5
+200 {"item_id":5,"q":null}
+[http] GET /items/5?q=somequery
+200 {"item_id":5,"q":"somequery"}
+[http] GET /items/42?q=hello%20world%2B%C3%A9
+200 {"item_id":42,"q":"hello world+é"}
+[http] GET /items/foo
+422 {"detail":[{"type":"int_parsing","loc":["path","item_id"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"foo"}]}
+[http] GET /items/
+404 {"detail":"Not Found"}
+[http] GET /nothing
+404 {"detail":"Not Found"}
+[http] POST /
+405 {"detail":"Method Not Allowed"}
+[http] GET /catalog/foo
+200 {"item":"Foo","price":50.2,"tags":[]}
+[http] GET /catalog/bar?discount=0.5&verbose=yes
+200 {"item":"Bar","price":31.0,"tags":[]}
+[http] GET /catalog/zzz
+404 {"detail":"Item not found"}
+[http] GET /catalog/foo?verbose=maybe
+422 {"detail":[{"type":"bool_parsing","loc":["query","verbose"],"msg":"Input should be a valid boolean, unable to interpret input","input":"maybe"}]}
+[http] GET /catalog/foo?discount=x
+422 {"detail":[{"type":"float_parsing","loc":["query","discount"],"msg":"Input should be a valid number, unable to parse string as a number","input":"x"}]}
+[http] GET /objects/foo
+200 {"name":"Foo","price":50.2,"tags":["tool"]}
+[http] POST /echo?text=hi&times=3
+200 ["hi","hi","hi"]
+[http] POST /echo
+422 {"detail":[{"type":"missing","loc":["query","text"],"msg":"Field required","input":null}]}
+[http] GET /echo?text=hi
+405 {"detail":"Method Not Allowed"}
+[http] GET /users/7/items/pen?short=0
+200 {"user":7,"item":"pen","description":"a long description"}
+[http] GET /users/7/items/pen
+200 {"user":7,"item":"pen","description":null}

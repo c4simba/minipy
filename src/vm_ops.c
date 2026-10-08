@@ -32,6 +32,12 @@ int val_equal(Value a,Value b){
         for(int i=0;i<x->count;i++) if(!val_equal(x->items[i],y->items[i])) return 0;
         return 1;
     }
+    if(is_obj(a,O_DICT)&&is_obj(b,O_DICT)){                          /* the same keys with equal values */
+        Dict *x=&a.as.obj->as.dict, *y=&b.as.obj->as.dict;
+        if(x->count!=y->count) return 0;
+        for(int i=0;i<x->count;i++){ Value v; if(!dict_get(y,x->keys[i],&v) || !val_equal(x->vals[i],v)) return 0; }
+        return 1;
+    }
     Value r; if(call_instance_method1(a,"__eq__",b,&r)) return truthy(r);
     return a.as.obj==b.as.obj;
 }
@@ -118,7 +124,10 @@ Value get_attr(Value obj,const char *name){
         if(class_find(in->klass,name,&v)) return bind_class_attr(v,obj,in->klass);
         Value g; if(class_find(in->klass,"__getattr__",&g) && is_obj(g,O_FUNCTION)){ Value nm=stringv(name); Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&g.as.obj->as.fn; return call_value(objv(b),1,&nm); }
         raise_named("AttributeError","object has no attribute"); }
-    if(is_obj(obj,O_SUPER)){ Super *su=&obj.as.obj->as.super; Value v; if(class_find(su->start,name,&v)) return bind_class_attr(v,su->self,su->start); raise_named("AttributeError","super object has no attribute"); }
+    if(is_obj(obj,O_SUPER)){ Super *su=&obj.as.obj->as.super; Value v; if(class_find(su->start,name,&v)) return bind_class_attr(v,su->self,su->start);
+        if(!strcmp(name,"__init__")){                     /* a built-in base (Exception): keeps the arguments */
+            Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=su->self; b->as.bn.name=xstrdup2("__base_init__"); return objv(b); }
+        raise_named("AttributeError","super object has no attribute"); }
     if(is_obj(obj,O_CLASS)){ Class *kl=&obj.as.obj->as.klass; Value v; if(class_find(kl,name,&v)){ if(is_obj(v,O_METHWRAP)){ MethWrap *w=&v.as.obj->as.mw; if(w->kind==0||w->kind==2) return w->fn; if(w->kind==1){ Obj *b=new_obj(O_BOUND_METHOD); b->as.bm.receiver=obj; b->as.bm.fn=&w->fn.as.obj->as.fn; return objv(b); } } return v; } raise_named("AttributeError","class has no attribute"); }
     if(is_obj(obj,O_MODULE)){ Value v; if(dict_get(obj.as.obj->as.mod.dict,name,&v)) return v; runtime_error("unknown module attribute"); }
     if(is_obj(obj,O_STRING)||is_obj(obj,O_LIST)||is_obj(obj,O_DICT)||is_obj(obj,O_SET)){ Obj *b=new_obj(O_BOUND_NATIVE); b->as.bn.receiver=obj; b->as.bn.name=xstrdup2(name); return objv(b); }

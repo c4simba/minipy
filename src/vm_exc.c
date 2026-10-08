@@ -2,12 +2,20 @@
 
 #include "vm.h"
 
+/* An instance of a class derived from a built-in exception class. */
+int is_exc_instance(Value v){
+    if(!is_obj(v,O_INSTANCE)) return 0;
+    for(Class *k=v.as.obj->as.inst.klass;k;k=k->base) if(is_builtin_exc_name(k->name) && !k->base) return 1;
+    return 0;
+}
 static const char *exception_type_name(Value v){
     if(is_obj(v,O_EXCEPTION)) return v.as.obj->as.exc.type_name;
+    if(is_exc_instance(v)) return v.as.obj->as.inst.klass->name;
     return "RuntimeError";
 }
 static char *exception_message(Value v){
     if(is_obj(v,O_EXCEPTION)) return xstrdup2(v.as.obj->as.exc.message);
+    if(is_exc_instance(v)) return value_to_cstr(builtin_str(v));
     return value_to_cstr(v);
 }
 void print_traceback(Value ex){
@@ -21,6 +29,9 @@ void print_traceback(Value ex){
 }
 Value normalize_exception(Value v){
     if(is_obj(v,O_EXCEPTION)) return v;
+    if(is_exc_instance(v)) return v;                  /* raised as itself: `except ItsClass as e` gets it */
+    if(is_obj(v,O_CLASS) && !is_builtin_exc_name(v.as.obj->as.klass.name)){   /* raise MyError: an instance */
+        Value inst=call_value(v,0,NULL); if(is_exc_instance(inst)) return inst; }
     if(is_obj(v,O_CLASS)){
         const char *tn=v.as.obj->as.klass.name;
         if(strcmp(tn,"BaseException")==0||strcmp(tn,"RuntimeError")==0||strcmp(tn,"StopIteration")==0) return exceptionv(tn,"",v);

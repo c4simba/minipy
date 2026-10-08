@@ -12,6 +12,8 @@
    final strict pass reports whatever is still unknown. */
 
 #include "aot_model.h"
+#include <stdarg.h>
+#include "frontparser.h"
 #include "compiler.h"
 #include "lexer.h"
 
@@ -19,6 +21,7 @@
 
 static int ty_ids;
 Ty *TY_INT_T, *TY_BOOL_T, *TY_FLOAT_T, *TY_STR_T, *TY_VOID_T, *TY_BUF_T;
+static Ty *TY_OSTR_T;       /* Optional[str]: a str (None is "") that JSON writes as null when empty */
 
 Ty *ty_new(TyKind k, Ty *elem, AClass *cls){ Ty *t=MPY_NEW0(Ty); t->k=k; t->elem=elem; t->cls=cls; t->id=++ty_ids; return t; }
 Ty *ty_var(void){ return ty_new(TY_VAR,NULL,NULL); }
@@ -43,13 +46,18 @@ int ty_known(Ty *t){
 }
 int ty_is_ptr(Ty *t){ t=ty_find(t); return t->k==TY_STR||t->k==TY_LIST||t->k==TY_DICT||t->k==TY_SET||t->k==TY_OBJ||t->k==TY_BUF||t->k==TY_TASK||t->k==TY_TUPLE||t->k==TY_FILE||t->k==TY_FUNC||t->k==TY_GEN; }
 int ty_size(Ty *t){ return ty_find(t)->k==TY_FLOAT ? 8 : 4; }
+static int names_eq(Ty *a, Ty *b){
+    if(!a->names || !b->names) return a->names==b->names;
+    for(int i=0;i<a->nelems;i++) if(strcmp(a->names[i],b->names[i])) return 0;
+    return 1;
+}
 int ty_same(Ty *a, Ty *b){
     a=ty_find(a); b=ty_find(b);
     if(a==b) return 1;
     if(a->k!=b->k) return 0;
     if(a->k==TY_DICT && !ty_same(ty_dkey(a),ty_dkey(b))) return 0;
     if((a->k==TY_LIST||a->k==TY_FUNC) && a->tup!=b->tup) return 0;
-    if(a->k==TY_TUPLE||a->k==TY_FUNC){ if(a->nelems!=b->nelems) return 0; for(int i=0;i<a->nelems;i++) if(!ty_same(a->elems[i],b->elems[i])) return 0; if(a->k==TY_TUPLE) return 1; }
+    if(a->k==TY_TUPLE||a->k==TY_FUNC){ if(a->nelems!=b->nelems) return 0; for(int i=0;i<a->nelems;i++) if(!ty_same(a->elems[i],b->elems[i])) return 0; if(a->k==TY_TUPLE) return names_eq(a,b); }
     if(has_elem(a)) return ty_same(a->elem,b->elem);
     if(a->k==TY_OBJ) return a->cls==b->cls;
     return a->k!=TY_VAR;
@@ -77,7 +85,10 @@ const char *ty_name(Ty *t){
         case TY_DICT: snprintf(b,160,"dict[%s, %s]",ty_name(ty_dkey(t)),ty_name(t->elem)); return b;
         case TY_OBJ: return t->cls->name;
         case TY_TASK: snprintf(b,160,"Task[%s]",ty_name(t->elem)); return b;
-        case TY_TUPLE:{ int n=snprintf(b,160,"tuple[");
+        case TY_TUPLE: if(t->names){ int n=snprintf(b,160,"{");
+                for(int i=0;i<t->nelems && n<150;i++) n+=snprintf(b+n,160-(size_t)n,"%s'%s': %s",i?", ":"",t->names[i],ty_name(t->elems[i]));
+                snprintf(b+n,160-(size_t)n,"}"); return b; }
+            { int n=snprintf(b,160,"tuple[");
             for(int i=0;i<t->nelems && n<150;i++) n+=snprintf(b+n,160-(size_t)n,"%s%s",i?", ":"",ty_name(t->elems[i]));
             snprintf(b+n,160-(size_t)n,"]"); return b; }
     }
@@ -228,6 +239,7 @@ typedef struct Ck {
     struct { const char *name; ASym sym; AFunc *fn; } cscope[32];   /* comprehension / except / key variables in scope (of fn) */
     int ncscope;
     Expr *coro_ok;          /* the coroutine call being awaited / handed to asyncio */
+    int ep_value;           /* checking an argument for a minipy.Endpoint: an async function may be a value */
     int in_except;          /* inside an except clause (bare raise) */
     Ty **seen; int nseen, cseen;     /* strict pass: every expression type (unconstrained elements -> int) */
     jmp_buf fail;
@@ -270,7 +282,7 @@ static int unify(Ck *c, Ty *a, Ty *b){
     if(a->k!=b->k) return 0;
     if(a->k==TY_DICT && !unify(c,ty_dkey(a),ty_dkey(b))) return 0;
     if((a->k==TY_LIST||a->k==TY_FUNC) && a->tup!=b->tup) return 0;
-    if(a->k==TY_TUPLE||a->k==TY_FUNC){ if(a->nelems!=b->nelems) return 0; for(int i=0;i<a->nelems;i++) if(!unify(c,a->elems[i],b->elems[i])) return 0; if(a->k==TY_TUPLE) return 1; }
+    if(a->k==TY_TUPLE||a->k==TY_FUNC){ if(a->nelems!=b->nelems) return 0; if(a->k==TY_TUPLE && !names_eq(a,b)) return 0; for(int i=0;i<a->nelems;i++) if(!unify(c,a->elems[i],b->elems[i])) return 0; if(a->k==TY_TUPLE) return 1; }
     if(has_elem(a)) return unify(c,a->elem,b->elem);
     if(a->k==TY_OBJ) return a->cls==b->cls;
     return 1;
@@ -286,6 +298,9 @@ static int func_adaptable(Ck *c, Ty *d, Ty *s){
 }
 static int assignable(Ck *c, Ty *dst, Ty *src){
     Ty *d=ty_find(dst), *s=ty_find(src);
+    if(d->k==TY_FUNC && (d->tup&4) && s->k==TY_FUNC && !(s->tup&4)) return 1;   /* a function -> its endpoint adapter */
+    if(s->k==TY_FUNC && (s->tup&4) && d->k==TY_FUNC && !(d->tup&4)){ Ty *p=ty_find(d->elems[0]); /* an Endpoint is also a plain Callable */
+        return d->nelems==1 && !d->tup && unify(c,p,s->elems[0]) && unify(c,d->elem,s->elem); }
     if(d->k==TY_FUNC && s->k==TY_FUNC && !d->tup && (s->tup&1)) return func_adaptable(c,d,s);
     if(d->k==TY_OBJ && s->k==TY_OBJ) return aot_subclass(s->cls,d->cls);
     if(d->k==TY_FLOAT && (s->k==TY_INT||s->k==TY_BOOL)) return 1;      /* converted on the way */
@@ -328,8 +343,29 @@ static void make_builtin_exceptions(AProg *p, AModule *m){
 }
 static AModule *find_module(AProg *p, const char *name){ for(int i=0;i<p->nmods;i++) if(!strcmp(p->mods[i]->name,name)) return p->mods[i]; return NULL; }
 
-/* NAME | NAME '[' type (',' type)* ']' | module '.' NAME | None */
+static Ty *optional(Ty *t){ return ty_find(t)->k==TY_STR ? TY_OSTR_T : t; }
+/* minipy.Endpoint: Callable[[dict[str, str]], str] that any function converts
+   to (an adapter made by the compiler, see ep_adapter) */
+static Ty *endpoint_type(void){
+    Ty *ps[1]; ps[0]=ty_dict(TY_STR_T,TY_STR_T);
+    Ty *t=ty_func(ps,1,TY_STR_T); t->tup=4; return t;
+}
+static int is_endpoint(Ty *t){ t=ty_find(t); return t->k==TY_FUNC && (t->tup&4); }
+static Ty *parse_type1(Ck *c, Tok *v, int *i, int end, int line);
+/* type ('|' type)*: T | None is Optional[T] */
 static Ty *parse_type(Ck *c, Tok *v, int *i, int end, int line){
+    Ty *t=parse_type1(c,v,i,end,line);
+    while(*i<end && v[*i].kind==T_PIPE){
+        (*i)++;
+        Ty *u=parse_type1(c,v,i,end,line);
+        if(ty_find(u)->k==TY_VOID) t=optional(t);
+        else if(ty_find(t)->k==TY_VOID) t=optional(u);
+        else err(c,line,"only T | None is supported in compiled code: one type per value");
+    }
+    return t;
+}
+/* NAME | NAME '[' type (',' type)* ']' | module '.' NAME | None */
+static Ty *parse_type1(Ck *c, Tok *v, int *i, int end, int line){
     if(*i<end && v[*i].kind==T_NONE){ (*i)++; return TY_VOID_T; }
     if(*i<end && v[*i].kind==T_STRING){                                 /* "Class" (forward reference) */
         TokVec tv=lex(v[(*i)++].text); int n=0, j=0;
@@ -344,6 +380,7 @@ static Ty *parse_type(Ck *c, Tok *v, int *i, int end, int line){
     while(*i+1<end && v[*i].kind==T_DOT && v[*i+1].kind==T_NAME){       /* module.Class, typing.List */
         ASym *s=module_sym(m,name);
         if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"typing")){ name=v[*i+1].text; *i+=2; continue; }
+        if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"minipy") && !strcmp(v[*i+1].text,"Endpoint")){ *i+=2; return endpoint_type(); }
         if(!s || s->kind!=AS_MODULE) err(c,line,"'%s' is not a module",name);
         m=(AModule*)s->p; name=v[*i+1].text; *i+=2;
     }
@@ -374,7 +411,13 @@ static Ty *parse_type(Ck *c, Tok *v, int *i, int end, int line){
     }
     static const char *aliases[][2]={{"List","list"},{"Dict","dict"},{"Set","set"},{"Tuple","tuple"},{"FrozenSet","set"},{"Sequence","list"},{"MutableSequence","list"},{"Mapping","dict"},{"MutableMapping","dict"},{"AbstractSet","set"},{NULL,NULL}};
     for(int k=0;aliases[k][0];k++) if(!strcmp(name,aliases[k][0])){ name=aliases[k][1]; break; }
-    if(!strcmp(name,"Optional")){ if(nargs!=1) err(c,line,"Optional takes one type argument"); return args[0]; }   /* None is the zero value anyway */
+    if(!strcmp(name,"Optional")){ if(nargs!=1) err(c,line,"Optional takes one type argument"); return optional(args[0]); }   /* None is the zero value anyway */
+    if(!strcmp(name,"Union")){                                       /* Union[T, None] */
+        if(nargs==2 && ty_find(args[1])->k==TY_VOID) return optional(args[0]);
+        if(nargs==2 && ty_find(args[0])->k==TY_VOID) return optional(args[1]);
+        if(nargs==1) return args[0];
+        err(c,line,"only Union[T, None] (Optional[T]) is supported in compiled code: one type per value");
+    }
     if(!strcmp(name,"Iterator")||!strcmp(name,"Iterable")||!strcmp(name,"Generator")){
         if(nargs<1) err(c,line,"%s needs the item type: %s[int]",name,name);
         if(nargs>1 && !strcmp(name,"Generator")){ for(int k=1;k<nargs;k++) if(ty_find(args[k])->k!=TY_VOID) err(c,line,"only Generator[T, None, None] is supported (no send() / return values)"); }
@@ -388,7 +431,7 @@ static Ty *parse_type(Ck *c, Tok *v, int *i, int end, int line){
     if(!strcmp(name,"int")) return TY_INT_T;
     if(!strcmp(name,"bool")) return TY_BOOL_T;
     if(!strcmp(name,"float")) return TY_FLOAT_T;
-    if(!strcmp(name,"str")) return TY_STR_T;
+    if(!strcmp(name,"str")||!strcmp(name,"bytes")||!strcmp(name,"bytearray")) return TY_STR_T;   /* bytes: the same bytes */
     if(!strcmp(name,"buffer")) return TY_BUF_T;
     if(!strcmp(name,"list")||!strcmp(name,"set")){
         if(nargs>1) err(c,line,"%s takes one type argument",name);
@@ -407,6 +450,7 @@ static Ty *parse_type(Ck *c, Tok *v, int *i, int end, int line){
     }
     ASym *s=global_sym(m,name);
     if(s && s->kind==AS_CLASS){ if(nargs) err(c,line,"class %s takes no type arguments",name); return ty_new(TY_OBJ,NULL,(AClass*)s->p); }
+    if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"minipy.Endpoint")) return endpoint_type();
     err(c,line,"unknown type '%s'",name);
 }
 static Ty *annotation_range(Ck *c, int start, int end, int line){
@@ -704,7 +748,7 @@ static const char *fn_type_problem(AFunc *f){
 }
 static Ty *fn_type(Ck *c, AFunc *f, int line){
     const char *why=fn_type_problem(f);
-    if(why) err(c,line,"%s() cannot be used as a value in compiled code (%s)",f->name,why);
+    if(why && !(c->ep_value && f->is_async && !f->outer && !f->cls && !strcmp(why,"a coroutine"))) err(c,line,"%s() cannot be used as a value in compiled code (%s)",f->name,why);
     if(!f->fty){ Ty *ps[16]; int n=0;
         for(int i=0;i<f->nparams;i++) ps[n++]=i==f->star||i==f->dstar ? ty_find(f->params[i]->ty)->elem : f->params[i]->ty;
         f->fty=ty_func(ps,n,f->ret); f->fty->tup=(f->star>=0?1:0)|(f->dstar>=0?2:0); }
@@ -757,8 +801,123 @@ static void fill_class(Ck *c, AClass *cls){
 }
 
 /* Module namespace: functions, classes, globals; imports are linked afterwards. */
+/* ---------------------------------------------------------------- ctypes */
+/* What a module calls ctypes by: `import ctypes [as x]`, `from ctypes import ...`. */
+typedef struct { const char *mod; const char *local[64]; const char *member[64]; int n; } CtNames;
+static void ct_names(AotUnit *u, CtNames *ct){
+    memset(ct,0,sizeof *ct);
+    Stmt **b=u->ast->body; int n=u->ast->body_count;
+    for(int i=0;i<n;i++){ Stmt *s=b[i];
+        if(s->kind==STMT_IMPORT && !strcmp(s->name2?s->name2:s->name,"ctypes")) ct->mod=s->name;
+        if(s->kind==STMT_FROM_IMPORT){
+            char *dotted=aot_from_import_module(u,s);
+            if(!strcmp(dotted,"ctypes")){
+                Parser p=parser_at(u,s->start);
+                while(peek(&p)->kind!=T_IMPORT) p.pos++;
+                p.pos++;
+                if(peek(&p)->kind!=T_STAR) do{ Tok *nm=need(&p,T_NAME,"imported name"); const char *alias=nm->text;
+                    if(match(&p,T_AS)) alias=need(&p,T_NAME,"alias")->text;
+                    if(ct->n<64){ ct->local[ct->n]=alias; ct->member[ct->n]=nm->text; ct->n++; }
+                } while(match(&p,T_COMMA));
+            }
+            free(dotted);
+        }
+    }
+}
+/* e names a member of ctypes: its name, else NULL */
+static const char *ct_member(CtNames *ct, Expr *e){
+    if(e->kind==EXPR_ATTRIBUTE && e->a->kind==EXPR_NAME && ct->mod && !strcmp(e->a->name,ct->mod)) return e->name;
+    if(e->kind==EXPR_NAME) for(int i=0;i<ct->n;i++) if(!strcmp(ct->local[i],e->name)) return ct->member[i];
+    return NULL;
+}
+static int ct_type(const char *m, CType *out){
+    static const struct { const char *name; CType t; } map[]={
+        {"c_int",CT_INT},{"c_long",CT_INT},{"c_int32",CT_INT},{"c_ssize_t",CT_INT},
+        {"c_uint",CT_UINT},{"c_ulong",CT_UINT},{"c_uint32",CT_UINT},{"c_size_t",CT_UINT},
+        {"c_short",CT_SHORT},{"c_int16",CT_SHORT},{"c_ushort",CT_USHORT},{"c_uint16",CT_USHORT},
+        {"c_byte",CT_BYTE},{"c_int8",CT_BYTE},{"c_char",CT_BYTE},{"c_ubyte",CT_UBYTE},{"c_uint8",CT_UBYTE},{"c_bool",CT_BOOL},
+        {"c_longlong",CT_LONGLONG},{"c_int64",CT_LONGLONG},{"c_ulonglong",CT_ULONGLONG},{"c_uint64",CT_ULONGLONG},
+        {"c_double",CT_DOUBLE},{"c_longdouble",CT_DOUBLE},{"c_float",CT_FLOAT},{"c_char_p",CT_CHARP},{"c_void_p",CT_VOIDP},{NULL,0}};
+    for(int i=0;map[i].name;i++) if(!strcmp(map[i].name,m)){ *out=map[i].t; return 1; }
+    return 0;
+}
+static ACLib *clib_get(AProg *p, const char *soname){
+    for(int i=0;i<p->nclibs;i++) if(!strcmp(p->clibs[i]->soname,soname)) return p->clibs[i];
+    ACLib *l=MPY_NEW0(ACLib); l->soname=xstrdup2(soname); l->id=p->nclibs;
+    p->clibs=(ACLib**)xrealloc(p->clibs,sizeof(ACLib*)*(size_t)(p->nclibs+1)); p->clibs[p->nclibs++]=l;
+    return l;
+}
+static ACFunc *cfunc_get(AProg *p, ACLib *lib, const char *sym){
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->lib==lib && !strcmp(p->cfuncs[i]->sym,sym)) return p->cfuncs[i];
+    ACFunc *f=MPY_NEW0(ACFunc); f->lib=lib; f->sym=xstrdup2(sym); f->id=p->ncfuncs; f->nargtypes=-1;
+    p->cfuncs=(ACFunc**)xrealloc(p->cfuncs,sizeof(ACFunc*)*(size_t)(p->ncfuncs+1)); p->cfuncs[p->ncfuncs++]=f;
+    return f;
+}
+/* A C function named by e (lib.f or an alias of one) in module m, else NULL */
+static ACFunc *ct_func_ref(AProg *p, AModule *m, Expr *e){
+    if(e->kind==EXPR_NAME){ ASym *s=module_sym(m,e->name); return s && s->kind==AS_CFUNC ? (ACFunc*)s->p : NULL; }
+    if(e->kind==EXPR_ATTRIBUTE && e->a->kind==EXPR_NAME){ ASym *s=module_sym(m,e->a->name);
+        if(s && s->kind==AS_CLIB) return cfunc_get(p,(ACLib*)s->p,e->name); }
+    return NULL;
+}
+static CType ct_decl_type(Ck *c, CtNames *ct, Expr *e){
+    CType t; const char *m;
+    if(e->kind==EXPR_NONE) return CT_VOID;
+    if(!(m=ct_member(ct,e)) || !ct_type(m,&t)) err(c,e->line,"expected a ctypes type (ctypes.c_int, c_char_p, c_double, ...) or None");
+    return t;
+}
+/* The module-level ctypes statements, taken out of the program:
+     lib = ctypes.CDLL("libc.so.6")       (or ctypes.cdll.LoadLibrary(...), CDLL(None))
+     f = lib.name                          (an alias)
+     lib.name.restype = ctypes.c_char_p    lib.name.argtypes = [ctypes.c_int, ...] */
+static void collect_ctypes(Ck *c, AModule *m){
+    AotUnit *u=m->unit; CtNames ct; ct_names(u,&ct);
+    if(!ct.mod && !ct.n) return;
+    Stmt **b=u->ast->body; int n=u->ast->body_count;
+    for(int i=0;i<n;i++){ Stmt *s=b[i];
+        if(s->kind!=STMT_ASSIGN) continue;
+        AAssign *a=aot_assign(u,s);
+        if(a->ntarget!=1 || !a->value || a->aug) continue;
+        Expr *t=a->target[0], *v=a->value;
+        if(t->kind==EXPR_NAME && v->kind==EXPR_CALL){                 /* lib = CDLL(...) */
+            const char *mm=ct_member(&ct,v->a);
+            int load=v->a->kind==EXPR_ATTRIBUTE && !strcmp(v->a->name,"LoadLibrary") && (mm=ct_member(&ct,v->a->a)) && !strcmp(mm,"cdll");
+            if(!load && !(mm && !strcmp(mm,"CDLL"))) continue;
+            if(v->count<1 || v->items[0]->akind) err(c,s->line,"CDLL() takes the library's file name");
+            Expr *nm=v->items[0]; const char *so="libc.so.6";
+            if(nm->kind==EXPR_LITERAL && nm->tok->kind==T_STRING) so=nm->tok->text;
+            else if(nm->kind!=EXPR_NONE) err(c,s->line,"the library name must be a string literal (or None: the C library) in compiled code");
+            if(c->p->target!=AOT_TARGET_LINUX) err(c,s->line,"ctypes libraries need the linux target");
+            if(module_sym(m,t->name)) err(c,s->line,"'%s' is defined twice",t->name);
+            symtab_add(&m->syms,t->name,AS_CLIB,clib_get(c->p,so));
+            s->kind=STMT_PASS; continue;
+        }
+        if(t->kind==EXPR_NAME && v->kind==EXPR_ATTRIBUTE){            /* f = lib.name */
+            ACFunc *f=ct_func_ref(c->p,m,v);
+            if(!f) continue;
+            if(module_sym(m,t->name)) err(c,s->line,"'%s' is defined twice",t->name);
+            symtab_add(&m->syms,t->name,AS_CFUNC,f);
+            s->kind=STMT_PASS; continue;
+        }
+        if(t->kind==EXPR_ATTRIBUTE && (!strcmp(t->name,"restype") || !strcmp(t->name,"argtypes"))){
+            ACFunc *f=ct_func_ref(c->p,m,t->a);
+            if(!f) continue;
+            if(t->name[0]=='r') f->restype=ct_decl_type(c,&ct,v);
+            else {
+                if(v->kind==EXPR_NONE){ f->nargtypes=-1; s->kind=STMT_PASS; continue; }
+                if(v->kind!=EXPR_LIST && v->kind!=EXPR_TUPLE) err(c,s->line,"argtypes must be a list of ctypes types");
+                if(v->count>16) err(c,s->line,"at most 16 argtypes");
+                f->nargtypes=v->count;
+                for(int k=0;k<v->count;k++){ f->argtypes[k]=ct_decl_type(c,&ct,v->items[k]);
+                    if(f->argtypes[k]==CT_VOID) err(c,s->line,"None is not an argument type"); }
+            }
+            s->kind=STMT_PASS; continue;
+        }
+    }
+}
 static void collect_module(Ck *c, AModule *m){
     c->mod=m;
+    collect_ctypes(c,m);                        /* lib = ctypes.CDLL(...) and its declarations: not variables */
     Stmt **b=m->unit->ast->body; int n=m->unit->ast->body_count;
     for(int i=0;i<n;i++){ Stmt *s=b[i];
         if(s->kind==STMT_CLASS_DEF){ if(module_sym(m,s->name)) err(c,s->line,"'%s' is defined twice",s->name); symtab_add(&m->syms,s->name,AS_CLASS,new_class(c,m,s)); }
@@ -832,7 +991,7 @@ static void collect_functions(Ck *c, AModule *m){
 
 /* Modules the compiler provides itself (no source file). */
 static const char *builtin_module(const char *name){
-    static const char *mods[]={"sys","asyncio","math","time","random","typing","functools",NULL};
+    static const char *mods[]={"sys","asyncio","math","time","random","typing","functools","ctypes","json","minipy",NULL};
     for(int i=0;mods[i];i++) if(!strcmp(mods[i],name)) return mods[i];
     return NULL;
 }
@@ -861,6 +1020,14 @@ static void link_imports(Ck *c, AModule *m){
                     if(strcmp(nm->text,"reduce") && strcmp(nm->text,"wraps")) err(c,s->line,"functools.%s is not available in compiled code",nm->text);
                     if(match(&p,T_AS)) alias=need(&p,T_NAME,"alias")->text;
                     symtab_add(&m->syms,alias,AS_SYS,(void*)(nm->text[0]=='r'?"functools.reduce":"functools.wraps"));
+                } while(match(&p,T_COMMA));
+                free(dotted); continue;
+            }
+            if(!strcmp(dotted,"ctypes")||!strcmp(dotted,"json")||!strcmp(dotted,"minipy")){    /* from ctypes import CDLL, c_int / from json import dumps */
+                do{ Tok *nm=need(&p,T_NAME,"imported name"); const char *alias=nm->text;
+                    if(match(&p,T_AS)) alias=need(&p,T_NAME,"alias")->text;
+                    char full[96]; snprintf(full,sizeof full,"%s.%s",dotted,nm->text);
+                    symtab_add(&m->syms,alias,AS_SYS,xstrdup2(full));
                 } while(match(&p,T_COMMA));
                 free(dotted); continue;
             }
@@ -1066,7 +1233,7 @@ static void ck_compare_pair_m(Ck *c, int code, Expr *ea, Expr *eb, Ty *a, Ty *b,
         if((x->k==TY_FUNC||x->k==TY_GEN) && unify(c,x,y)) return;      /* identity */
         err(c,line,"cannot compare %s with %s",ty_name(x),ty_name(y));
     }
-    if(x->k==TY_TUPLE && ty_same(x,y)) return;
+    if(x->k==TY_TUPLE && !x->names && ty_same(x,y)) return;
     if(x->k==TY_STR&&y->k==TY_STR) return;
     err(c,line,"cannot order %s and %s",ty_name(x),ty_name(y));
 }
@@ -1086,6 +1253,7 @@ static Ty *elem_of(Ck *c, Ty *t, int line, const char *what){
             if(r->k==TY_GEN||r->k==TY_LIST) return r->elem;
             err(c,line,"%s.__iter__ must return a generator or a list, not %s",t->cls->name,ty_name(r)); }
     }
+    if(t->k==TY_TUPLE && t->names) err(c,line,"%s (a dict literal with values of different types) cannot be iterated in compiled code",ty_name(t));
     if(t->k==TY_TUPLE && t->nelems>0){
         for(int i=1;i<t->nelems;i++) if(!ty_same(t->elems[i],t->elems[0])) err(c,line,"only a tuple of one item type can be iterated, not %s",ty_name(t));
         return t->elems[0];
@@ -1221,6 +1389,37 @@ static Ty *ck_genexp(Ck *c, Expr *e){
     return gf->ret;
 }
 /* [1, 2.5] is a float list; [Rect(), Circle()] a list of their nearest common base class */
+/* Could values of types a and b go into one container? (no type variables bound) */
+static int could_unify(Ty *a, Ty *b){
+    a=ty_find(a); b=ty_find(b);
+    if(a==b || a->k==TY_VAR || b->k==TY_VAR) return 1;
+    if(numeric(a) && numeric(b)) return 1;
+    if(a->k!=b->k) return 0;
+    if(a->k==TY_OBJ) return aot_subclass(a->cls,b->cls) || aot_subclass(b->cls,a->cls);
+    if(a->k==TY_DICT && !could_unify(ty_dkey(a),ty_dkey(b))) return 0;
+    if(a->k==TY_TUPLE){ if(a->nelems!=b->nelems || !names_eq(a,b)) return 0; for(int i=0;i<a->nelems;i++) if(!could_unify(a->elems[i],b->elems[i])) return 0; return 1; }
+    if(has_elem(a) && a->k!=TY_FUNC) return could_unify(a->elem,b->elem);
+    return 1;
+}
+/* {"id": 5, "name": "x"}: distinct str-literal keys */
+static int record_keys(Expr *e){
+    if(e->count<2 || e->count>64) return 0;
+    for(int i=0;i<e->count;i++){ Expr *k=e->items[i];
+        if(k->akind || k->kind!=EXPR_LITERAL || k->tok->kind!=T_STRING) return 0;
+        for(int j=0;j<i;j++) if(!strcmp(e->items[j]->tok->text,k->tok->text)) return 0; }
+    return 1;
+}
+/* such keys and values of types no one type covers -> a record (a tuple
+   whose items have the keys as names) */
+static Ty *record_of(Expr *e, Ty **vts){
+    if(!record_keys(e)) return NULL;
+    int conflict=0;
+    for(int i=0;i<e->count && !conflict;i++) for(int j=0;j<i;j++) if(!could_unify(vts[i],vts[j])){ conflict=1; break; }
+    if(!conflict) return NULL;
+    Ty *t=ty_tuple(vts,e->count); t->names=MPY_NEW_ARR(char*,e->count);
+    for(int i=0;i<e->count;i++) t->names[i]=e->items[i]->tok->text;
+    return t;
+}
 static Ty *literal_elem(Ck *c, Expr **items, int n){
     int fl=0, num=1, obj=n>0; AClass *base=NULL;
     for(int i=0;i<n;i++){ Ty *t=ty_find(ck_expr(c,items[i]));
@@ -1274,6 +1473,7 @@ static Ty *ck_expr_inner(Ck *c, Expr *e){
             if(!s && !strcmp(e->name,"__name__")){ xi->kind=X_CONST_STR; xi->name=c->mod->name; return TY_STR_T; }
             if(!s) err(c,e->line,"name '%s' is not defined",e->name);
             if(s->kind==AS_FUNC){ AFunc *fn=(AFunc*)s->p; xi->kind=X_FUNCREF; xi->fn=fn; fn->value_used=1; fn->ncalls++; return fn_type(c,fn,e->line); }
+            if(s->kind==AS_CLIB||s->kind==AS_CFUNC) err(c,e->line,"'%s' is a C %s: call its functions",e->name,s->kind==AS_CLIB?"library":"function");
             if(s->kind!=AS_VAR) err(c,e->line,"'%s' is a %s, not a value",e->name,s->kind==AS_CLASS?"class":"module");
             xi->kind=X_VAR; xi->var=(AVar*)s->p;
             { AVar *r=var_root(xi->var); if(r->fn_const){ r->fn_const->value_used=1; r->fn_const->ncalls++; } }
@@ -1375,6 +1575,12 @@ static Ty *ck_expr_inner(Ck *c, Expr *e){
             if(t->k==TY_STR){ expect(c,TY_INT_T,i,e->line,"a string index"); return TY_STR_T; }
             if(t->k==TY_LIST){ expect(c,TY_INT_T,i,e->line,"a list index"); return t->elem; }
             if(t->k==TY_DICT){ expect(c,ty_dkey(t),i,e->line,"a dictionary key"); return t->elem; }
+            if(t->k==TY_TUPLE && t->names){                 /* record["key"] */
+                Expr *k=e->b;
+                if(k->kind!=EXPR_LITERAL || k->tok->kind!=T_STRING) err(c,e->line,"%s (a dict literal with values of different types) is indexed by a key literal",ty_name(t));
+                for(int ix=0;ix<t->nelems;ix++) if(!strcmp(t->names[ix],k->tok->text)){ xi->argmap[0]=ix; xi->argmap[1]=1; return t->elems[ix]; }
+                err(c,e->line,"KeyError: %s has no key '%s'",ty_name(t),k->tok->text);
+            }
             if(t->k==TY_TUPLE){
                 expect(c,TY_INT_T,i,e->line,"a tuple index");
                 Expr *k=e->b; int neg=0;
@@ -1400,6 +1606,12 @@ static Ty *ck_expr_inner(Ck *c, Expr *e){
             for(int i=0;i<e->count;i++){ Ty *t=ck_expr(c,e->items[i]); no_void(c,t,e->line); expect(c,el,t,e->line,"a list element"); }
             return ty_new(e->kind==EXPR_LIST?TY_LIST:TY_SET,el,NULL); }
         case EXPR_DICT:{
+            if(e->count>=2 && e->count<=64){ Ty *vts[64];
+                for(int i=0;i<e->count;i++){ vts[i]=ck_expr(c,e->vals[i]); no_void(c,vts[i],e->line); }
+                Ty *r=record_of(e,vts);
+                if(r){ for(int i=0;i<e->count;i++) ck_expr(c,e->items[i]); return r; }
+                if(record_keys(e) && !c->strict)                    /* a record or a dict? not before the values are known */
+                    for(int i=0;i<e->count;i++) if(ty_find(vts[i])->k==TY_VAR) return pending(c,e->line,"a dictionary value"); }
             Ty *v=literal_elem(c,e->vals,e->count), *k=ty_var();
             for(int i=0;i<e->count;i++){ Ty *kt=ck_expr(c,e->items[i]); no_void(c,kt,e->line); expect(c,k,kt,e->line,"a dictionary key"); Ty *t=ck_expr(c,e->vals[i]); no_void(c,t,e->line); expect(c,v,t,e->line,"a dictionary value"); }
             return ty_dict(k,v); }
@@ -1484,6 +1696,7 @@ static void int_push(int **v, int *n, int x){ if(!(*n&7)) *v=(int*)xrealloc(*v,s
    positional, keyword, extra positionals into *args, extra keywords into
    **kwargs, f(*tuple) / f(*list) spread over parameters, f(*xs) / f(**d)
    feeding *args / **kwargs. */
+static void ep_arg(Ck *c, Ty *pt, Expr *a, int line);
 static void ck_args(Ck *c, Expr *e, AFunc *fn, int skip, XInfo *xi){
     int np=fn->nparams, pi=skip;
     int poslimit=fn->star>=0?fn->star:fn->kwonly<np?fn->kwonly:fn->dstar>=0?fn->dstar:np;
@@ -1496,6 +1709,7 @@ static void ck_args(Ck *c, Expr *e, AFunc *fn, int skip, XInfo *xi){
         if(a->akind==1){                                   /* *xs */
             Ty *t=ty_find(ck_expr(c,a));
             if(t->k==TY_VAR){ pending(c,e->line,"the unpacked argument"); continue; }
+            if(t->k==TY_TUPLE && t->names) err(c,e->line,"*%s: a dict literal cannot be spread",ty_name(t));
             if(pi<poslimit && t->k==TY_TUPLE){              /* spread a tuple over the parameters */
                 for(int k=0;k<t->nelems;k++){
                     if(pi>=poslimit) err(c,e->line,"%s() takes %d positional argument%s",fn->name,poslimit-skip,poslimit-skip==1?"":"s");
@@ -1550,12 +1764,92 @@ static void ck_args(Ck *c, Expr *e, AFunc *fn, int skip, XInfo *xi){
             Ty *t=ty_find(xinfo(e->items[xi->argmap[k]])->ty);
             expect(c,pt,t->k==TY_TUPLE?t->elems[xi->argelem[k]-1]:t->elem,e->line,what);
         }
-        else if(xi->argmap[k]>=0){ Ty *t=ck_expr_want(c,e->items[xi->argmap[k]],pt); no_void(c,t,e->line); expect(c,pt,t,e->line,what); }
+        else if(xi->argmap[k]>=0){ Expr *a=e->items[xi->argmap[k]]; int ep=is_endpoint(pt); c->ep_value+=ep;
+            Ty *t=ck_expr_want(c,a,pt); c->ep_value-=ep;
+            no_void(c,t,e->line); expect(c,pt,t,e->line,what); ep_arg(c,pt,a,e->line); }
         else if(fn->defaults[k]){ AModule *save=c->mod; c->mod=fn->mod; Ty *t=ck_default(c,fn->defaults[k]); c->mod=save; expect(c,pt,t,e->line,what); }
         else err(c,e->line,"%s() is missing argument '%s'",fn->name,fn->params[k]->name);
     }
 }
 /* f(args) where f is a function value of type ft */
+/* ---- minipy.Endpoint: a function made callable with its parameters as strings
+   (path and query parameters of an HTTP request). The compiler writes the
+   adapter as Python and compiles it with the program:
+       def __endpoint__(values: dict[str, str]) -> str:
+           if "item_id" not in values: raise ValueError("#endpoint\nmissing\nitem_id\nint\n")
+           a0 = int(values["item_id"])          ValueError("#endpoint\nparsing\nitem_id\nint\n<text>") if it is not one
+           a1 = <default>                      (optional) / if "q" in values: a1 = values["q"]
+           return json.dumps(f(a0, a1), separators=(",", ":"), ensure_ascii=False)
+   An async function is called directly: the adapter runs on a task (await = a call). */
+typedef struct { char *s; size_t n, cap; } SrcBuf;
+static void sb_add(SrcBuf *b, const char *fmt, ...){
+    va_list ap; va_start(ap,fmt); char tmp[1024]; int k=vsnprintf(tmp,sizeof tmp,fmt,ap); va_end(ap);
+    if(k<0) return; if((size_t)k>=sizeof tmp) k=(int)sizeof tmp-1;
+    if(b->n+(size_t)k+1>b->cap){ b->cap=(b->n+(size_t)k+1)*2; b->s=(char*)xrealloc(b->s,b->cap); }
+    memcpy(b->s+b->n,tmp,(size_t)k); b->n+=(size_t)k; b->s[b->n]=0;
+}
+static void lit_source(Ck *c, Expr *d, SrcBuf *b, int line){
+    if(d->kind==EXPR_NONE){ sb_add(b,"None"); return; }
+    if(d->kind==EXPR_TRUE){ sb_add(b,"True"); return; }
+    if(d->kind==EXPR_FALSE){ sb_add(b,"False"); return; }
+    if(d->kind==EXPR_UNARY && d->op==T_MINUS && d->a->kind==EXPR_LITERAL && d->a->tok->kind==T_NUMBER){ sb_add(b,"-%s",d->a->tok->text); return; }
+    if(d->kind==EXPR_LITERAL && d->tok->kind==T_NUMBER){ sb_add(b,"%s",d->tok->text); return; }
+    if(d->kind==EXPR_LITERAL && d->tok->kind==T_STRING){
+        sb_add(b,"\"");
+        for(const unsigned char *p=(const unsigned char*)d->tok->text;*p;p++){
+            if(*p=='"'||*p=='\\') sb_add(b,"\\%c",*p); else if(*p<32) sb_add(b,"\\x%02x",*p); else sb_add(b,"%c",*p); }
+        sb_add(b,"\""); return; }
+    err(c,line,"an endpoint parameter's default must be a literal");
+}
+static AFunc *new_func(Ck *c, AFunc *f, AModule *m, AClass *cls, Stmt *def, AFunc *outer);
+static AFunc *ep_adapter(Ck *c, AFunc *fn, int line){
+    if(fn->ep_adapter) return fn->ep_adapter;
+    if(fn->outer || fn->cls) err(c,line,"an endpoint must be a module-level function");
+    if(fn->kwonly<fn->nparams || (fn->def && (fn->def->star_index>=0 || fn->def->dstar_index>=0))) err(c,line,"endpoint %s(): only plain parameters (no *args, **kwargs, keyword-only)",fn->name);
+    SrcBuf b={0};
+    sb_add(&b,"def __endpoint__(values: dict[str, str]) -> str:\n");
+    for(int k=0;k<fn->nparams;k++){ const char *nm=fn->params[k]->name; Ty *t=ty_find(fn->params[k]->ty);
+        const char *conv=t->k==TY_INT?"int":t->k==TY_FLOAT?"float":t->k==TY_BOOL?"bool":(t->k==TY_STR||t->k==TY_VAR)?"str":NULL;
+        if(!conv) err(c,line,"endpoint %s(): parameter '%s' is %s; path and query parameters are int, float, bool or str",fn->name,nm,ty_name(t));
+        if(fn->defaults[k]){ sb_add(&b,"    a%d = ",k); lit_source(c,fn->defaults[k],&b,line); sb_add(&b,"\n    if \"%s\" in values:\n",nm); }
+        else sb_add(&b,"    if \"%s\" not in values:\n        raise ValueError(\"#endpoint\\nmissing\\n%s\\n%s\\n\")\n    if True:\n",nm,nm,conv);
+        sb_add(&b,"        v%d = values[\"%s\"]\n",k,nm);
+        if(!strcmp(conv,"str")) sb_add(&b,"        a%d = v%d\n",k,k);
+        else if(!strcmp(conv,"bool")){
+            sb_add(&b,"        l%d = v%d.lower()\n        if l%d in (\"1\", \"true\", \"t\", \"yes\", \"y\", \"on\"):\n            a%d = True\n",k,k,k,k);
+            sb_add(&b,"        elif l%d in (\"0\", \"false\", \"f\", \"no\", \"n\", \"off\"):\n            a%d = False\n",k,k);
+            sb_add(&b,"        else:\n            raise ValueError(\"#endpoint\\nparsing\\n%s\\nbool\\n\" + v%d)\n",nm,k);
+        } else {
+            sb_add(&b,"        try:\n            a%d = %s(v%d)\n        except ValueError:\n            raise ValueError(\"#endpoint\\nparsing\\n%s\\n%s\\n\" + v%d)\n",k,conv,k,nm,conv,k);
+        }
+    }
+    sb_add(&b,"    return __json__.dumps(__target__(");
+    for(int k=0;k<fn->nparams;k++) sb_add(&b,"%sa%d",k?", ":"",k);
+    sb_add(&b,"), separators=(\",\", \":\"), ensure_ascii=False)\n");
+    AotUnit *u=MPY_NEW0(AotUnit);
+    u->name=fn->mod->unit->name; u->path=fn->mod->unit->path; u->src=b.s;
+    u->tv=lex(b.s); SymTable st; memset(&st,0,sizeof st); u->ast=build_ast_and_symbols(&u->tv,&st);
+    AModule *m=MPY_NEW0(AModule); m->unit=u; m->name=fn->mod->name; m->index=fn->mod->index; m->body=fn->mod->body;
+    symtab_add(&m->syms,"__target__",AS_FUNC,fn);
+    symtab_add(&m->syms,"__json__",AS_SYS,(void*)"json");
+    Stmt *def=u->ast->body[0];
+    for(int k=0;k<def->body_count;k++) def->body[k]->line=line;      /* errors in it point at the conversion */
+    AModule *save=c->mod; AFunc *savef=c->fn;
+    c->mod=m;
+    AFunc *ad=new_func(c,NULL,m,NULL,def,NULL);
+    c->mod=save; c->fn=savef;
+    free(ad->name); ad->name=(char*)xmalloc(strlen(fn->name)+16); sprintf(ad->name,"%s<endpoint>",fn->name);
+    ad->calls_coroutines=1; ad->ncalls++; ad->value_used=1;
+    fn->ncalls++; fn->ep_adapter=ad; c->changed=1;
+    return ad;
+}
+/* an argument passed where minipy.Endpoint is expected: the function itself */
+static void ep_arg(Ck *c, Ty *pt, Expr *a, int line){
+    if(!is_endpoint(pt) || is_endpoint(xinfo(a)->ty)) return;
+    XInfo *x=xinfo(a);
+    if(x->kind!=X_FUNCREF || !x->fn) err(c,line,"a minipy.Endpoint is made from a function given by its name");
+    ep_adapter(c,x->fn,line);
+}
 static Ty *ck_callval(Ck *c, Expr *e, Ty *ft){
     XInfo *xi=xinfo(e);
     ft=ty_find(ft);
@@ -1574,7 +1868,9 @@ static Ty *ck_callval(Ck *c, Expr *e, Ty *ft){
     #define TOO_MANY() err(c,e->line,"this function takes %d positional argument%s",nreg,nreg==1?"":"s")
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
         if(a->akind==0){
-            if(pi<nreg){ Ty *t=ck_expr_want(c,a,ft->elems[pi]); no_void(c,t,e->line); expect(c,ft->elems[pi],t,e->line,"an argument"); xi->argmap[pi++]=i; }
+            if(pi<nreg){ int ep=is_endpoint(ft->elems[pi]); c->ep_value+=ep;
+                Ty *t=ck_expr_want(c,a,ft->elems[pi]); c->ep_value-=ep;
+                no_void(c,t,e->line); expect(c,ft->elems[pi],t,e->line,"an argument"); ep_arg(c,ft->elems[pi],a,e->line); xi->argmap[pi++]=i; }
             else if(star){ Ty *t=ck_expr_want(c,a,starel); no_void(c,t,e->line); expect(c,starel,t,e->line,"an argument"); int_push(&xi->xargs,&xi->nxargs,i); }
             else TOO_MANY();
         } else if(a->akind==3){
@@ -1917,6 +2213,7 @@ static Ty *ck_tmethod(Ck *c, Expr *e, Ty *t, const char *m){
     #define NARGS(lo,hi) ck_positional(c,e,lo,hi,m)
     if(t->k==TY_STR){
         if(!strcmp(m,"upper")||!strcmp(m,"lower")||!strcmp(m,"capitalize")){ NARGS(0,0); return TY_STR_T; }
+        if(!strcmp(m,"encode")||!strcmp(m,"decode")){ NARGS(0,2); for(int i=0;i<e->count;i++) expect(c,TY_STR_T,arg(c,e,i),line,"the encoding"); return TY_STR_T; }   /* UTF-8 either way */
         if(!strcmp(m,"strip")||!strcmp(m,"lstrip")||!strcmp(m,"rstrip")){ NARGS(0,1); if(e->count) expect(c,TY_STR_T,arg(c,e,0),line,"the characters"); return TY_STR_T; }
         if(!strcmp(m,"startswith")||!strcmp(m,"endswith")){ NARGS(1,1); expect(c,TY_STR_T,arg(c,e,0),line,"the argument"); return TY_BOOL_T; }
         if(!strcmp(m,"find")||!strcmp(m,"count")||!strcmp(m,"index")){ NARGS(1,1); expect(c,TY_STR_T,arg(c,e,0),line,"the argument"); return TY_INT_T; }
@@ -2063,10 +2360,123 @@ static Ty *ck_bmod(Ck *c, Expr *e, const char *mod, const char *m){
     #undef what_
     err(c,line,"%s.%s is not available in compiled code",mod,m);
 }
+/* lib.f(args) / f(args): a cdecl call. Without argtypes each argument goes by
+   its type: int/bool c_int, float c_double, str and buffers char *, None NULL. */
+static Ty *ck_ccall(Ck *c, Expr *e, ACFunc *cf){
+    XInfo *xi=xinfo(e); xi->kind=X_CCALL; xi->cfn=cf; int line=e->line;
+    if(c->p->target!=AOT_TARGET_LINUX) err(c,line,"C functions (ctypes) need the linux target");
+    if(e->count>16) err(c,line,"%s(): at most 16 arguments",cf->sym);
+    if(cf->nargtypes>=0 && e->count<cf->nargtypes) err(c,line,"%s() takes %d arguments (its argtypes), not %d",cf->sym,cf->nargtypes,e->count);
+    for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
+        if(a->akind) err(c,line,"%s() takes positional arguments",cf->sym);
+        CType k=i<cf->nargtypes?cf->argtypes[i]:CT_DEFAULT;
+        Ty *t=ty_find(arg(c,e,i));
+        if(a->kind==EXPR_NONE){
+            if(k!=CT_DEFAULT && k!=CT_CHARP && k!=CT_VOIDP) err(c,line,"argument %d of %s(): None is a NULL pointer, the argtype is not a pointer",i+1,cf->sym);
+            unify(c,t,TY_BUF_T); xi->argmap[i]=CT_VOIDP; continue;
+        }
+        if(t->k==TY_VAR){ pending(c,line,"an argument of a C function"); continue; }
+        int isint=t->k==TY_INT||t->k==TY_BOOL, isptr=t->k==TY_STR||t->k==TY_BUF;
+        if(k==CT_DEFAULT){
+            if(isint) k=CT_INT; else if(t->k==TY_FLOAT) k=CT_DOUBLE; else if(t->k==TY_STR) k=CT_CHARP; else if(t->k==TY_BUF) k=CT_VOIDP;
+            else err(c,line,"argument %d of %s() is %s: C functions take int, float, str, buffers or None",i+1,cf->sym,ty_name(t));
+        } else if(k==CT_DOUBLE || k==CT_FLOAT){
+            if(!numeric(t)) err(c,line,"argument %d of %s() must be a number (its argtype is a float), not %s",i+1,cf->sym,ty_name(t));
+        } else if(k==CT_CHARP){
+            if(!isptr && !isint) err(c,line,"argument %d of %s() must be a str or a buffer (c_char_p), not %s",i+1,cf->sym,ty_name(t));
+        } else if(k==CT_VOIDP){
+            if(!isptr && !isint) err(c,line,"argument %d of %s() must be an address, a str or a buffer (c_void_p), not %s",i+1,cf->sym,ty_name(t));
+        } else if(!isint) err(c,line,"argument %d of %s() must be an int, not %s",i+1,cf->sym,ty_name(t));
+        xi->argmap[i]=k;
+    }
+    cf->used=1; cf->lib->used=1;
+    switch(cf->restype){
+        case CT_DOUBLE: case CT_FLOAT: return TY_FLOAT_T;
+        case CT_CHARP: return TY_OSTR_T;                   /* NULL is None */
+        case CT_VOID: return TY_VOID_T;
+        case CT_BOOL: return TY_BOOL_T;
+        default: return TY_INT_T;
+    }
+}
+/* ctypes.create_string_buffer / string_at / addressof / get_errno */
+static Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
+    static const char *names[]={"ctypes.create_string_buffer","ctypes.string_at","ctypes.addressof","ctypes.get_errno",NULL};
+    XInfo *xi=xinfo(e); xi->kind=X_BMOD; xi->name=m; int line=e->line;
+    for(int i=0;names[i];i++) if(!strcmp(names[i]+7,m)) xi->name=names[i];
+    if(c->p->target!=AOT_TARGET_LINUX) err(c,line,"ctypes needs the linux target");
+    if(!strcmp(m,"create_string_buffer")){ ck_positional(c,e,1,1,"create_string_buffer"); Ty *t=ty_find(arg(c,e,0));
+        if(t->k!=TY_INT&&t->k!=TY_STR&&t->k!=TY_VAR) err(c,line,"create_string_buffer() takes a size or a str");
+        return TY_BUF_T; }
+    if(!strcmp(m,"string_at")){ ck_positional(c,e,1,2,"string_at"); expect(c,TY_INT_T,arg(c,e,0),line,"the address");
+        if(e->count==2) expect(c,TY_INT_T,arg(c,e,1),line,"the size"); return TY_STR_T; }
+    if(!strcmp(m,"addressof")){ ck_positional(c,e,1,1,"addressof"); expect(c,TY_BUF_T,arg(c,e,0),line,"the buffer"); return TY_INT_T; }
+    if(!strcmp(m,"get_errno")){ ck_positional(c,e,0,0,"get_errno");
+        ACFunc *f=cfunc_get(c->p,clib_get(c->p,"libc.so.6"),"__errno_location"); f->restype=CT_VOIDP; f->used=1; f->lib->used=1; xi->cfn=f;
+        return TY_INT_T; }
+    err(c,line,"ctypes.%s is not available in compiled code",m);
+}
+
+/* What json.dumps can write: as CPython's json, plus objects (their fields,
+   as a JSON object) and records. */
+static void json_ok(Ck *c, Ty *t, int line, int depth){
+    t=ty_find(t);
+    if(depth>32) return;
+    switch(t->k){
+        case TY_VAR: if(!depth) pending(c,line,"the value written as JSON"); return;   /* items of an empty container: defaulted */
+        case TY_INT: case TY_BOOL: case TY_FLOAT: case TY_STR: case TY_VOID: return;
+        case TY_LIST: json_ok(c,t->elem,line,depth+1); return;
+        case TY_TUPLE: for(int i=0;i<t->nelems;i++) json_ok(c,t->elems[i],line,depth+1); return;
+        case TY_DICT:{ Ty *k=ty_find(ty_dkey(t));
+            if(k->k!=TY_STR && k->k!=TY_INT && k->k!=TY_BOOL && k->k!=TY_FLOAT && k->k!=TY_VAR) err(c,line,"TypeError: keys must be str, int, float or bool, not %s (json)",ty_name(k));
+            json_ok(c,t->elem,line,depth+1); return; }
+        case TY_OBJ: for(AClass *k=t->cls;k;k=k->base) for(int i=0;i<k->nfields;i++) json_ok(c,k->fields[i]->ty,line,depth+1); return;
+        default: err(c,line,"TypeError: Object of type %s is not JSON serializable",ty_name(t));
+    }
+}
+/* json.dumps(obj, separators=(item, key), ensure_ascii=bool) */
+static Ty *ck_json(Ck *c, Expr *e, const char *m){
+    XInfo *xi=xinfo(e); xi->kind=X_BMOD; int line=e->line;
+    if(strcmp(m,"dumps")) err(c,line,"json.%s is not available in compiled code (json.dumps is)",m);
+    xi->name="json.dumps"; xi->key=NULL; xi->argmap[0]=1;
+    int npos=0;
+    for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
+        if(a->akind==0){ if(npos++) err(c,line,"json.dumps() takes one positional argument"); continue; }
+        if(a->akind!=3) err(c,line,"json.dumps(): *args / **kwargs are not supported");
+        if(!strcmp(a->kw,"separators")){
+            if(a->kind!=EXPR_TUPLE || a->count!=2 || a->items[0]->kind!=EXPR_LITERAL || a->items[0]->tok->kind!=T_STRING || a->items[1]->kind!=EXPR_LITERAL || a->items[1]->tok->kind!=T_STRING)
+                err(c,line,"json.dumps(): separators must be a tuple of two string literals");
+            xi->key=a; ck_expr(c,a);
+        } else if(!strcmp(a->kw,"ensure_ascii")){
+            if(a->kind!=EXPR_TRUE && a->kind!=EXPR_FALSE) err(c,line,"json.dumps(): ensure_ascii must be True or False");
+            xi->argmap[0]=a->kind==EXPR_TRUE; ck_expr(c,a);
+        } else if(!strcmp(a->kw,"indent") || !strcmp(a->kw,"sort_keys")){
+            if(a->kind!=EXPR_NONE && a->kind!=EXPR_FALSE) err(c,line,"json.dumps(): %s is not supported in compiled code",a->kw);
+            if(a->kind==EXPR_NONE) unify(c,ck_expr(c,a),TY_VOID_T); else ck_expr(c,a);
+        } else err(c,line,"json.dumps(): '%s' is not supported in compiled code",a->kw);
+    }
+    if(npos!=1 || e->items[0]->akind) err(c,line,"json.dumps() takes the value to write first");
+    Expr *v=e->items[0];
+    Ty *t=ck_expr(c,v);
+    if(v->kind==EXPR_NONE) unify(c,t,TY_VOID_T);
+    json_ok(c,t,line,0);
+    return TY_STR_T;
+}
+/* minipy.endpoint(f): f as an Endpoint (a function: its adapter) */
+static Ty *ck_minipy(Ck *c, Expr *e, const char *m){
+    XInfo *xi=xinfo(e); xi->kind=X_BMOD; int line=e->line;
+    if(strcmp(m,"endpoint")) err(c,line,"minipy.%s is not available",m);
+    xi->name="minipy.endpoint";
+    ck_positional(c,e,1,1,"endpoint");
+    Ty *want=endpoint_type();
+    c->ep_value++; Ty *t=ck_expr(c,e->items[0]); c->ep_value--;
+    expect(c,want,t,line,"the argument of minipy.endpoint()");
+    ep_arg(c,want,e->items[0],line);
+    return want;
+}
 static Ty *ck_call(Ck *c, Expr *e){
     Ty *t=ck_call_inner(c,e);
     XInfo *xi=xinfo(e);
-    if((xi->kind==X_FUNC||xi->kind==X_METHOD||xi->kind==X_STATIC||xi->kind==X_SUPER) && xi->fn && xi->fn->is_async && c->coro_ok!=e)
+    if((xi->kind==X_FUNC||xi->kind==X_METHOD||xi->kind==X_STATIC||xi->kind==X_SUPER) && xi->fn && xi->fn->is_async && c->coro_ok!=e && !(c->fn && c->fn->calls_coroutines))
         err(c,e->line,"%s() is a coroutine: await it, or pass it to asyncio.create_task/gather/run",xi->fn->name);
     return t;
 }
@@ -2092,6 +2502,10 @@ static Ty *ck_call_inner(Ck *c, Expr *e){
             xi->kind=X_FUNC; xi->fn=fn; ck_args(c,e,fn,0,xi); return fn->ret; }
         if(s->kind==AS_CLASS) return ck_ctor(c,e,(AClass*)s->p);
         if(s->kind==AS_SYS && !strcmp((const char*)s->p,"functools.reduce")) return ck_reduce(c,e);
+        if(s->kind==AS_SYS && !strncmp((const char*)s->p,"ctypes.",7)) return ck_ctypes_fn(c,e,(const char*)s->p+7);
+        if(s->kind==AS_SYS && !strncmp((const char*)s->p,"json.",5)) return ck_json(c,e,(const char*)s->p+5);
+        if(s->kind==AS_SYS && !strncmp((const char*)s->p,"minipy.",7)) return ck_minipy(c,e,(const char*)s->p+7);
+        if(s->kind==AS_CFUNC) return ck_ccall(c,e,(ACFunc*)s->p);
         if(s->kind==AS_VAR){
             AVar *v=(AVar*)s->p, *r=var_root(v);
             if(r->fn_const){                                       /* a nested def called by its name */
@@ -2105,11 +2519,20 @@ static Ty *ck_call_inner(Ck *c, Expr *e){
     const char *m=f->name;
     if(is_sys(c,f->a)) return ck_sys(c,e,m);
     if(is_bmod(c,f->a,"asyncio")) return ck_asyncio(c,e,m);
+    if(is_bmod(c,f->a,"ctypes")) return ck_ctypes_fn(c,e,m);
+    if(is_bmod(c,f->a,"json")) return ck_json(c,e,m);
+    if(is_bmod(c,f->a,"minipy")) return ck_minipy(c,e,m);
     if(bmod(c,f->a)) return ck_bmod(c,e,bmod(c,f->a),m);
+    if(f->a->kind==EXPR_NAME){ ASym *s=lookup(c,f->a->name);       /* lib.f(...) */
+        if(s && s->kind==AS_CLIB) return ck_ccall(c,e,cfunc_get(c->p,(ACLib*)s->p,m)); }
+    if(f->a->kind==EXPR_ATTRIBUTE){ AModule *lm=module_expr(c,f->a->a);   /* module.lib.f(...) */
+        ASym *s=lm?module_sym(lm,f->a->name):NULL;
+        if(s && s->kind==AS_CLIB) return ck_ccall(c,e,cfunc_get(c->p,(ACLib*)s->p,m)); }
     AModule *mod=module_expr(c,f->a);
     if(mod){
         ASym *s=module_sym(mod,m);
         if(!s) err(c,e->line,"module %s has no attribute '%s'",mod->name,m);
+        if(s->kind==AS_CFUNC) return ck_ccall(c,e,(ACFunc*)s->p);
         if(s->kind==AS_FUNC){ AFunc *fn=(AFunc*)s->p; xi->kind=X_FUNC; xi->fn=fn; ck_args(c,e,fn,0,xi); return fn->ret; }
         if(s->kind==AS_CLASS) return ck_ctor(c,e,(AClass*)s->p);
         if(s->kind==AS_VAR) return ck_callval(c,e,ck_expr(c,f));
@@ -2213,6 +2636,7 @@ static void ck_store(Ck *c, Expr *t, Ty *vt, int line){
             Ty *v=ty_find(vt);
             if(v->k==TY_VAR){ pending(c,line,"the unpacked value"); return; }
             if(v->k==TY_TUPLE){
+                if(v->names) err(c,line,"%s (a dict literal with values of different types) cannot be unpacked in compiled code",ty_name(v));
                 if(v->nelems!=t->count) err(c,line,"cannot unpack %s into %d targets",ty_name(v),t->count);
                 xi->ty=vt;
                 for(int i=0;i<t->count;i++) ck_store(c,t->items[i],v->elems[i],line);
@@ -2481,7 +2905,8 @@ static void mark_overrides(AProg *p){
 
 AProg *aot_check(AotUnit **units, int nunits, AotTarget target){
     if(!TY_INT_T){ TY_INT_T=ty_new(TY_INT,NULL,NULL); TY_BOOL_T=ty_new(TY_BOOL,NULL,NULL); TY_FLOAT_T=ty_new(TY_FLOAT,NULL,NULL);
-        TY_STR_T=ty_new(TY_STR,NULL,NULL); TY_VOID_T=ty_new(TY_VOID,NULL,NULL); TY_BUF_T=ty_new(TY_BUF,NULL,NULL); }
+        TY_STR_T=ty_new(TY_STR,NULL,NULL); TY_VOID_T=ty_new(TY_VOID,NULL,NULL); TY_BUF_T=ty_new(TY_BUF,NULL,NULL);
+        TY_OSTR_T=ty_new(TY_STR,NULL,NULL); TY_OSTR_T->tup=1; }
     AProg *p=MPY_NEW0(AProg); p->target=target;
     Ck ck; memset(&ck,0,sizeof ck); ck.p=p; Ck *c=&ck;
     if(setjmp(ck.fail)) return NULL;

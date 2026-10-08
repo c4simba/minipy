@@ -48,6 +48,17 @@ static Function *compile_function_from_ast(Parser *p,const char *name,char **par
     p->chunk=outer;
     return fn;
 }
+/* The type a parameter annotation names: int / float / bool / str / a class
+   name (Optional[T], Union[T, None], T | None: T), or NULL. */
+static char *annotation_name(Parser *p, Expr *range){
+    if(!range || range->kind!=EXPR_TOKEN_RANGE) return NULL;
+    for(int i=range->start;i<range->end;i++){ Tok *t=&p->tv.v[i];
+        if(t->kind!=T_NAME) continue;
+        if(!strcmp(t->text,"Optional")||!strcmp(t->text,"Union")||!strcmp(t->text,"typing")) continue;
+        return xstrdup2(t->text);
+    }
+    return NULL;
+}
 static void compile_assign_ast(Parser *p,Stmt *s){ int old=p->pos; p->pos=s->start; assign_stmt(p); p->pos=old; }
 /* `import a.b.c`     -> OP_IMPORT (pushes top package `a`); STORE a
    `import a.b.c as x` -> OP_IMPORT; walk .b.c to the leaf; STORE x
@@ -100,9 +111,11 @@ void compile_stmt_ast(Parser *p, Stmt *s){
         case STMT_WHILE: compile_while_ast(p,s); break;
         case STMT_FOR: compile_for_ast(p,s); break;
         case STMT_FUNCTION_DEF:{
-            if(s->is_async){ fprintf(stderr,"parse error at line %d: async def is supported by the compiler only (minipy --compile)\n",s->line); exit(1); }
+            /* async def: an ordinary function here - calling it runs it, `await` takes its value (asyncio.run / gather / create_task too) */
             Function *fn=compile_function_from_ast(p,s->name,s->params,s->param_count,s->body,s->body_count,0);
             fn->default_count=s->default_count; fn->star_index=s->star_index; fn->dstar_index=s->dstar_index;
+            if(s->annotations){ fn->annots=MPY_NEW_ARR(char*,s->param_count>0?s->param_count:1);    /* for minipy.endpoint */
+                for(int ai=0;ai<s->param_count;ai++) fn->annots[ai]=ai<s->annotation_cap?annotation_name(p,s->annotations[ai]):NULL; }
             int nreg=s->param_count-(s->star_index>=0?1:0)-(s->dstar_index>=0?1:0);
             fn->min_arity=nreg-s->default_count;
             /* default values are evaluated at def-time in the enclosing frame and
