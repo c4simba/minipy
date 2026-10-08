@@ -11,7 +11,8 @@
    value, field and element gets one static type (annotated or inferred) --
    (aot_codegen.c)--> one fasm listing for i386 --(fasm)--> a standalone
    executable: a Linux ELF using int 0x80, or a KolibriOS application using
-   int 0x40. No libc, no linker, no runtime library: the few runtime routines a
+   int 0x40. For macos the listing is translated to C instead (aot_x2c.c) and
+   the system C compiler builds a native executable. No libc, no linker, no runtime library: the few runtime routines a
    program needs (allocator, formatting, containers, console) are emitted into
    the listing only when it uses them.
 
@@ -24,7 +25,9 @@
 /* CLI entry (aot_driver.c); argv excludes the `--compile` flag itself. */
 int aot_main(int argc, char **argv, const char *program);
 
-typedef enum { AOT_TARGET_LINUX, AOT_TARGET_KOLIBRI } AotTarget;
+/* macos: the Linux listing, translated to C (aot_x2c.c) and built by the
+   system C compiler into a native executable. */
+typedef enum { AOT_TARGET_LINUX, AOT_TARGET_KOLIBRI, AOT_TARGET_MACOS } AotTarget;
 
 /* One module of the program being compiled. */
 typedef struct AotUnit {
@@ -45,6 +48,10 @@ typedef struct {
    a heap buffer. Returns 0 on success; on error prints "path:line: error: ..."
    to stderr and returns 1. */
 int aot_compile(const AotCodegenOptions *opt, AotUnit **units, int nunits, char **out, size_t *outlen);
+
+/* macos: the listing as a C program (aot_x2c.c). Returns 0 on success; on
+   error prints "minipy: ..." to stderr and returns 1. */
+int aot_x2c(const char *listing, size_t len, char **out, size_t *outlen);
 
 /* Dotted module name of a `from X.Y import ...` statement. */
 char *aot_from_import_module(AotUnit *u, Stmt *s);

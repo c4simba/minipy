@@ -4,7 +4,8 @@
 #   uvicorn.run(app, host="0.0.0.0", port=8000)
 #
 # It logs like uvicorn ("INFO:     127.0.0.1:50312 - "GET / HTTP/1.1" 200 OK")
-# and stops on Ctrl+C (the default SIGINT). Linux only (libc.so.6).
+# and stops on Ctrl+C (the default SIGINT). Linux and macOS (sys.platform
+# picks the socket constants and structures).
 import asyncio
 import ctypes
 import sys
@@ -26,10 +27,18 @@ libc.strerror.restype = ctypes.c_char_p
 
 AF_INET = 2
 SOCK_STREAM = 1
-SOL_SOCKET = 1
-SO_REUSEADDR = 2
-SO_RCVTIMEO = 20
-MSG_NOSIGNAL = 0x4000
+if sys.platform == "darwin":
+    SOL_SOCKET = 0xFFFF
+    SO_REUSEADDR = 4
+    SO_RCVTIMEO = 0x1006
+    SO_NOSIGPIPE = 0x1022           # macOS has no MSG_NOSIGNAL: per socket
+    MSG_NOSIGNAL = 0
+else:
+    SOL_SOCKET = 1
+    SO_REUSEADDR = 2
+    SO_RCVTIMEO = 20
+    SO_NOSIGPIPE = 0
+    MSG_NOSIGNAL = 0x4000
 TIMEOUT_KEEP_ALIVE = 5          # seconds a client gets to send its request
 
 REASONS = {200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401: "Unauthorized",
@@ -59,7 +68,11 @@ def ipv4(host: str) -> int:
 
 def sockaddr(host: str, port: int) -> buffer:
     a = sys.buffer(16)
-    sys.poke(a, 0, AF_INET, 2)
+    if sys.platform == "darwin":
+        sys.poke(a, 0, 16, 1)               # sin_len, then a one-byte sin_family
+        sys.poke(a, 1, AF_INET, 1)
+    else:
+        sys.poke(a, 0, AF_INET, 2)
     sys.poke(a, 2, ((port & 255) << 8) | ((port >> 8) & 255), 2)
     sys.poke(a, 4, ipv4(host), 4)
     return a
@@ -154,14 +167,16 @@ async def serve(app: FastAPI, host: str, port: int) -> None:
     chunk = sys.buffer(16384)
     addr = sys.buffer(16)
     addrlen = sys.buffer(4)
-    timeout = sys.buffer(8)                     # struct timeval
+    timeout = sys.buffer(16)                    # struct timeval: seconds first (4 or 8 bytes), microseconds 0
     sys.poke(timeout, 0, TIMEOUT_KEEP_ALIVE, 4)
     while True:
         sys.poke(addrlen, 0, 16, 4)
         c = libc.accept(fd, addr, addrlen)
         if c < 0:
             continue
-        libc.setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, timeout, 8)
+        libc.setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, timeout, 16)
+        if SO_NOSIGPIPE:
+            libc.setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, one, 4)
         serve_one(app, c, peer(addr), chunk)
         libc.close(c)
 

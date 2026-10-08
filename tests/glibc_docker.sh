@@ -13,8 +13,8 @@ IMAGE=${IMAGE:-minipy-ubuntu-test}
 OUT=${OUT:-build/glibc}
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
-"$MINIPY" --compile --fasm "$FASM" tests/typed/ctypes_linux.mpy -o "$OUT/ctypes_linux" >/dev/null || exit 1
-"$MINIPY" --compile --fasm "$FASM" examples/fastapi/main.py -o "$OUT/fastapi_main" >/dev/null || exit 1
+"$MINIPY" --compile --target linux --fasm "$FASM" tests/typed/ctypes_linux.mpy -o "$OUT/ctypes_linux" >/dev/null || exit 1
+"$MINIPY" --compile --target linux --fasm "$FASM" examples/fastapi/main.py -o "$OUT/fastapi_main" >/dev/null || exit 1
 cp tests/typed/expected/ctypes_linux.out "$OUT/ctypes_linux.expected"
 cat > "$OUT/check.sh" <<'EOF'
 #!/bin/bash

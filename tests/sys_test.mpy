@@ -1,7 +1,7 @@
 # The built-in `sys` module: importable everywhere; syscall is KolibriOS-only.
 
 import sys
-print(sys.platform)
+print(sys.platform in ("linux", "darwin", "win32", "host"))   # the host's, as in CPython
 
 try:
     sys.syscall(0)
@@ -11,7 +11,7 @@ except RuntimeError:
 
 # `sys` resolves from the module cache without touching the filesystem
 from sys import platform
-print(platform)
+print(platform == sys.platform)
 
 # raw byte buffers: build a struct and read the fields back (little-endian)
 b = sys.buffer(16)

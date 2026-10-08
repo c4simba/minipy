@@ -68,7 +68,8 @@ make test
 ### Compile to a native executable
 
 See [Compiled mode](#compiled-mode-ahead-of-time-fasm) below: statically
-typed programs become small i386 executables for Linux or KolibriOS.
+typed programs become small i386 executables for Linux or KolibriOS, or
+native macOS executables.
 
 ## Compiled mode (ahead-of-time, fasm)
 
@@ -76,10 +77,14 @@ Besides interpreting, `minipy` compiles **statically typed** programs to small
 native executables:
 
 ```sh
-./minipy --compile app.mpy                    # Linux i386 executable ./app
+./minipy --compile --target linux app.mpy     # Linux i386 executable ./app
 ./minipy --compile --target kolibri app.mpy   # KolibriOS application ./app
+./minipy --compile --target macos app.mpy     # native macOS executable ./app (via C, see below)
 ./minipy --compile -S app.mpy                 # only the assembly listing app.asm
 ```
+
+Without `--target` the program is compiled for the system `minipy` runs on
+(`macos` on a Mac, `linux` elsewhere, `kolibri` on KolibriOS).
 
 ```text
 app.mpy + every imported module
@@ -88,7 +93,15 @@ app.mpy + every imported module
   -> one fasm listing app.asm, i386      (src/aot_codegen.c)
      + the runtime routines it uses      (src/aot_rtlib.asm)
   -> fasm -> app   (no linker, no libc, no runtime library to install)
+     macos: -> the listing as C, app.c (src/aot_x2c.c) -> cc -> app
 ```
+
+The listing names its labels after the program: `main.read_item` (a
+function), `fastapi.FastAPI.get` (a method), `main.read_root.endpoint` (the
+adapter of an endpoint), `main.app` (a global), `kolibri.Window.vtable`;
+equal names - methods of the same name in different modules' classes of the
+same name, say - get `_2`, `_3`, ... appended. Labels of compiler temporaries
+stay short (`L12`, `S3` strings, `FC0` float constants).
 
 Values are machine values: `int`/`bool` are 32-bit integers, `float` is an
 x87 double, `str`/`list`/`dict`/`set`/objects are pointers to
@@ -327,10 +340,11 @@ MINIPYPATH=$HOME/mylibs:/opt/shared ./minipy --compile app.py
 
 ### C libraries: `ctypes`
 
-On the Linux target a program calls C functions the way CPython's `ctypes`
-does, and `minipy --compile` makes a dynamically linked executable
-(`/lib/ld-linux.so.2` loads the libraries and fills in the functions'
-addresses; `fflush(NULL)` runs at exit):
+On the Linux and macOS targets a program calls C functions the way CPython's
+`ctypes` does. For Linux `minipy --compile` makes a dynamically linked
+executable (`/lib/ld-linux.so.2` loads the libraries and fills in the
+functions' addresses; `fflush(NULL)` runs at exit); on macOS each call is a
+native call with the signature its declarations give (see [macOS](#macos-target-the-listing-as-c)):
 
 ```python
 import ctypes
@@ -363,7 +377,8 @@ argtypes for their fixed arguments, as CPython on arm64 Macs).
 
 ### System calls: the `sys` module
 
-`sys.platform` is a constant (`"linux"` / `"kolibrios"`).
+`sys.platform` is a constant (`"linux"` / `"kolibrios"` / `"darwin"`; the
+interpreter gives its host's, as CPython does).
 `sys.syscall(eax, ebx, ecx, edx, esi, edi, ebp)` (1 to 7 values: integers,
 `str` or buffers - passed as the address of their bytes, always followed by a
 0 byte - or `None`, a null pointer; `ebp` is 0 unless given) issues `int 0x80`
@@ -382,12 +397,14 @@ KolibriOS system functions with them (next section).
 
 ### Building and testing
 
-Needs [fasm](https://flatassembler.net) (1.7x). Programs are i386: they run on
-x86/x86-64 Linux (no 32-bit libraries needed) and on KolibriOS.
+The linux and kolibri targets need [fasm](https://flatassembler.net) (1.7x).
+Their programs are i386: they run on x86/x86-64 Linux (no 32-bit libraries
+needed) and on KolibriOS. The macos target needs only a C compiler.
 
 ```sh
 make                  # minipy (interpreter + compiler)
 make test-typed       # compile tests/typed/*.mpy, run them, compare with tests/typed/expected
+                      # (on a Mac natively: TARGET=macos; elsewhere TARGET=linux)
 ```
 
 `--fasm`, `--fasm-args` (or `MPY_FASM`, `MPY_FASM_ARGS`) choose the
@@ -434,6 +451,50 @@ On KolibriOS itself the KolibriOS build of `minipy` compiles the same way,
 running `/sys/develop/fasm` with KolibriOS fasm's `infile,outfile,path`
 arguments; nothing else has to be installed.
 
+### macOS target: the listing as C
+
+`--target macos` compiles the program exactly as for Linux and then, instead
+of assembling the listing, translates it into C (`src/aot_x2c.c`, a static
+recompiler for the fasm subset the compiler emits) that the system C compiler
+builds into a native executable - arm64 on Apple silicon, no Rosetta, no fasm:
+
+```sh
+./minipy --compile hello.mpy && ./hello       # on a Mac: hello.asm, hello.c, ./hello
+```
+
+The C program keeps the i386 machine the listing was written for
+(`src/aot_x2c_rt.c`, at the start of every such C file): 32-bit registers
+and flags (kept lazily: what the last instruction compared, so `cmp` + `jl`
+becomes a C comparison), the x87 stack in double precision (which compiled
+code selects anyway), and a 4 GiB guest address space reserved in one
+mapping. Every instruction becomes a few C statements in one function;
+jumps and calls to labels are `goto`s, and the labels whose addresses are
+used as values (return addresses, function values, exception handlers) are
+reached through a computed-goto table. Linux system calls (`int 0x80`) run on
+macOS's (`read`, `write`, `open` with Linux's flags, `mmap2` from the guest
+space, `gettimeofday`, `nanosleep`, ...), so `sys.syscall` with Linux numbers
+works too. The runtime routines that compute in the x87's 64-bit precision -
+float formatting and parsing, `exp`, `**` - are C functions there.
+
+ctypes calls are native: each call site carries its C signature, the
+function is looked up with `dlsym` when first called (`libc.so.6`,
+`libm.so.6`, ... are the system's C library; `libfoo.so.N` is tried as
+`libfoo.dylib`), and arguments are converted to C types - `c_long`,
+`c_size_t`, `c_ssize_t` are 64-bit there, the variadic functions of the C
+library (`printf`, `snprintf`, `open`, ...) get their variadic arguments the
+arm64 way even without `argtypes`. Pointers are guest addresses (C sees the
+host address of the same bytes); a `char *` result outside the guest memory
+is copied into it, another pointer becomes a handle the program can pass
+back.
+
+`-O1` builds a program in a second or two; `--cc`, `--cc-args` (or `MPY_CC`,
+`MPY_CC_ARGS`, default `-O1 -w {in} -o {out} -lm`) choose the compiler and
+its arguments. `TARGET=macos sh tests/run_typed_tests.sh` runs the typed
+tests natively (the `*_linux` ones too, except those that need the scripted
+HTTP clients of `tests/x86run.py`); `tests/typed/expected/<name>.<target>.out`
+overrides a test's expected output for one target (`sys_linux.macos.out`:
+`darwin`).
+
 ## FastAPI
 
 `lib/fastapi.mpy` and `lib/uvicorn.mpy` are FastAPI's routing API and a
@@ -464,10 +525,16 @@ if __name__ == "__main__":
 ```
 
 ```sh
-./minipy --compile examples/fastapi/main.py     # a 28 KB i386 Linux executable
+./minipy --compile --target linux examples/fastapi/main.py   # a 28 KB i386 Linux executable
+./minipy --compile examples/fastapi/main.py                  # on a Mac: a native macOS one
 ./main                                          # or: ./minipy examples/fastapi/main.py (interpreter, host)
 curl 'http://localhost:8000/items/5?q=somequery'   # {"item_id":5,"q":"somequery"}
 ```
+
+`lib/uvicorn.mpy` picks its socket constants and structures by
+`sys.platform` (Linux or macOS). `tests/fastapi_native.sh` compiles the
+example for the machine it runs on, serves it on port 8000 and checks a few
+answers with `curl` - then the same with the interpreter.
 
 Path parameters (`{name}` in the path) and query parameters are `int`,
 `float`, `bool` or `str`, with defaults; endpoints may be `async def`; results

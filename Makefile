@@ -19,7 +19,7 @@ HOST_TARGET ?= minipy
 
 CORE_SRC = util qstr gc value containers bytecode lexer ast frontparser \
            compiler expr_compiler fs vm vm_ops vm_exc vm_builtins vm_methods vm_thread \
-           vm_stdlib aot_driver aot_types aot_codegen aot_rtlib main
+           vm_stdlib aot_driver aot_types aot_codegen aot_rtlib aot_x2c main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
 
@@ -29,12 +29,18 @@ INCLUDES = -Isrc -I$(BUILD_DIR)/gen
 # The runtime routines of compiled programs are fasm source; minipy carries
 # them as a C string (src/aot_rtlib.c includes the generated file).
 RTLIB_INC = $(BUILD_DIR)/gen/aot_rtlib.inc
+# ... and the start of the C programs of the macos target (src/aot_x2c.c)
+X2C_INC = $(BUILD_DIR)/gen/aot_x2c_rt.inc
 
 .PHONY: all test test-update test-typed clean kolibrios kolibrios-debug clean-kolibri debug
 
 all: $(HOST_TARGET)
 
 $(RTLIB_INC): src/aot_rtlib.asm
+	@mkdir -p $(dir $@)
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
+
+$(X2C_INC): src/aot_x2c_rt.c
 	@mkdir -p $(dir $@)
 	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
 
@@ -48,6 +54,7 @@ debug:
 HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLATFORM_SRC)))
 
 $(BUILD_DIR)/host/aot_rtlib.o: $(RTLIB_INC)
+$(BUILD_DIR)/host/aot_x2c.o: $(X2C_INC)
 
 $(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)
@@ -63,10 +70,13 @@ $(HOST_TARGET): $(HOST_OBJ)
 test: $(HOST_TARGET)
 	@sh tests/run_tests.sh
 
-# Typed compiler (minipy --compile): needs fasm, and an i386-capable Linux to
-# run the programs (TARGET=kolibri / RUN=<emulator> / FASM=... see the script).
+# Typed compiler (minipy --compile). On a Mac the tests are native programs
+# (TARGET=macos: a C compiler is all it takes); elsewhere they need fasm and an
+# i386-capable Linux to run them (TARGET=kolibri / RUN=<emulator> / FASM=...
+# see the script).
+TYPED_TARGET ?= $(if $(filter Darwin,$(shell uname -s)),macos,linux)
 test-typed: $(HOST_TARGET)
-	@sh tests/run_typed_tests.sh
+	@TARGET=$${TARGET:-$(TYPED_TARGET)} sh tests/run_typed_tests.sh
 
 test-update: $(HOST_TARGET)
 	@sh tests/run_tests.sh --update
@@ -98,6 +108,7 @@ KOS_CFLAGS += $(EXTRA_KOS_CFLAGS)      # kolibrios-debug injects -DMPY_DEBUG / -
 KOS_OBJ = $(addprefix $(KOS_BUILD_DIR)/,$(addsuffix .o,$(CORE_SRC) $(KOLIBRI_PLATFORM_SRC)))
 
 $(KOS_BUILD_DIR)/aot_rtlib.o: $(RTLIB_INC)
+$(KOS_BUILD_DIR)/aot_x2c.o: $(X2C_INC)
 
 $(KOS_BUILD_DIR)/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)

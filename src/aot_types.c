@@ -832,8 +832,8 @@ static const char *ct_member(CtNames *ct, Expr *e){
 }
 static int ct_type(const char *m, CType *out){
     static const struct { const char *name; CType t; } map[]={
-        {"c_int",CT_INT},{"c_long",CT_INT},{"c_int32",CT_INT},{"c_ssize_t",CT_INT},
-        {"c_uint",CT_UINT},{"c_ulong",CT_UINT},{"c_uint32",CT_UINT},{"c_size_t",CT_UINT},
+        {"c_int",CT_INT},{"c_long",CT_LONG},{"c_int32",CT_INT},{"c_ssize_t",CT_LONG},
+        {"c_uint",CT_UINT},{"c_ulong",CT_ULONG},{"c_uint32",CT_UINT},{"c_size_t",CT_ULONG},
         {"c_short",CT_SHORT},{"c_int16",CT_SHORT},{"c_ushort",CT_USHORT},{"c_uint16",CT_USHORT},
         {"c_byte",CT_BYTE},{"c_int8",CT_BYTE},{"c_char",CT_BYTE},{"c_ubyte",CT_UBYTE},{"c_uint8",CT_UBYTE},{"c_bool",CT_BOOL},
         {"c_longlong",CT_LONGLONG},{"c_int64",CT_LONGLONG},{"c_ulonglong",CT_ULONGLONG},{"c_uint64",CT_ULONGLONG},
@@ -887,7 +887,7 @@ static void collect_ctypes(Ck *c, AModule *m){
             Expr *nm=v->items[0]; const char *so="libc.so.6";
             if(nm->kind==EXPR_LITERAL && nm->tok->kind==T_STRING) so=nm->tok->text;
             else if(nm->kind!=EXPR_NONE) err(c,s->line,"the library name must be a string literal (or None: the C library) in compiled code");
-            if(c->p->target!=AOT_TARGET_LINUX) err(c,s->line,"ctypes libraries need the linux target");
+            if(c->p->target==AOT_TARGET_KOLIBRI) err(c,s->line,"ctypes libraries need the linux or macos target");
             if(module_sym(m,t->name)) err(c,s->line,"'%s' is defined twice",t->name);
             symtab_add(&m->syms,t->name,AS_CLIB,clib_get(c->p,so));
             s->kind=STMT_PASS; continue;
@@ -1525,7 +1525,7 @@ static Ty *ck_expr_inner(Ck *c, Expr *e){
         case EXPR_CALL: return ck_call(c,e);
         case EXPR_ATTRIBUTE:{
             if(is_sys(c,e->a)){
-                if(!strcmp(e->name,"platform")){ xi->kind=X_CONST_STR; xi->name=c->p->target==AOT_TARGET_KOLIBRI?"kolibrios":"linux"; return TY_STR_T; }
+                if(!strcmp(e->name,"platform")){ xi->kind=X_CONST_STR; xi->name=c->p->target==AOT_TARGET_KOLIBRI?"kolibrios":c->p->target==AOT_TARGET_MACOS?"darwin":"linux"; return TY_STR_T; }
                 err(c,e->line,"sys.%s is not a value",e->name);
             }
             if(is_bmod(c,e->a,"math") && (!strcmp(e->name,"pi")||!strcmp(e->name,"e")||!strcmp(e->name,"tau"))){ xi->kind=X_BMOD; xi->name=e->name; return TY_FLOAT_T; }
@@ -2364,7 +2364,7 @@ static Ty *ck_bmod(Ck *c, Expr *e, const char *mod, const char *m){
    its type: int/bool c_int, float c_double, str and buffers char *, None NULL. */
 static Ty *ck_ccall(Ck *c, Expr *e, ACFunc *cf){
     XInfo *xi=xinfo(e); xi->kind=X_CCALL; xi->cfn=cf; int line=e->line;
-    if(c->p->target!=AOT_TARGET_LINUX) err(c,line,"C functions (ctypes) need the linux target");
+    if(c->p->target==AOT_TARGET_KOLIBRI) err(c,line,"C functions (ctypes) need the linux or macos target");
     if(e->count>16) err(c,line,"%s(): at most 16 arguments",cf->sym);
     if(cf->nargtypes>=0 && e->count<cf->nargtypes) err(c,line,"%s() takes %d arguments (its argtypes), not %d",cf->sym,cf->nargtypes,e->count);
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
@@ -2403,7 +2403,7 @@ static Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
     static const char *names[]={"ctypes.create_string_buffer","ctypes.string_at","ctypes.addressof","ctypes.get_errno",NULL};
     XInfo *xi=xinfo(e); xi->kind=X_BMOD; xi->name=m; int line=e->line;
     for(int i=0;names[i];i++) if(!strcmp(names[i]+7,m)) xi->name=names[i];
-    if(c->p->target!=AOT_TARGET_LINUX) err(c,line,"ctypes needs the linux target");
+    if(c->p->target==AOT_TARGET_KOLIBRI) err(c,line,"ctypes needs the linux or macos target");
     if(!strcmp(m,"create_string_buffer")){ ck_positional(c,e,1,1,"create_string_buffer"); Ty *t=ty_find(arg(c,e,0));
         if(t->k!=TY_INT&&t->k!=TY_STR&&t->k!=TY_VAR) err(c,line,"create_string_buffer() takes a size or a str");
         return TY_BUF_T; }

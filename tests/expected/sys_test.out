@@ -1,9 +1,9 @@
 MiniPy - Mini Python Interpreter
 Script: tests/sys_test.mpy
 
-host
+True
 syscall blocked off KolibriOS
-host
+True
 305419896
 22136
 171

@@ -95,7 +95,16 @@ static int mpy_run(int argc,char **argv){
         Dict *sysd=dict_new();
         dict_set(sysd,"__name__",stringv("sys"));
         dict_set(sysd,"syscall",nativev(&N_SYSCALL));
-        dict_set(sysd,"platform",stringv(mpy_platform_has_syscall()?"kolibrios":"host"));
+#if defined(__APPLE__)
+        const char *os="darwin";
+#elif defined(__linux__)
+        const char *os="linux";
+#elif defined(_WIN32)
+        const char *os="win32";
+#else
+        const char *os="host";
+#endif
+        dict_set(sysd,"platform",stringv(mpy_platform_has_syscall()?"kolibrios":os));
         dict_set(sysd,"buffer",nativev(&N_BUFFER));       /* raw struct build/parse */
         dict_set(sysd,"poke",nativev(&N_POKE));
         dict_set(sysd,"peek",nativev(&N_PEEK));

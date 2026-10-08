@@ -25,6 +25,7 @@
 rt_exit:                        ; ebx = exit status
 if defined CI_fflush
         push    0               ; the C library's stdio buffers (ctypes)
+        ;@ccall i:p
         call    dword [CI_fflush]
 end if
         mov     eax,1

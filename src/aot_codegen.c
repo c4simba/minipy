@@ -190,6 +190,93 @@ static void use_class(AClass *c){
     }
 }
 
+/* ---- readable labels: module-qualified names (main.read_item,
+   fastapi.FastAPI.get, main.outer.inner) made unique with _2, _3 ... ---- */
+typedef struct { char **v; int n, cap; } LabelSet;
+static LabelSet g_labels;
+static int label_reserved(const char *s){
+    static const char *fixed[]={"start","i_end","mem_end","stack_top","ADFREE",NULL};
+    for(int i=0;fixed[i];i++) if(!strcmp(s,fixed[i])) return 1;
+    if(!strncmp(s,"rt_",3)||!strncmp(s,"RT_",3)||!strncmp(s,"DYN_",4)||!strncmp(s,"VTX_",4)||!strncmp(s,"DTX_",4)||!strncmp(s,"CI_",3)) return 1;
+    static const char *families[]={"L","S","Z","P","FC","RL","TD","FMT","AD","CI",NULL};   /* numbered internal labels */
+    for(int i=0;families[i];i++){ size_t n=strlen(families[i]);
+        if(!strncmp(s,families[i],n) && s[n]){ const char *q=s+n; while(*q>='0'&&*q<='9') q++; if(!*q) return 1; } }
+    for(int i=0;i<g_labels.n;i++) if(!strcmp(g_labels.v[i],s)) return 1;
+    return 0;
+}
+static const char *unique_label(const char *raw){
+    char base[256]; int k=0;
+    for(const char *p=raw;*p && k<200;p++){
+        char c=*p;
+        if(c=='>') continue;                                          /* f<endpoint> -> f.endpoint */
+        if(c=='<') c='.';
+        if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='.')) c='_';
+        if(c=='.' && (k==0 || base[k-1]=='.')) continue;          /* no leading or double dots */
+        if(k==0 && c>='0' && c<='9') base[k++]='_';
+        base[k++]=c;
+    }
+    while(k>0 && base[k-1]=='.') k--;
+    if(!k) base[k++]='_';
+    base[k]=0;
+    char name[280]; snprintf(name,sizeof name,"%s",base);
+    for(int n=2;label_reserved(name);n++) snprintf(name,sizeof name,"%s_%d",base,n);
+    if(g_labels.n==g_labels.cap){ g_labels.cap=g_labels.cap?g_labels.cap*2:256; g_labels.v=(char**)xrealloc(g_labels.v,sizeof(char*)*(size_t)g_labels.cap); }
+    return g_labels.v[g_labels.n++]=xstrdup2(name);
+}
+/* the label prefix of a module: its dotted name, the script's file name for __main__ */
+static const char *mod_prefix(AModule *m){
+    if(strcmp(m->name,"__main__")) return m->name;
+    static char main_name[128];
+    const char *path=m->unit && m->unit->path ? m->unit->path : "main";
+    const char *b=strrchr(path,'/'); b=b?b+1:path;
+    snprintf(main_name,sizeof main_name,"%s",b);
+    char *dot=strrchr(main_name,'.'); if(dot && dot!=main_name) *dot=0;
+    return main_name;
+}
+enum { LB_CODE, LB_VALUE, LB_FREE, LB_BOUND, LB_TASK, LB_VTASK, LB_BODY, LB_GEN, LB_KINDS };
+static const char **g_fnlabels[LB_KINDS];      /* per function id */
+static const char **g_vtlabels, **g_dtlabels, **g_glabels, **g_mlabels;
+static const char *fnl(AFunc *fn, int kind);
+static void fn_qualname(AFunc *fn, char *out, size_t n){
+    if(fn->outer){ snprintf(out,n,"%s.%s",fnl(fn->outer,LB_CODE),fn->lam?"lambda":fn->genexp?"genexpr":fn->name); return; }   /* under the outer function's label */
+    if(!fn->def){ snprintf(out,n,"%s.module_body",mod_prefix(fn->mod)); return; }
+    if(fn->cls){ snprintf(out,n,"%s.%s.%s",mod_prefix(fn->mod),fn->cls->name,fn->name); return; }
+    ASym *s=symtab_find(&fn->mod->syms,fn->name);
+    snprintf(out,n,"%s.%s%s",mod_prefix(fn->mod),fn->name,s && s->kind==AS_VAR?".def":"");   /* decorated: the name is the decorated value */
+}
+/* a function's labels: its code, and what is made of it (static value, closure
+   destroy, bound-method code, task entries, generator body and descriptor) */
+static const char *fnl(AFunc *fn, int kind){
+    if(!g_fnlabels[kind]){ g_fnlabels[kind]=(const char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nfuncs+1)); memset(g_fnlabels[kind],0,sizeof(char*)*(size_t)(gg->p->nfuncs+1)); }
+    if(fn->id>gg->p->nfuncs) cg_fail(0,"internal error: function id");
+    if(!g_fnlabels[kind][fn->id]){
+        static const char *suffix[]={"","value","free","bound","task","vtask","body","gen"};
+        char q[256], full[300]; fn_qualname(fn,q,sizeof q);
+        if(kind==LB_CODE) snprintf(full,sizeof full,"%s",q); else snprintf(full,sizeof full,"%s.%s",fnl(fn,LB_CODE),suffix[kind]);
+        g_fnlabels[kind][fn->id]=unique_label(full);
+    }
+    return g_fnlabels[kind][fn->id];
+}
+static const char *class_label(AClass *c, int destroy){
+    const char ***tab=destroy?&g_dtlabels:&g_vtlabels;
+    if(!*tab){ *tab=(const char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nclasses+1)); memset(*tab,0,sizeof(char*)*(size_t)(gg->p->nclasses+1)); }
+    if(!(*tab)[c->id]){ char full[300];
+        if(c->builtin) snprintf(full,sizeof full,"%s.%s",c->name,destroy?"destroy":"vtable");
+        else snprintf(full,sizeof full,"%s.%s.%s",mod_prefix(c->mod),c->name,destroy?"destroy":"vtable");
+        (*tab)[c->id]=unique_label(full); }
+    return (*tab)[c->id];
+}
+static const char *global_label(AVar *v){
+    if(!g_glabels){ g_glabels=(const char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nglobals+1)); memset(g_glabels,0,sizeof(char*)*(size_t)(gg->p->nglobals+1)); }
+    if(!g_glabels[v->id]){ char full[300]; snprintf(full,sizeof full,"%s.%s",mod_prefix(v->mod),v->name); g_glabels[v->id]=unique_label(full); }
+    return g_glabels[v->id];
+}
+static const char *module_label(AModule *m){
+    if(!g_mlabels){ g_mlabels=(const char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nmods+1)); memset(g_mlabels,0,sizeof(char*)*(size_t)(gg->p->nmods+1)); }
+    if(!g_mlabels[m->index]){ char full[300]; snprintf(full,sizeof full,"%s.imported",mod_prefix(m)); g_mlabels[m->index]=unique_label(full); }
+    return g_mlabels[m->index];
+}
+
 /* ---- frame ---- */
 static int frame_slot(F *f, int size){ f->frame+=size; return -(12+f->frame); }
 static void add_ref_slot(F *f, int off){
@@ -228,7 +315,7 @@ static void layout_caps(AFunc *fn){
 }
 static const char *fn_display_name(AFunc *g){ return g->lam?"<lambda>":g->genexp?"<genexpr>":g->name; }
 static void var_addr(char *buf, size_t n, AVar *v){
-    if(v->global) snprintf(buf,n,"[G%d]",v->id); else snprintf(buf,n,"[ebp%+d]",v->offset);
+    if(v->global) snprintf(buf,n,"[%s]",global_label(v)); else snprintf(buf,n,"[ebp%+d]",v->offset);
 }
 static void load_mem(F *f, Ty *t, const char *reg, int off);
 static void store_mem(F *f, Ty *t, const char *reg, int off);
@@ -241,14 +328,14 @@ static void load_var(F *f, AVar *v){
         return;
     }
     if(v->cell){ E(f,"mov ecx,[ebp%+d]",v->offset); load_mem(f,v->ty,"ecx",8); return; }
-    char a[32]; var_addr(a,sizeof a,v);
+    char a[320]; var_addr(a,sizeof a,v);
     if(is_flt(v->ty)) E(f,"fld qword %s",a); else E(f,"mov eax,%s",a);
 }
 /* Store eax/st0 (an owned reference for reference types) into the variable. */
 static void store_var(F *f, AVar *v){
     if(v->src){ layout_caps(v->owner); E(f,"mov ecx,[ebp%+d]",f->env); E(f,"mov ecx,[ecx+%d]",v->capoff); store_mem(f,v->ty,"ecx",8); return; }   /* nonlocal: a cell */
     if(v->cell){ E(f,"mov ecx,[ebp%+d]",v->offset); store_mem(f,v->ty,"ecx",8); return; }
-    char a[32]; var_addr(a,sizeof a,v);
+    char a[320]; var_addr(a,sizeof a,v);
     if(!v->global && v->id>=0 && v->id<f->fn->nparams && f->fn->params[v->id]==v) f->param_stored[v->id]=1;
     if(is_flt(v->ty)) E(f,"fstp qword %s",a);
     else if(is_ptr(v->ty)){ rt("rt_decref"); E(f,"xchg eax,%s",a); E(f,"call rt_decref"); }
@@ -340,7 +427,7 @@ static void gen_as(F *f, Expr *e, Ty *want, int owned){
         XInfo *x=xinfo(e);
         if(x->kind!=X_FUNCREF || !x->fn || !x->fn->ep_adapter) cg_fail(e->line,"a minipy.Endpoint is made from a function given by its name");
         AFunc *ad=x->fn->ep_adapter; use_fn(ad); gg->fv_used[ad->id]=1;
-        E(f,"mov eax,FV%d",ad->id);
+        E(f,"mov eax,%s",fnl(ad,LB_VALUE));
         return;
     }
     if(owned) gen_owned(f,e); else gen_borrow(f,e);
@@ -413,7 +500,7 @@ static void call_on_top(F *f, AFunc *m){
     use_fn(m);
     E(f,"mov eax,[esp]"); panic_if_null(f);
     if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
-    else E(f,"call F%d",m->id);
+    else E(f,"call %s",fnl(m,LB_CODE));
 }
 static int gen_op_call(F *f, AFunc *m, Expr *self, Expr *arg){
     int total=4+(arg?esize(m->params[1]->ty):0);
@@ -995,8 +1082,8 @@ static void call_user(F *f, AFunc *fn, Expr *e, XInfo *xi, int self_kind){
     if(self_kind==1 && fn->cls && !fn->is_static){
         E(f,"mov eax,[esp]"); panic_if_null(f);
         if(fn->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*fn->vslot); }
-        else E(f,"call F%d",fn->id);
-    } else E(f,"call F%d",fn->id);
+        else E(f,"call %s",fnl(fn,LB_CODE));
+    } else E(f,"call %s",fnl(fn,LB_CODE));
     if(total) E(f,"add esp,%d",total);
 }
 /* fv(args): a function value -> its result (owned if a reference). Its
@@ -1034,7 +1121,7 @@ static int gen_ctor(F *f, Expr *e, XInfo *xi){
     use_class(cls);
     if(!init && aot_is_exception(cls)){                  /* ValueError("message") */
         if(e->kind==EXPR_CALL && e->count){ gen_exc_message(f,e->items[0]); E(f,"push eax"); } else E(f,"push 0");
-        E(f,"mov eax,%d",cls->size); E(f,"mov edx,VT%d",cls->id); E(f,"mov ecx,DT%d",cls->id); CALLRT(f,"rt_obj_new");
+        E(f,"mov eax,%d",cls->size); E(f,"mov edx,%s",class_label(cls,0)); E(f,"mov ecx,%s",class_label(cls,1)); CALLRT(f,"rt_obj_new");
         E(f,"pop ecx"); E(f,"mov [eax+12],ecx");
         AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
         for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i];
@@ -1047,7 +1134,7 @@ static int gen_ctor(F *f, Expr *e, XInfo *xi){
     if(init){ use_fn(init); for(int i=0;i<init->nparams;i++){ off[i]=total; total+=esize(init->params[i]->ty); } }
     if(total) E(f,"sub esp,%d",total);
     if(init) gen_call_args(f,init,e,xi,off,1);
-    E(f,"mov eax,%d",cls->size); E(f,"mov edx,VT%d",cls->id); E(f,"mov ecx,DT%d",cls->id); CALLRT(f,"rt_obj_new");
+    E(f,"mov eax,%d",cls->size); E(f,"mov edx,%s",class_label(cls,0)); E(f,"mov ecx,%s",class_label(cls,1)); CALLRT(f,"rt_obj_new");
     AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
     for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i];
         if(!fd->init) continue;
@@ -1057,7 +1144,7 @@ static int gen_ctor(F *f, Expr *e, XInfo *xi){
         store_new(f,fd->ty,"ecx",fd->offset);
         E(f,"pop eax");
     }
-    if(init){ E(f,"mov [esp],eax"); E(f,"call F%d",init->id); E(f,"mov eax,[esp]"); }
+    if(init){ E(f,"mov [esp],eax"); E(f,"call %s",fnl(init,LB_CODE)); E(f,"mov eax,[esp]"); }
     if(total) E(f,"add esp,%d",total);
     return 1;
 }
@@ -1065,7 +1152,7 @@ static void call_method_on_top(F *f, AFunc *m){      /* object at [esp], one 4-b
     use_fn(m);
     E(f,"mov eax,[esp]"); panic_if_null(f);
     if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
-    else E(f,"call F%d",m->id);
+    else E(f,"call %s",fnl(m,LB_CODE));
 }
 
 static int sort_kind(Ty *t);
@@ -1083,7 +1170,7 @@ static void gen_key_call(F *f, Expr *key, Ty *elem){
     }
     AFunc *fn=ki->fn; Ty *pt=fn->params[0]->ty; use_fn(fn);
     conv_num(f,elem,pt); push_value(f,pt);
-    E(f,"call F%d",fn->id); E(f,"add esp,%d",esize(pt));
+    E(f,"call %s",fnl(fn,LB_CODE)); E(f,"add esp,%d",esize(pt));
     if(is_ptr(fn->ret)) hold(f);
 }
 static Ty *key_type(Expr *key){
@@ -1380,7 +1467,7 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         Expr *k=e->items[1]; int nk=k->kind==EXPR_TUPLE?k->count:1;
         gen_borrow(f,a0); E(f,"push eax"); E(f,"push 0");
         for(int i=0;i<nk;i++){ AClass *c=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k)->cls; use_class(c);
-            E(f,"mov eax,[esp+4]"); E(f,"mov edx,VT%d",c->id); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax"); }
+            E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",class_label(c,0)); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax"); }
         E(f,"pop eax"); E(f,"add esp,4"); return 0;
     }
     if(!strcmp(n,"input")){ if(a0) gen_borrow(f,a0); else E(f,"xor eax,eax"); CALLRT(f,"rt_input"); return 1; }
@@ -1589,6 +1676,34 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
    linker fills in. Results: eax (edx:eax for 64 bits: the low half), st0 for
    floating point, a char * copied into a new str. */
 static int csize(int k){ return k==CT_DOUBLE||k==CT_LONGLONG||k==CT_ULONGLONG ? 8 : 4; }
+/* macos: the C translation (aot_x2c.c) calls the function natively, so each
+   call carries its C signature in a comment: ";@ccall R:ARGS[|VARARGS]", one
+   letter per type (i int, u unsigned, h/H short, b/B char, o bool, l/L long,
+   q/Q long long, d double, f float, s char *, p void *, v void). */
+static char ct_letter(int k){
+    switch(k){
+        case CT_UINT: return 'u'; case CT_SHORT: return 'h'; case CT_USHORT: return 'H'; case CT_BYTE: return 'b';
+        case CT_UBYTE: return 'B'; case CT_BOOL: return 'o'; case CT_LONG: return 'l'; case CT_ULONG: return 'L';
+        case CT_LONGLONG: return 'q'; case CT_ULONGLONG: return 'Q'; case CT_DOUBLE: return 'd'; case CT_FLOAT: return 'f';
+        case CT_CHARP: return 's'; case CT_VOIDP: return 'p'; case CT_VOID: return 'v'; default: return 'i';
+    }
+}
+/* The fixed parameters of the C library's variadic functions: without
+   argtypes the rest of their arguments are the variadic ones. */
+static int c_variadic_fixed(const char *sym){
+    static const struct { const char *name; int fixed; } v[]={{"printf",1},{"fprintf",2},{"dprintf",2},{"sprintf",2},{"snprintf",3},
+        {"scanf",1},{"fscanf",2},{"sscanf",2},{"open",2},{"openat",3},{"fcntl",2},{"ioctl",2},{"syslog",2},{"execl",2},{"execlp",2},{NULL,0}};
+    for(int i=0;v[i].name;i++) if(!strcmp(v[i].name,sym)) return v[i].fixed;
+    return -1;
+}
+static void ccall_marker(F *f, ACFunc *cf, const int *kinds, int n){
+    if(gg->target!=AOT_TARGET_MACOS) return;
+    char sig[64]; int k=0, fixed=cf->nargtypes>=0 ? cf->nargtypes : c_variadic_fixed(cf->sym);
+    sig[k++]=ct_letter(cf->restype); sig[k++]=':';
+    for(int i=0;i<n;i++){ if(i==fixed) sig[k++]='|'; sig[k++]=ct_letter(kinds[i]); }
+    sig[k]=0;
+    buf_printf(&f->code,"        ;@ccall %s\n",sig);
+}
 static int gen_ccall(F *f, Expr *e, XInfo *xi){
     ACFunc *cf=xi->cfn; int off[16], size=0;
     for(int i=0;i<e->count;i++){ off[i]=size; size+=csize(xi->argmap[i]); }
@@ -1603,6 +1718,8 @@ static int gen_ccall(F *f, Expr *e, XInfo *xi){
         if(k==CT_LONGLONG){ E(f,"cdq"); E(f,"mov [esp+%d],edx",off[i]+4); }
         else if(k==CT_ULONGLONG) E(f,"mov dword [esp+%d],0",off[i]+4);
     }
+    int kinds[16]; for(int i=0;i<e->count;i++) kinds[i]=xi->argmap[i];
+    ccall_marker(f,cf,kinds,e->count);
     E(f,"call [CI%d]   ; %s",cf->id,cf->sym);
     E(f,"mov esp,[esp+%d]",size);
     switch(cf->restype){
@@ -1628,6 +1745,7 @@ static int gen_ctypes_fn(F *f, Expr *e, XInfo *xi){
         if(e->count==2){ gen(f,e->items[1]); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_mem_peek_str"); return 1; }
         E(f,"pop eax"); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); return 1; }
     if(!strcmp(m,"get_errno")){ E(f,"mov eax,esp"); E(f,"and esp,-16"); E(f,"sub esp,12"); E(f,"push eax");
+        ccall_marker(f,xi->cfn,NULL,0);
         E(f,"call [CI%d]   ; __errno_location",xi->cfn->id); E(f,"pop esp"); E(f,"mov eax,[eax]"); return 0; }
     cg_fail(e->line,"unsupported ctypes function");
     return 0;
@@ -1804,7 +1922,7 @@ static int gen_await(F *f, Expr *e);
 static int gen_closure(F *f, AFunc *g){
     layout_caps(g); use_fn(g); gg->cd_used[g->id]=1;
     E(f,"mov eax,%d",16+g->capsize); CALLRT(f,"rt_alloc");
-    E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],CD%d",g->id); E(f,"mov dword [eax+8],F%d",g->id); E(f,"mov dword [eax+12],S%d",str_lit(fn_display_name(g)));
+    E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],%s",fnl(g,LB_FREE)); E(f,"mov dword [eax+8],%s",fnl(g,LB_CODE)); E(f,"mov dword [eax+12],S%d",str_lit(fn_display_name(g)));
     E(f,"push eax");
     for(int k=0;k<g->ncaps;k++){ AVar *cv=g->caps[k], *src=cv->src;
         if(root_var(cv)->cell){                             /* share the cell */
@@ -1822,7 +1940,7 @@ static int gen_closure(F *f, AFunc *g){
 /* function g as a value -> eax */
 static int gen_funcref(F *f, AFunc *g){
     use_fn(g);
-    if(!g->ncaps){ gg->fv_used[g->id]=1; rt("rt_static"); E(f,"mov eax,FV%d",g->id); return 0; }   /* nothing captured: a static object */
+    if(!g->ncaps){ gg->fv_used[g->id]=1; rt("rt_static"); E(f,"mov eax,%s",fnl(g,LB_VALUE)); return 0; }   /* nothing captured: a static object */
     if(g==f->fn){ E(f,"mov eax,[ebp%+d]",f->env); return 0; }                                    /* a nested def naming itself */
     return gen_closure(f,g);
 }
@@ -1873,7 +1991,7 @@ static int gen(F *f, Expr *e){
                 AFunc *m=xi->fn; use_fn(m); gg->bm_used[m->id]=1;
                 gen_owned(f,e->a); panic_if_null(f); E(f,"push eax");
                 E(f,"mov eax,20"); CALLRT(f,"rt_alloc");
-                E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],ADFREE"); E(f,"mov dword [eax+8],BM%d",m->id); E(f,"mov dword [eax+12],S%d",str_lit(m->name));
+                E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],ADFREE"); E(f,"mov dword [eax+8],%s",fnl(m,LB_BOUND)); E(f,"mov dword [eax+12],S%d",str_lit(m->name));
                 E(f,"pop ecx"); E(f,"mov [eax+16],ecx");
                 return 1; }
             if(xi->kind==X_PROP){ E(f,"sub esp,4"); gen_borrow(f,e->a); E(f,"mov [esp],eax"); call_on_top(f,xi->fn); E(f,"add esp,4"); return is_ptr(xi->fn->ret); }
@@ -1891,7 +2009,7 @@ static int gen(F *f, Expr *e){
                 AFunc *g=xi->fn; use_fn(g);
                 if(g->nparams){ Ty *pt=g->params[0]->ty; E(f,"sub esp,%d",esize(pt)); gen_as(f,e->clauses[0].iter,pt,0); put_arg(f,pt,0); }
                 if(g->ncaps){ gen_closure(f,g); hold(f); E(f,"mov edx,eax"); }
-                E(f,"call F%d",g->id);
+                E(f,"call %s",fnl(g,LB_CODE));
                 if(g->nparams) E(f,"add esp,%d",esize(g->params[0]->ty));
                 return 1;
             }
@@ -2081,7 +2199,7 @@ static void emit_formatter(int i){
             use_fn(m);
             E(f,"push eax");
             if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
-            else E(f,"call F%d",m->id);
+            else E(f,"call %s",fnl(m,LB_CODE));
             E(f,"mov [esp],eax"); CALLRT(f,"rt_sb_str"); E(f,"pop eax"); CALLRT(f,"rt_decref"); E(f,"ret");
         } else if(aot_is_exception(cls)){                   /* str(e): the message; repr(e): Name('message') */
             int keyerr=0; for(AClass *k=cls;k;k=k->base) if(k->builtin && !strcmp(k->name,"KeyError")) keyerr=1;
@@ -2172,9 +2290,9 @@ static int task_stub(AFunc *fn, int virt){
 }
 static void emit_task_stub(int i){
     AFunc *fn=gg->stubs[i].fn; Buf *o=&gg->text; Ty *ret=ty_find(fn->ret);
-    buf_printf(o,"\nTS%d:                          ; task: %s%s%s()\n",i,fn->cls?fn->cls->name:"",fn->cls?".":"",fn->name);
+    buf_printf(o,"\n%s:                          ; task: %s%s%s()\n",fnl(fn,gg->stubs[i].virt?LB_VTASK:LB_TASK),fn->cls?fn->cls->name:"",fn->cls?".":"",fn->name);
     if(gg->stubs[i].virt) buf_printf(o,"        mov eax,[esp]\n        mov eax,[eax+8]\n        call dword [eax+%d]\n",8+4*fn->vslot);
-    else buf_printf(o,"        call F%d\n",fn->id);
+    else buf_printf(o,"        call %s\n",fnl(fn,LB_CODE));
     buf_printf(o,"        mov ecx,[rt_cur_task]\n");
     if(is_flt(ret)) buf_printf(o,"        fstp qword [ecx+24]\n");
     else if(ret->k!=TY_VOID){ buf_printf(o,"        mov [ecx+24],eax\n"); if(is_ptr(ret)) buf_printf(o,"        mov dword [ecx+44],1\n"); }
@@ -2194,7 +2312,7 @@ static void gen_task_new(F *f, Expr *call){
     int off[16], total=0;
     for(int i=0;i<fn->nparams;i++){ off[i]=total; total+=esize(fn->params[i]->ty); }
     int ts=task_stub(fn,self_kind==1&&fn->overridden);
-    E(f,"mov eax,%d",total); E(f,"mov edx,TS%d",ts); CALLRT(f,"rt_task_new");
+    E(f,"mov eax,%d",total); E(f,"mov edx,%s",fnl(gg->stubs[ts].fn,gg->stubs[ts].virt?LB_VTASK:LB_TASK)); CALLRT(f,"rt_task_new");
     E(f,"push eax");
     #define TASK_ARG(pt,o_) do{ E(f,"mov ecx,[esp]"); E(f,"mov ecx,[ecx+12]"); store_new(f,pt,"ecx",20+(o_)); }while(0)
     if(self_kind==1){ gen_owned(f,call->a->a); panic_if_null(f); TASK_ARG(fn->params[0]->ty,off[0]); }
@@ -2516,8 +2634,8 @@ static void init_module(F *f, AModule *m){
     if(!m || !m->unit->ast || m->index==0 || !m->body) return;
     use_fn(m->body); m->used=1;
     int l=new_label();
-    E(f,"cmp byte [MI%d],0",m->index); E(f,"jne L%d",l);
-    E(f,"mov byte [MI%d],1",m->index); E(f,"call F%d",m->body->id);
+    E(f,"cmp byte [%s],0",module_label(m)); E(f,"jne L%d",l);
+    E(f,"mov byte [%s],1",module_label(m)); E(f,"call %s",fnl(m->body,LB_CODE));
     LBL(f,l);
 }
 static void init_prefixes(F *f, const char *dotted){
@@ -2616,7 +2734,7 @@ static void gen_try(F *f, Stmt *s){
         if(!b->expr){ E(f,"jmp L%d",l); continue; }
         Expr *te=b->expr; int n=te->kind==EXPR_TUPLE?te->count:1;
         for(int k=0;k<n;k++){ AClass *cls=xinfo(te->kind==EXPR_TUPLE?te->items[k]:te)->cls; use_class(cls);
-            E(f,"mov eax,[ebp%+d]",exc); E(f,"mov edx,VT%d",cls->id); CALLRT(f,"rt_isinstance"); E(f,"test eax,eax"); E(f,"jnz L%d",l); }
+            E(f,"mov eax,[ebp%+d]",exc); E(f,"mov edx,%s",class_label(cls,0)); CALLRT(f,"rt_isinstance"); E(f,"test eax,eax"); E(f,"jnz L%d",l); }
     }
     /* no clause matches: finally, then on to the enclosing handler */
     if(nfin){ pop_handler(f,rec); f->tries[f->ntries-1].active=0; }
@@ -3345,7 +3463,7 @@ static void emit_function(AFunc *fn){
 
     Buf *o=&gg->text;
     const char *kind=fn->lam?"<lambda>":fn->genexp?"<genexpr>":fn->def?fn->name:"<module>";
-    buf_printf(o,"\n; %s%s%s()%s\n%s%d:\n",fn->cls?fn->cls->name:"",fn->cls?".":"",kind,fn->is_gen?": the generator's function":"",fn->is_gen?"GB":"F",fn->id);
+    buf_printf(o,"\n; %s%s%s()%s\n%s:\n",fn->cls?fn->cls->name:"",fn->cls?".":"",kind,fn->is_gen?": the generator's function":"",fnl(fn,fn->is_gen?LB_BODY:LB_CODE));
     buf_printf(o,"        push ebp\n        mov ebp,esp\n        push ebx\n        push esi\n        push edi\n");
     int words=(f->frame+3)/4;
     if(words<=8) for(int i=0;i<words;i++) buf_printf(o,"        push 0\n");
@@ -3375,11 +3493,11 @@ static void emit_function(AFunc *fn){
     if(fn->is_gen){                                       /* F<id> makes the generator: arguments and closure kept in it */
         Ty *yt=ty_find(fn->yield_ty);
         rt("rt_gen_new"); rt("rt_gen_next"); rt("rt_incref");
-        buf_printf(&gg->data,"align 4\nGD%d dd GB%d,%d,%d",fn->id,fn->id,(is_ptr(yt)?1:0)|(is_flt(yt)?2:0),f->nrefs);
+        buf_printf(&gg->data,"align 4\n%s dd %s,%d,%d",fnl(fn,LB_GEN),fnl(fn,LB_BODY),(is_ptr(yt)?1:0)|(is_flt(yt)?2:0),f->nrefs);
         for(int i=0;i<f->nrefs;i++) buf_printf(&gg->data,",%d",f->refs[i]);
         buf_printf(&gg->data,"   ; generator %s\n",kind);
-        buf_printf(o,"F%d:                            ; %s(): a new generator\n",fn->id,kind);
-        buf_printf(o,"        push ebx\n        mov ebx,edx\n        mov eax,%d\n        mov edx,GD%d\n        call rt_gen_new\n        push eax\n        mov ecx,[eax+36]\n",argbytes,fn->id);
+        buf_printf(o,"%s:                            ; %s(): a new generator\n",fnl(fn,LB_CODE),kind);
+        buf_printf(o,"        push ebx\n        mov ebx,edx\n        mov eax,%d\n        mov edx,%s\n        call rt_gen_new\n        push eax\n        mov ecx,[eax+36]\n",argbytes,fnl(fn,LB_GEN));
         for(int w=0;w<argbytes;w+=4) buf_printf(o,"        mov edx,[esp+%d]\n        mov [ecx+%d],edx\n",12+w,w);
         for(int i=0;i<fn->nparams;i++) if(is_ptr(fn->params[i]->ty)) buf_printf(o,"        mov eax,[esp+%d]\n        call rt_incref\n",12+argpos[i]-8);
         if(fn->ncaps) buf_printf(o,"        mov eax,ebx\n        call rt_incref\n        mov ecx,[esp]\n        mov [ecx+44],ebx\n");
@@ -3423,17 +3541,17 @@ static void emit_adapter(int k){
 static void emit_bound_method(AFunc *m){
     Buf *o=&gg->text; int argbytes=0;
     for(int i=1;i<m->nparams;i++) argbytes+=esize(m->params[i]->ty);
-    buf_printf(o,"\nBM%d:                          ; %s.%s bound to an object\n        push ebp\n        mov ebp,esp\n        sub esp,%d\n        mov eax,[edx+16]\n        mov [esp],eax\n",m->id,m->cls?m->cls->name:"",m->name,argbytes+4);
+    buf_printf(o,"\n%s:                          ; %s.%s bound to an object\n        push ebp\n        mov ebp,esp\n        sub esp,%d\n        mov eax,[edx+16]\n        mov [esp],eax\n",fnl(m,LB_BOUND),m->cls?m->cls->name:"",m->name,argbytes+4);
     for(int w=0;w<argbytes;w+=4) buf_printf(o,"        mov ecx,[ebp+%d]\n        mov [esp+%d],ecx\n",8+w,4+w);
     if(m->overridden) buf_printf(o,"        mov eax,[eax+8]\n        call dword [eax+%d]\n",8+4*m->vslot);
-    else buf_printf(o,"        call F%d\n",m->id);
+    else buf_printf(o,"        call %s\n",fnl(m,LB_CODE));
     buf_printf(o,"        leave\n        ret\n");
 }
-/* CD<id>: destroy routine of fn's closures */
+/* <fn>.free: destroy routine of fn's closures */
 static void emit_closure_destroy(AFunc *fn){
     Buf *o=&gg->text; int any=0;
     rt("rt_free"); rt("rt_decref");
-    buf_printf(o,"\nCD%d:                          ; destroy a closure of %s\n",fn->id,fn->lam?"<lambda>":fn->genexp?"<genexpr>":fn->name);
+    buf_printf(o,"\n%s:                          ; destroy a closure of %s\n",fnl(fn,LB_FREE),fn->lam?"<lambda>":fn->genexp?"<genexpr>":fn->name);
     for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; if(!root_var(v)->cell && !is_ptr(v->ty)) continue;
         if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
         buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",v->capoff); }
@@ -3442,12 +3560,12 @@ static void emit_closure_destroy(AFunc *fn){
 }
 
 static void emit_class(AClass *c){
-    buf_printf(&gg->data,"align 4\nVT%d dd S%d,",c->id,str_lit(c->name));
-    if(c->base) buf_printf(&gg->data,"VT%d",c->base->id); else buf_printf(&gg->data,"0");
-    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",F%d",c->vt[i]->id);
+    buf_printf(&gg->data,"align 4\n%s dd S%d,",class_label(c,0),str_lit(c->name));
+    if(c->base) buf_printf(&gg->data,"%s",class_label(c->base,0)); else buf_printf(&gg->data,"0");
+    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",%s",fnl(c->vt[i],LB_CODE));
     buf_printf(&gg->data,"   ; class %s\n",c->name);
     Buf *o=&gg->text; int any=0;
-    buf_printf(o,"\nDT%d:                          ; destroy %s\n",c->id,c->name);
+    buf_printf(o,"\n%s:                          ; destroy %s\n",class_label(c,1),c->name);
     for(AClass *k=c;k;k=k->base) for(int i=0;i<k->nfields;i++) if(is_ptr(k->fields[i]->ty)){
         if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
         buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",k->fields[i]->offset);
@@ -3506,6 +3624,15 @@ static void emit_dynamic_tables(Buf *o, AProg *p){
         if(!strcmp(p->cfuncs[i]->sym,"fflush")) buf_printf(o,"CI_fflush = CI%d\n",i);
     }
 }
+/* macos: no dynamic linker - the C translation looks the functions up when
+   the program starts; ";@import CI<id> <library> <symbol>" names each slot. */
+static void emit_import_slots(Buf *o, AProg *p){
+    buf_printf(o,"\n; ---- C functions (ctypes)\nalign 4\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){
+        buf_printf(o,";@import CI%d %s %s\nCI%d dd 0   ; %s\n",i,p->cfuncs[i]->lib->soname,p->cfuncs[i]->sym,i,p->cfuncs[i]->sym);
+        if(!strcmp(p->cfuncs[i]->sym,"fflush")) buf_printf(o,"CI_fflush = CI%d\n",i);
+    }
+}
 /* With the C library linked, its stdio buffers are flushed at exit (fflush(NULL)). */
 static void import_fflush(AProg *p){
     ACLib *libc=NULL;
@@ -3522,6 +3649,8 @@ static void import_fflush(AProg *p){
 int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *outlen){
     G g; memset(&g,0,sizeof g); gg=&g;
     g.p=p; g.target=opt->target; g.stack=opt->stack_size?opt->stack_size:65536;
+    g_labels.n=0; for(int k=0;k<LB_KINDS;k++) g_fnlabels[k]=NULL;          /* a fresh set of label names */
+    g_vtlabels=g_dtlabels=g_glabels=g_mlabels=NULL;
     g.rt=aot_rt_new(opt->target);
     g.class_used=(int*)xmalloc(sizeof(int)*(size_t)(p->nclasses+1)); memset(g.class_used,0,sizeof(int)*(size_t)(p->nclasses+1));
     g.fv_used=(char*)xmalloc((size_t)p->nfuncs+1); memset(g.fv_used,0,(size_t)p->nfuncs+1);
@@ -3545,44 +3674,45 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     if(g.nadapters || memchr(g.bm_used,1,(size_t)p->nfuncs)) buf_printf(&g.text,"\nADFREE:                        ; destroy an adapter\n        push eax\n        mov eax,[eax+16]\n        call rt_decref\n        pop eax\n        jmp rt_free\n");
     for(int i=0;i<p->nfuncs;i++){
         if(g.cd_used[i]) emit_closure_destroy(p->funcs[i]);
-        if(g.fv_used[i]) buf_printf(&g.data,"align 4\nFV%d dd 0x40000000,rt_static,F%d,S%d   ; %s as a value\n",i,i,str_lit(fn_display_name(p->funcs[i])),fn_display_name(p->funcs[i]));
+        if(g.fv_used[i]) buf_printf(&g.data,"align 4\n%s dd 0x40000000,rt_static,%s,S%d   ; %s as a value\n",fnl(p->funcs[i],LB_VALUE),fnl(p->funcs[i],LB_CODE),str_lit(fn_display_name(p->funcs[i])),fn_display_name(p->funcs[i]));
     }
     if(aot_rt_used(g.rt,"rt_throw")){                   /* run-time errors raise built-in exceptions */
         static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError","StopIteration","TypeError",NULL};
         rt("rt_raise_builtin");
         for(int k=0;rtexc[k];k++) for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !strcmp(p->classes[i]->name,rtexc[k])){
             use_class(p->classes[i]);
-            buf_printf(&g.data,"VTX_%s = VT%d\nDTX_%s = DT%d\n",rtexc[k],p->classes[i]->id,rtexc[k],p->classes[i]->id);
+            buf_printf(&g.data,"VTX_%s = %s\nDTX_%s = %s\n",rtexc[k],class_label(p->classes[i],0),rtexc[k],class_label(p->classes[i],1));
         }
     }
     for(int i=0;i<p->nclasses;i++) if(g.class_used[i]) emit_class(p->classes[i]);
     emit_lit_pools();
-    for(int i=0;i<p->nglobals;i++){ AVar *v=p->globals[i]; buf_printf(&g.bss,"G%d %s 1   ; %s.%s\n",v->id,is_flt(v->ty)?"rq":"rd",v->mod->name,v->name); }
-    for(int i=1;i<p->nmods;i++) if(p->mods[i]->used) buf_printf(&g.bss,"MI%d rb 1   ; %s imported\n",i,p->mods[i]->name);
+    for(int i=0;i<p->nglobals;i++){ AVar *v=p->globals[i]; buf_printf(&g.bss,"%s %s 1   ; %s.%s\n",global_label(v),is_flt(v->ty)?"rq":"rd",v->mod->name,v->name); }
+    for(int i=1;i<p->nmods;i++) if(p->mods[i]->used) buf_printf(&g.bss,"%s rb 1   ; %s imported\n",module_label(p->mods[i]),p->mods[i]->name);
 
     Buf o; memset(&o,0,sizeof o);
     int heap=aot_rt_used(g.rt,"rt_os_alloc")||aot_rt_used(g.rt,"rt_con_open");
     buf_printf(&o,"; generated by minipy --compile from %s\n",p->mods[0]->unit->path?p->mods[0]->unit->path:"?");
     const char *report="";
     if(opt->count_allocs && aot_rt_used(g.rt,"rt_alloc")){ rt("rt_live_report"); report="        call rt_live_report\n"; buf_printf(&g.data,"RT_COUNT_ALLOCS = 1\n"); }
-    int dyn=g.target==AOT_TARGET_LINUX && dyn_used(p);
+    int dyn=g.target!=AOT_TARGET_KOLIBRI && dyn_used(p);
     if(dyn) import_fflush(p);
-    if(g.target==AOT_TARGET_LINUX){
+    if(g.target!=AOT_TARGET_KOLIBRI){
+        if(g.target==AOT_TARGET_MACOS) buf_printf(&o,"; target macos: minipy translates this listing to C (aot_x2c.c)\n");
         buf_printf(&o,"format ELF executable 3\nentry start\n\n");
-        if(dyn) emit_dynamic_header(&o,p);
+        if(dyn && g.target==AOT_TARGET_LINUX) emit_dynamic_header(&o,p);
         buf_printf(&o,"segment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
-        buf_printf(&o,"        call F%d\n%s        xor ebx,ebx\n        jmp rt_exit\n",main_body->id,report);
+        buf_printf(&o,"        call %s\n%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),report);
     } else {
         buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,0,0\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
         if(heap) buf_printf(&o,"        mov eax,68\n        mov ebx,11\n        int 0x40\n");
-        buf_printf(&o,"        call F%d\n%s        xor ebx,ebx\n        jmp rt_exit\n",main_body->id,report);
+        buf_printf(&o,"        call %s\n%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),report);
     }
     buf_cat(&o,&g.text);
     buf_printf(&o,"\n; ---- runtime\n");
     aot_rt_emit(g.rt,0,put_cb,&o);
-    if(g.target==AOT_TARGET_LINUX) buf_printf(&o,"\nsegment readable writeable\n\n");
+    if(g.target!=AOT_TARGET_KOLIBRI) buf_printf(&o,"\nsegment readable writeable\n\n");
     else buf_printf(&o,"\n; ---- data\n");
-    if(dyn) emit_dynamic_tables(&o,p);
+    if(dyn) (g.target==AOT_TARGET_MACOS ? emit_import_slots : emit_dynamic_tables)(&o,p);
     buf_cat(&o,&g.data);
     aot_rt_emit(g.rt,1,put_cb,&o);
     if(g.target==AOT_TARGET_KOLIBRI) buf_printf(&o,"\nalign 4\ni_end:\n");

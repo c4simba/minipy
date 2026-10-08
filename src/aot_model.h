@@ -81,7 +81,8 @@ typedef enum { AS_VAR, AS_FUNC, AS_CLASS, AS_MODULE, AS_SYS /* built-in module, 
    known before anything is checked. Calls are cdecl, through the dynamic
    linker (Linux: ld-linux.so.2). */
 typedef enum { CT_DEFAULT, CT_INT, CT_UINT, CT_SHORT, CT_USHORT, CT_BYTE, CT_UBYTE, CT_BOOL,
-               CT_LONGLONG, CT_ULONGLONG, CT_DOUBLE, CT_FLOAT, CT_CHARP, CT_VOIDP, CT_VOID } CType;
+               CT_LONGLONG, CT_ULONGLONG, CT_DOUBLE, CT_FLOAT, CT_CHARP, CT_VOIDP, CT_VOID,
+               CT_LONG, CT_ULONG /* 32 bits on i386, 64 on macos */ } CType;
 typedef struct ACLib { char *soname; int id; int used; } ACLib;
 typedef struct ACFunc {
     ACLib *lib; char *sym; int id, used;

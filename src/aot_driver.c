@@ -14,6 +14,14 @@
 #include "frontparser.h"
 #include "fs.h"
 
+/* macos: the C compiler; override with --cc/--cc-args or MPY_CC/MPY_CC_ARGS. */
+#ifndef MPY_AOT_CC
+#  define MPY_AOT_CC "cc"
+#endif
+#ifndef MPY_AOT_CC_ARGS            /* {in} {out} {dir} are substituted */
+#  define MPY_AOT_CC_ARGS "-O1 -w {in} -o {out} -lm"
+#endif
+
 /* Defaults; override with --fasm/--fasm-args or MPY_FASM/MPY_FASM_ARGS. */
 #ifndef MPY_AOT_FASM
 #  if defined(MPY_KOLIBRI)
@@ -34,10 +42,14 @@ static void usage(const char *program){
     fprintf(stderr,
         "usage: %s --compile [options] file.mpy\n"
         "  -o FILE          output executable (default: the script name without .mpy)\n"
-        "  --target T       linux (i386 ELF) or kolibri (KolibriOS application)\n"
+        "  --target T       linux (i386 ELF), kolibri (KolibriOS application) or macos\n"
+        "                   (native: the listing translated to C, FILE.c, built by cc);\n"
+        "                   default: the system minipy runs on\n"
         "  -S               only write the assembly listing (FILE.asm)\n"
         "  --fasm PATH      fasm executable                       [env MPY_FASM]\n"
         "  --fasm-args A    fasm arguments, {in} {out} {dir} replaced  [env MPY_FASM_ARGS]\n"
+        "  --cc PATH        macos: C compiler                     [env MPY_CC]\n"
+        "  --cc-args A      macos: its arguments, {in} {out} {dir} replaced  [env MPY_CC_ARGS]\n"
         "  --stack BYTES    kolibri: application stack size (default 65536)\n"
         "  -v               print the commands being run\n"
         "  --count-allocs   debugging: the program reports its live heap blocks at exit\n"
@@ -214,10 +226,13 @@ static int run_tool(const char *program, const char *args, const char *option, i
 
 int aot_main(int argc, char **argv, const char *program){
     const char *src_path=NULL, *out=NULL, *fasm=getenv("MPY_FASM"), *fasm_tmpl=getenv("MPY_FASM_ARGS");
+    const char *cc=getenv("MPY_CC"), *cc_tmpl=getenv("MPY_CC_ARGS");
     int only_asm=0, verbose=0; unsigned stack=0;
     int count_allocs=0;
 #if defined(MPY_KOLIBRI)
     AotTarget target=AOT_TARGET_KOLIBRI;
+#elif defined(__APPLE__)
+    AotTarget target=AOT_TARGET_MACOS;
 #else
     AotTarget target=AOT_TARGET_LINUX;
 #endif
@@ -227,10 +242,13 @@ int aot_main(int argc, char **argv, const char *program){
         if(!strcmp(a,"-o")){ if(!(out=NEXT())) return 2; }
         else if(!strcmp(a,"--target")){ const char *t=NEXT(); if(!t) return 2;
             if(!strcmp(t,"linux")) target=AOT_TARGET_LINUX; else if(!strcmp(t,"kolibri")||!strcmp(t,"kolibrios")) target=AOT_TARGET_KOLIBRI;
-            else { fprintf(stderr,"minipy: unknown target '%s' (linux, kolibri)\n",t); return 2; } }
+            else if(!strcmp(t,"macos")||!strcmp(t,"darwin")) target=AOT_TARGET_MACOS;
+            else { fprintf(stderr,"minipy: unknown target '%s' (linux, kolibri, macos)\n",t); return 2; } }
         else if(!strcmp(a,"-S")) only_asm=1;
         else if(!strcmp(a,"--fasm")){ if(!(fasm=NEXT())) return 2; }
         else if(!strcmp(a,"--fasm-args")){ if(!(fasm_tmpl=NEXT())) return 2; }
+        else if(!strcmp(a,"--cc")){ if(!(cc=NEXT())) return 2; }
+        else if(!strcmp(a,"--cc-args")){ if(!(cc_tmpl=NEXT())) return 2; }
         else if(!strcmp(a,"--stack")){ const char *v=NEXT(); if(!v) return 2; stack=(unsigned)strtoul(v,NULL,0); }
         else if(!strcmp(a,"-v")) verbose=1;
         else if(!strcmp(a,"--count-allocs")) count_allocs=1;
@@ -243,6 +261,8 @@ int aot_main(int argc, char **argv, const char *program){
     if(!src_path){ usage(program); return 2; }
     if(!fasm) fasm=MPY_AOT_FASM;
     if(!fasm_tmpl) fasm_tmpl=MPY_AOT_FASM_ARGS;
+    if(!cc) cc=MPY_AOT_CC;
+    if(!cc_tmpl) cc_tmpl=MPY_AOT_CC_ARGS;
 
     /* 1. the entry script and, transitively, its imports */
     Units us; memset(&us,0,sizeof us);
@@ -261,6 +281,21 @@ int aot_main(int argc, char **argv, const char *program){
     if(mpy_fs_write_file(asm_path,listing,len,&werr)){ fprintf(stderr,"minipy: %s\n",werr?werr:"cannot write listing"); return 1; }
     if(verbose) printf("wrote %s (%d module%s)\n",asm_path,us.n,us.n==1?"":"s");
     if(only_asm) return 0;
+
+    if(target==AOT_TARGET_MACOS){                          /* 3. C, then the C compiler */
+        char *csrc=NULL; size_t clen=0;
+        if(aot_x2c(listing,len,&csrc,&clen)) return 1;
+        char *c_path=concat(base,".c");
+        if(mpy_fs_write_file(c_path,csrc,clen,&werr)){ fprintf(stderr,"minipy: %s\n",werr?werr:"cannot write the C file"); return 1; }
+        free(csrc);
+        if(verbose) printf("wrote %s\n",c_path);
+        mpy_fs_remove(base);
+        char *args=fasm_args(cc_tmpl,c_path,base);
+        int rc=run_tool(cc,args,"--cc",verbose); free(args);
+        if(rc) return 1;
+        if(!mpy_fs_exists(base)){ fprintf(stderr,"minipy: %s did not produce %s\n",cc,base); return 1; }
+        return 0;
+    }
 
     /* 3. fasm writes the executable */
     mpy_fs_remove(base);                                   /* fasm's exit status is not visible on KolibriOS */

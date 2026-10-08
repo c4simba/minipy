@@ -51,7 +51,11 @@ static void rt_parse(AotRt *rt){
     if(cur) cur->len=strlen(cur->text);
 }
 
-AotRt *aot_rt_new(AotTarget target){ AotRt *rt=MPY_NEW0(AotRt); rt->target=target; rt_parse(rt); return rt; }
+AotRt *aot_rt_new(AotTarget target){
+    AotRt *rt=MPY_NEW0(AotRt);
+    rt->target=target==AOT_TARGET_MACOS?AOT_TARGET_LINUX:target;          /* macos runs the Linux routines (aot_x2c.c) */
+    rt_parse(rt); return rt;
+}
 
 int aot_rt_used(AotRt *rt, const char *name){ for(int i=0;i<rt->nused;i++) if(!strcmp(rt->used[i],name)) return 1; return 0; }
 
