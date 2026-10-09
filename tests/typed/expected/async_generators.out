@@ -1,0 +1,20 @@
+got a0
+got b0
+got a1
+cleanup a
+got b1
+got b2
+cleanup b
+[2, 3]
+countdown 2
+countdown 1
+countdown 0
+countdown done
+enter
+exit True
+after guard
+z0
+cleanup z
+default
+cleanup q
+total 6

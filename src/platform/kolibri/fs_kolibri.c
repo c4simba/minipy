@@ -111,6 +111,7 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
 #endif
         if(rd > 0){
             buf[rd] = 0;
+            mpy_fs_last_len = (size_t)rd;
             return buf;
         }
         free(buf);
@@ -145,6 +146,7 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
     }
 
     buf[total] = 0;
+    mpy_fs_last_len = (size_t)total;
     return buf;
 }
 

@@ -1,6 +1,3 @@
-MiniPy - Mini Python Interpreter
-Script: tests/exc_types_test.mpy
-
 index error
 zero division
 bad value
@@ -10,6 +7,7 @@ name error
 type error
 else after success
 handled
+finally A
 a
 caught k
 finally B

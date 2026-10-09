@@ -1,14 +1,14 @@
 #ifndef MPY_AST_H
 #define MPY_AST_H
 
-#include "lexer.h"
+#include "tokens.h"
 
-/* ========================= Frontend AST + Symbol Table types =========================
-   The typed frontend tree. Expressions are stored as token-index ranges
-   (EXPR_TOKEN_RANGE); the bytecode compiler re-parses those ranges later. */
+/* ========================= Frontend tree =========================
+   What the compilers work on: the interpreter's bytecode compiler
+   (compiler.c) and the typed compiler (aot_types.c, aot_codegen.c).
+   py_front.c makes it from the full Python parser's tree (py_ast.h). */
 
 typedef enum {
-    EXPR_TOKEN_RANGE,   /* frontend: unparsed span of tokens (start..end) */
     EXPR_LITERAL,       /* number / string, in `tok` */
     EXPR_TRUE, EXPR_FALSE, EXPR_NONE,
     EXPR_NAME,          /* `name` */
@@ -25,27 +25,36 @@ typedef enum {
     EXPR_DICT,          /* items = keys, vals = values */
     EXPR_COMPREHENSION, /* comp_kind 'L'/'S'/'D'/'G' (generator expression), a = element/key, b = dict value, clauses */
     EXPR_LAMBDA,        /* eparams, a = body */
-    EXPR_AWAIT          /* await a */
+    EXPR_AWAIT,         /* await a */
+    EXPR_WALRUS,        /* name := a (b: the name as an EXPR_NAME target) */
+    EXPR_YIELD,         /* (yield a) / (yield from a): akind 7; its value: what send() gives */
+    EXPR_PATTERN        /* a match statement's pattern: akind PAT_* (below) */
 } ExprKind;
+/* EXPR_PATTERN kinds: PAT_VALUE a == subject; PAT_SINGLETON a (None / True / False) is subject;
+   PAT_AS a (sub-pattern or NULL) bound to name (NULL: `_`); PAT_OR items; PAT_SEQ items (a PAT_STAR:
+   name or NULL); PAT_MAP keys items, patterns vals, name: **rest; PAT_CLASS a (the class), items
+   positional patterns, then keyword ones (their kw: the attribute) */
+enum { PAT_VALUE=1, PAT_SINGLETON, PAT_AS, PAT_OR, PAT_SEQ, PAT_STAR, PAT_MAP, PAT_CLASS };
 
 /* Comparison codes stored in EXPR_COMPARE operands (items[i>=1]->akind). */
 typedef enum { CMP_LT, CMP_LE, CMP_GT, CMP_GE, CMP_EQ, CMP_NE, CMP_IN, CMP_NOTIN, CMP_IS, CMP_ISNOT } CmpCode;
 
 typedef struct Expr Expr;
-typedef struct CompClause { char **vars; int nvars; Expr *iter; Expr **conds; int ncond; } CompClause;
+typedef struct CompClause { char **vars; int nvars; Expr *iter; Expr **conds; int ncond; Expr *target, *target2; int is_async; } CompClause;   /* target(2): unpacked from vars[0] ([1]) (nested / starred / many names) */
 struct Expr {
     ExprKind kind;
     char *name;              /* NAME / attribute name */
     char *kw;                /* call argument: its keyword (akind 3), e.g. f(x=...) */
     int line;
-    int start, end;          /* EXPR_TOKEN_RANGE */
-    Tok *tok;                /* EXPR_LITERAL token */
+    Tok *tok;                /* EXPR_LITERAL: the literal (a token's fields) */
     TokKind op;              /* operator (unary/binary/bool) */
     int akind;               /* call-arg kind (0 pos,1 *,2 **,3 kw) / compare code */
     Expr *a, *b, *c, *d;     /* operands */
     Expr **items; int count, cap;    /* sequence elems / call args / dict keys / compare operands */
     Expr **vals;  int vcount, vcap;  /* dict values (parallel to items) */
-    char **eparams; int neparam;     /* lambda parameters */
+    char **eparams; int neparam;     /* lambda parameters (as a def's: positional, *args, keyword-only, **kwargs) */
+    Expr **edefaults;                /* lambda: per parameter, its default or NULL */
+    int estar, edstar, ekwonly;      /* lambda: index of *args / **kwargs (-1: none), first keyword-only */
     int comp_kind;                   /* comprehension accumulator kind */
     CompClause *clauses; int nclause, ccap;
     void *ty;                        /* static type, filled in by the compiler (aot_types.c) */
@@ -75,22 +84,10 @@ typedef enum {
     STMT_EXPR,
     STMT_YIELD,
     STMT_ASSERT,
+    STMT_MATCH,         /* match expr: body = its cases (STMT_CASE: expr the pattern, expr2 the guard, body) */
+    STMT_CASE,
     STMT_UNSUPPORTED
 } StmtKind;
-
-typedef enum { SYM_MODULE, SYM_FUNCTION, SYM_CLASS } SymScopeKind;
-
-typedef struct SymScope SymScope;
-struct SymScope {
-    SymScopeKind kind;
-    char *name;
-    int line;
-    char **defs; int def_count, def_cap;
-    char **uses; int use_count, use_cap;
-    char **globals; int global_count, global_cap;
-    char **nonlocals; int nonlocal_count, nonlocal_cap;
-    SymScope **children; int child_count, child_cap;
-};
 
 typedef struct Stmt Stmt;
 struct Stmt {
@@ -98,55 +95,51 @@ struct Stmt {
     char *name;
     char *name2;
     int line;
-    int start, end;
     Expr *expr;
     Expr *expr2;
     char **params; int param_count, param_cap;
-    Expr **defaults; int default_count, default_cap;
-    Expr **annotations; int annotation_cap;   /* def: per-parameter type annotation (token range) or NULL */
-    Expr *returns;                            /* def: `-> type` annotation (token range) or NULL */
+    Expr **annotations; int annotation_cap;   /* def: per-parameter type annotation or NULL */
+    Expr *returns;                            /* def: `-> type` annotation or NULL */
     char **decorators; int decorator_count, decorator_cap;   /* each decorator's first name ... */
-    Expr **decorator_exprs;                                   /* ... and its whole expression (token range) */
+    Expr **decorator_exprs;                                   /* ... and its whole expression */
     Stmt **body; int body_count, body_cap;
     Stmt **orelse; int orelse_count, orelse_cap;
     int star_index, dstar_index;   /* def params: index of *args / **kwargs, else -1 */
     int kwonly_index;              /* def params: first keyword-only parameter after a bare `*`, else -1 */
-    int block_tag;                 /* try-clause blocks: 0 normal, 1 except, 2 else, 3 finally */
+    int block_tag;                 /* try-clause blocks: 0 normal, 1 except, 2 else, 3 finally;
+                                      import: 1 `as`; yield: 7 `yield from` */
     int is_async;                  /* async def */
-    SymScope *scope;
-    void *aux;                     /* statement parsed by the compiler (aot_types.c) */
+    void *aux;                     /* the typed compiler's view of it (aot_types.c) */
+    Expr **targets; int ntargets;  /* assignment: its targets (a = b = v: two); del: what it deletes; with: the items */
+    Expr *value;                   /* assignment: the value (NULL: a bare annotation) */
+    int aug;                       /* augmented assignment: its operator's token (T_PLUS_ASSIGN ...), else 0 */
+    Expr *ann;                     /* annotated assignment: the annotation */
+    int ann_only;                  /* an STMT_EXPR `name: type` (no value) */
+    char **withas;                 /* with: per item, its `as` name or NULL */
+    Expr **withtgt;                /* with: per item, its `as` target when not a name (a tuple, an attribute) */
+    char *module;                  /* import / from-import: the dotted module name */
+    char **names, **asnames; int nnames;   /* from-import: the names ("*") and their aliases (NULL: none) */
+    Expr **pdefaults;              /* def: per parameter, its default value or NULL */
+    void *py;                      /* the PyNode it was made from (copies are made again from it) */
+    char **tparams; int ntparams;  /* def / class / type alias: its type parameters ([T, U]) */
+    int is_alias;                  /* `type name = ann` (an STMT_PASS): a type alias */
+    int yield_expr;                /* def: a yield in an expression (x = yield v): a generator */
+    int level;                     /* from-import: its dots (from .. import x: 2); module NULL for `from . import x` */
+    int star;                      /* try: its handlers are except* ones */
 };
 
 typedef Stmt Ast;
 
-typedef struct {
-    char **defs; int def_count, def_cap;
-    char **uses; int use_count, use_cap;
-    SymScope *root_scope;
-} SymTable;
-
 /* Growable name-list helper (dedups). */
 void name_add_unique(char ***arr, int *cnt, int *cap, const char *name);
 
-/* AST / scope constructors */
-Expr    *expr_new_range(int start, int end, int line);
-Stmt    *stmt_new(StmtKind k, const char *name, int line, int start);
+/* tree constructors */
+Stmt    *stmt_new(StmtKind k, const char *name, int line);
 void     stmt_add_body(Stmt *s, Stmt *child);
 void     stmt_add_orelse(Stmt *s, Stmt *child);
-void     stmt_add_default(Stmt *s, Expr *e);
 void     stmt_set_annotation(Stmt *s, int param, Expr *e);
 void     stmt_add_decorator(Stmt *s, const char *name, Expr *e);
-SymScope *scope_new(SymScopeKind k, const char *name, int line);
-void     scope_add_child(SymScope *p, SymScope *c);
-void     scope_def(SymScope *s, const char *name);
-void     scope_use(SymScope *s, const char *name);
-void     scope_global(SymScope *s, const char *name);
-void     scope_nonlocal(SymScope *s, const char *name);
 
-/* Debug-name helpers */
-const char *stmt_kind_name(StmtKind k);
-const char *scope_kind_name(SymScopeKind k);
-int         is_expr_name_token(TokKind k);
-int         is_assign_op(TokKind k);
+const char *stmt_kind_name(StmtKind k);   /* for messages */
 
 #endif /* MPY_AST_H */

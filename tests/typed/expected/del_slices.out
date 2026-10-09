@@ -1,0 +1,14 @@
+[1, 9, 9, 9, 4, 5]
+[0, 9, 0, 9, 0, 5]
+[7, 0, 9, 0, 9, 0, 5]
+[7, 0, 9, 0, 9, 0, 5, 0, 10]
+[7, 0, 9, 0, 5, 0, 10]
+[0, 0, 0]
+[0, 0, 0, 0, 0, 0]
+['x', 'a', 'b', 'c']
+attempt to assign sequence of size 1 to extended slice of size 3
+[1, 2]
+again | cannot access local variable 'x' where it is not associated with a value
+name 'counter' is not defined
+7
+{} [2]

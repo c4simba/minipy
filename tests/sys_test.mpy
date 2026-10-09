@@ -1,13 +1,11 @@
-# The built-in `sys` module: importable everywhere; syscall is KolibriOS-only.
+# The built-in `sys` module: importable everywhere. syscall is the platform's:
+# KolibriOS int 0x40; elsewhere the i386 Linux calls (int 0x80) of compiled programs.
 
 import sys
 print(sys.platform in ("linux", "darwin", "win32", "host"))   # the host's, as in CPython
 
-try:
-    sys.syscall(0)
-    print("BUG: syscall did not raise off-platform")
-except RuntimeError:
-    print("syscall blocked off KolibriOS")
+r = sys.syscall(20)                 # Linux getpid(): the result in eax, r[0]
+print(len(r), r[0] > 0)
 
 # `sys` resolves from the module cache without touching the filesystem
 from sys import platform
@@ -25,5 +23,5 @@ print(sys.peek_str(b, 8, 2))
 print(sys.addr(b) != 0)
 try:
     sys.peek(b, 14, 4)
-except RuntimeError:
+except IndexError:
     print("bounds enforced")

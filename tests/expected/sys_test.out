@@ -1,8 +1,5 @@
-MiniPy - Mini Python Interpreter
-Script: tests/sys_test.mpy
-
 True
-syscall blocked off KolibriOS
+6 True
 True
 305419896
 22136

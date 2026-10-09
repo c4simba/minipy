@@ -1,6 +1,3 @@
-MiniPy - Mini Python Interpreter
-Script: tests/loop_stack_test.mpy
-
 [1, 'C', '-', 2]
 ['at', [1, 1], None]
 0

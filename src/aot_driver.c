@@ -11,7 +11,7 @@
       same works inside KolibriOS with its own fasm. */
 
 #include "aot.h"
-#include "frontparser.h"
+#include "py_front.h"
 #include "fs.h"
 
 /* macos: the C compiler; override with --cc/--cc-args or MPY_CC/MPY_CC_ARGS. */
@@ -66,10 +66,12 @@ typedef struct { AotUnit **v; int n, cap; } Units;
 static AotUnit *find_unit(Units *us, const char *name){ for(int i=0;i<us->n;i++) if(!strcmp(us->v[i]->name,name)) return us->v[i]; return NULL; }
 /* `if __name__ == "__main__":` at the top level of a module */
 static int is_main_guard(AotUnit *u, Stmt *s){
-    if(s->kind!=STMT_IF || !s->expr || s->expr->end-s->expr->start!=3) return 0;
-    Tok *t=u->tv.v+s->expr->start;
-    int i=t[0].kind==T_NAME ? 0 : 2;
-    return t[1].kind==T_EQ && t[i].kind==T_NAME && !strcmp(t[i].text,"__name__") && t[2-i].kind==T_STRING && !strcmp(t[2-i].text,"__main__");
+    (void)u;
+    Expr *e=s->expr;
+    if(s->kind!=STMT_IF || !e || e->kind!=EXPR_COMPARE || e->count!=2 || e->items[1]->akind!=CMP_EQ) return 0;
+    Expr *a=e->items[0], *b=e->items[1];
+    if(a->kind!=EXPR_NAME){ Expr *t=a; a=b; b=t; }
+    return a->kind==EXPR_NAME && !strcmp(a->name,"__name__") && b->kind==EXPR_LITERAL && b->tok->kind==T_STRING && !strcmp(b->tok->text,"__main__");
 }
 static int is_docstring(AotUnit *u, Stmt *s);
 /* The guard's body runs in the program's main module and never in an imported
@@ -98,17 +100,359 @@ static void apply_main_guards(AotUnit *u, int is_main){
 static AotUnit *add_unit(Units *us, const char *name, const char *path, char *src){
     AotUnit *u=MPY_NEW0(AotUnit);
     u->name=xstrdup2(name); u->path=path?xstrdup2(path):NULL; u->src=src;
-    if(src){ u->tv=lex(src); SymTable st; memset(&st,0,sizeof st); u->ast=build_ast_and_symbols(&u->tv,&st); apply_main_guards(u,!strcmp(name,"__main__")); }
+    if(src){
+        if(!(u->ast=py_front(path,src))) exit(1);
+        apply_main_guards(u,!strcmp(name,"__main__"));
+    }
     if(us->n==us->cap){ us->cap=us->cap?us->cap*2:8; us->v=(AotUnit**)xrealloc(us->v,sizeof(AotUnit*)*(size_t)us->cap); }
     us->v[us->n++]=u;
     return u;
 }
 static int is_builtin_module(const char *name){
-    static const char *mods[]={"sys","thread","asyncio","math","time","random","typing","functools","__future__","collections","collections.abc","ctypes","json","minipy",NULL};
+    static const char *mods[]={"sys","thread","asyncio","math","time","random","typing","functools","__future__","collections","collections.abc","ctypes","json","minipy","dataclasses","abc","string",NULL};   /* (thread: above) */
     for(int i=0;mods[i];i++) if(!strcmp(mods[i],name)) return 1;
     return 0;
 }
 
+/* BaseExceptionGroup / ExceptionGroup and the steps of except*: compiled with programs that use them */
+static const char EG_PRELUDE[]=
+"from typing import Callable\n"
+"\n"
+"class BaseExceptionGroup(Exception):\n"
+"    def __init__(self, message: str, exceptions: list[BaseException]):\n"
+"        n = len(exceptions)\n"
+"        if n == 0:\n"
+"            raise ValueError(\"second argument (exceptions) must be a non-empty sequence\")\n"
+"        super().__init__(message + \" (\" + str(n) + \" sub-exception\" + (\"s\" if n > 1 else \"\") + \")\")\n"
+"        self.message = message\n"
+"        self.exceptions = tuple(exceptions)\n"
+"        self.as_tuple = False\n"
+"    def derive(self, excs: list[BaseException]) -> \"BaseExceptionGroup\":\n"
+"        return BaseExceptionGroup(self.message, excs)\n"
+"    def split(self, pred: Callable[[BaseException], bool]) -> tuple[\"BaseExceptionGroup | None\", \"BaseExceptionGroup | None\"]:\n"
+"        if pred(self):\n"
+"            return (self, None)\n"
+"        match: list[BaseException] = []\n"
+"        rest: list[BaseException] = []\n"
+"        for e in self.exceptions:\n"
+"            if isinstance(e, BaseExceptionGroup):\n"
+"                m, r = e.split(pred)\n"
+"                if m is not None:\n"
+"                    match.append(m)\n"
+"                if r is not None:\n"
+"                    rest.append(r)\n"
+"            elif pred(e):\n"
+"                match.append(e)\n"
+"            else:\n"
+"                rest.append(e)\n"
+"        mg: BaseExceptionGroup | None = None\n"
+"        rg: BaseExceptionGroup | None = None\n"
+"        if match:\n"
+"            mg = self.derive(match)\n"
+"        if rest:\n"
+"            rg = self.derive(rest)\n"
+"        return (mg, rg)\n"
+"    def subgroup(self, pred: Callable[[BaseException], bool]) -> \"BaseExceptionGroup | None\":\n"
+"        return self.split(pred)[0]\n"
+"    def __repr__(self) -> str:\n"
+"        inner = \", \".join([repr(e) for e in self.exceptions])\n"
+"        return type(self).__name__ + \"(\" + repr(self.message) + \", \" + (\"(\" + inner + \",)\" if self.as_tuple else \"[\" + inner + \"]\") + \")\"\n"
+"\n"
+"class ExceptionGroup(BaseExceptionGroup):\n"
+"    def __init__(self, message: str, exceptions: list[BaseException]):\n"
+"        for e in exceptions:\n"
+"            if not isinstance(e, Exception):\n"
+"                raise TypeError(\"Cannot nest BaseExceptions in an ExceptionGroup\")\n"
+"        super().__init__(message, exceptions)\n"
+"    def derive(self, excs: list[BaseException]) -> BaseExceptionGroup:\n"
+"        return ExceptionGroup(self.message, excs)\n"
+"\n"
+"def __mpy_leaves(e: BaseException, out: list[BaseException]) -> None:\n"
+"    if isinstance(e, BaseExceptionGroup):\n"
+"        for x in e.exceptions:\n"
+"            __mpy_leaves(x, out)\n"
+"    else:\n"
+"        out.append(e)\n"
+"\n"
+"class __mpy_EGState:\n"
+"    def __init__(self, exc: BaseException):\n"
+"        self.orig = exc\n"
+"        self.naked = not isinstance(exc, BaseExceptionGroup)\n"
+"        self.rest: BaseException | None = exc\n"
+"        self.raised: list[BaseException] = []\n"
+"        self.again: list[bool] = []\n"
+"        self.matched: BaseException | None = None\n"
+"    def match(self, pred: Callable[[BaseException], bool]) -> BaseExceptionGroup | None:\n"
+"        rest = self.rest\n"
+"        self.matched = None\n"
+"        if rest is None:\n"
+"            return None\n"
+"        if self.naked:\n"
+"            if not pred(rest):\n"
+"                return None\n"
+"            g = ExceptionGroup(\"\", [rest])\n"
+"            g.as_tuple = True\n"
+"            self.rest = None\n"
+"            self.matched = g\n"
+"            return g\n"
+"        if not isinstance(rest, BaseExceptionGroup):\n"
+"            return None\n"
+"        m, r = rest.split(pred)\n"
+"        self.rest = r\n"
+"        self.matched = m\n"
+"        return m\n"
+"    def handler_raised(self, x: BaseException) -> None:\n"
+"        self.raised.append(x)\n"
+"        self.again.append(x is self.matched)\n"
+"    def end(self) -> None:\n"
+"        keep: list[BaseException] = []\n"
+"        rest = self.rest\n"
+"        if rest is not None:\n"
+"            if self.naked:\n"
+"                keep.append(rest)\n"
+"            else:\n"
+"                __mpy_leaves(rest, keep)\n"
+"        new: list[BaseException] = []\n"
+"        for i in range(len(self.raised)):\n"
+"            if self.again[i]:\n"
+"                __mpy_leaves(self.raised[i], keep)\n"
+"            else:\n"
+"                new.append(self.raised[i])\n"
+"        result: BaseException | None = None\n"
+"        if keep:\n"
+"            orig = self.orig\n"
+"            if self.naked:\n"
+"                result = orig\n"
+"            elif isinstance(orig, BaseExceptionGroup):\n"
+"                result = orig.split(lambda e: e in keep)[0]\n"
+"        if new:\n"
+"            if result is not None:\n"
+"                new.append(result)\n"
+"            if len(new) == 1 and result is None:\n"
+"                raise new[0]\n"
+"            raise ExceptionGroup(\"\", new)\n"
+"        if result is not None:\n"
+"            raise result\n";
+/* complex and cmath: written in Python, compiled with programs that use them */
+static const char CMATH_PRELUDE[]=
+"import math\n"
+"\n"
+"pi = math.pi\n"
+"e = math.e\n"
+"tau = math.tau\n"
+"inf = math.inf\n"
+"nan = math.nan\n"
+"\n"
+"def _fmt(x: float) -> str:\n"
+"    s = repr(x)\n"
+"    if s.endswith(\".0\"):\n"
+"        s = s[:-2]\n"
+"    return s\n"
+"\n"
+"class complex:\n"
+"    def __init__(self, real: float = 0.0, imag: float = 0.0):\n"
+"        self.real = real\n"
+"        self.imag = imag\n"
+"    def __add__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(self.real + other.real, self.imag + other.imag)\n"
+"    def __radd__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(other.real + self.real, other.imag + self.imag)\n"
+"    def __sub__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(self.real - other.real, self.imag - other.imag)\n"
+"    def __rsub__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(other.real - self.real, other.imag - self.imag)\n"
+"    def __mul__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(self.real * other.real - self.imag * other.imag, self.real * other.imag + self.imag * other.real)\n"
+"    def __rmul__(self, other: \"complex\") -> \"complex\":\n"
+"        return complex(other.real * self.real - other.imag * self.imag, other.real * self.imag + other.imag * self.real)\n"
+"    def __truediv__(self, other: \"complex\") -> \"complex\":\n"
+"        return _div(self.real, self.imag, other.real, other.imag)\n"
+"    def __rtruediv__(self, other: \"complex\") -> \"complex\":\n"
+"        return _div(other.real, other.imag, self.real, self.imag)\n"
+"    def __pow__(self, other: \"complex\") -> \"complex\":\n"
+"        return _pow(self.real, self.imag, other.real, other.imag)\n"
+"    def __rpow__(self, other: \"complex\") -> \"complex\":\n"
+"        return _pow(other.real, other.imag, self.real, self.imag)\n"
+"    def __neg__(self) -> \"complex\":\n"
+"        return complex(-self.real, -self.imag)\n"
+"    def __pos__(self) -> \"complex\":\n"
+"        return complex(self.real, self.imag)\n"
+"    def __abs__(self) -> float:\n"
+"        return math.hypot(self.real, self.imag)\n"
+"    def __eq__(self, other: \"complex\") -> bool:\n"
+"        return self.real == other.real and self.imag == other.imag\n"
+"    def __ne__(self, other: \"complex\") -> bool:\n"
+"        return self.real != other.real or self.imag != other.imag\n"
+"    def __hash__(self) -> int:\n"
+"        if self.imag == 0.0:\n"
+"            return hash(self.real)\n"
+"        return hash((self.real, self.imag))\n"
+"    def __bool__(self) -> bool:\n"
+"        return self.real != 0.0 or self.imag != 0.0\n"
+"    def conjugate(self) -> \"complex\":\n"
+"        return complex(self.real, -self.imag)\n"
+"    def __repr__(self) -> str:\n"
+"        if self.real == 0.0 and math.copysign(1.0, self.real) == 1.0:\n"
+"            return _fmt(self.imag) + \"j\"\n"
+"        im = _fmt(self.imag)\n"
+"        return \"(\" + _fmt(self.real) + (\"\" if im[0] == \"-\" else \"+\") + im + \"j)\"\n"
+"\n"
+"def _div(ar: float, ai: float, br: float, bi: float) -> complex:\n"
+"    if br == 0.0 and bi == 0.0:\n"
+"        raise ZeroDivisionError(\"division by zero\")\n"
+"    if abs(br) >= abs(bi):\n"
+"        r = bi / br\n"
+"        d = br + bi * r\n"
+"        return complex((ar + ai * r) / d, (ai - ar * r) / d)\n"
+"    r = br / bi\n"
+"    d = br * r + bi\n"
+"    return complex((ar * r + ai) / d, (ai * r - ar) / d)\n"
+"\n"
+"def _pow(ar: float, ai: float, br: float, bi: float) -> complex:\n"
+"    if br == 0.0 and bi == 0.0:\n"
+"        return complex(1.0, 0.0)\n"
+"    if ar == 0.0 and ai == 0.0:\n"
+"        if bi != 0.0 or br < 0.0:\n"
+"            raise ZeroDivisionError(\"zero to a negative or complex power\")\n"
+"        return complex(0.0, 0.0)\n"
+"    if bi == 0.0 and br == math.floor(br) and abs(br) <= 100.0:\n"
+"        n = int(br)\n"
+"        u = -n if n < 0 else n\n"
+"        rr = 1.0\n"
+"        ri = 0.0\n"
+"        pr = ar\n"
+"        pim = ai\n"
+"        mask = 1\n"
+"        while mask > 0 and u >= mask:\n"
+"            if u & mask:\n"
+"                t = rr * pr - ri * pim\n"
+"                ri = rr * pim + ri * pr\n"
+"                rr = t\n"
+"            t = pr * pr - pim * pim\n"
+"            pim = pr * pim + pim * pr\n"
+"            pr = t\n"
+"            mask = mask << 1\n"
+"        if n >= 0:\n"
+"            return complex(rr, ri)\n"
+"        return _div(1.0, 0.0, rr, ri)\n"
+"    vabs = math.hypot(ar, ai)\n"
+"    ln = math.pow(vabs, br)\n"
+"    at = math.atan2(ai, ar)\n"
+"    phase = at * br\n"
+"    if bi != 0.0:\n"
+"        ln = ln / math.exp(at * bi)\n"
+"        phase = phase + bi * math.log(vabs)\n"
+"    return complex(ln * math.cos(phase), ln * math.sin(phase))\n"
+"\n"
+"infj = complex(0.0, math.inf)\n"
+"nanj = complex(0.0, math.nan)\n"
+"\n"
+"def phase(z: complex) -> float:\n"
+"    return math.atan2(z.imag, z.real)\n"
+"\n"
+"def polar(z: complex) -> tuple[float, float]:\n"
+"    return (math.hypot(z.real, z.imag), math.atan2(z.imag, z.real))\n"
+"\n"
+"def rect(r: float, phi: float) -> complex:\n"
+"    return complex(r * math.cos(phi), r * math.sin(phi))\n"
+"\n"
+"def sqrt(z: complex) -> complex:\n"
+"    if z.real == 0.0 and z.imag == 0.0:\n"
+"        return complex(0.0, z.imag)\n"
+"    ax = abs(z.real) / 8.0\n"
+"    s = 2.0 * math.sqrt(ax + math.hypot(ax, abs(z.imag) / 8.0))\n"
+"    d = abs(z.imag) / (2.0 * s)\n"
+"    if z.real >= 0.0:\n"
+"        return complex(s, math.copysign(d, z.imag))\n"
+"    return complex(d, math.copysign(s, z.imag))\n"
+"\n"
+"def exp(z: complex) -> complex:\n"
+"    l = math.exp(z.real)\n"
+"    return complex(l * math.cos(z.imag), l * math.sin(z.imag))\n"
+"\n"
+"def log(z: complex) -> complex:\n"
+"    return complex(math.log(math.hypot(z.real, z.imag)), math.atan2(z.imag, z.real))\n"
+"\n"
+"def log10(z: complex) -> complex:\n"
+"    r = log(z)\n"
+"    return complex(r.real / math.log(10.0), r.imag / math.log(10.0))\n"
+"\n"
+"def isfinite(z: complex) -> bool:\n"
+"    return math.isfinite(z.real) and math.isfinite(z.imag)\n"
+"\n"
+"def isinf(z: complex) -> bool:\n"
+"    return math.isinf(z.real) or math.isinf(z.imag)\n"
+"\n"
+"def isnan(z: complex) -> bool:\n"
+"    return math.isnan(z.real) or math.isnan(z.imag)\n"
+"\n"
+"def __mpy_complex_parse(s: str) -> complex:\n"
+"    t = s.strip()\n"
+"    if t.startswith(\"(\") and t.endswith(\")\"):\n"
+"        t = t[1:-1].strip()\n"
+"    try:\n"
+"        if t and (t[-1] == \"j\" or t[-1] == \"J\"):\n"
+"            body = t[:-1]\n"
+"            k = -1\n"
+"            for i in range(len(body) - 1, 0, -1):\n"
+"                if (body[i] == \"+\" or body[i] == \"-\") and body[i - 1] != \"e\" and body[i - 1] != \"E\":\n"
+"                    k = i\n"
+"                    break\n"
+"            if k < 0:\n"
+"                im = body\n"
+"                if im == \"\" or im == \"+\" or im == \"-\":\n"
+"                    im = im + \"1\"\n"
+"                return complex(0.0, float(im))\n"
+"            re = body[:k]\n"
+"            im = body[k:]\n"
+"            if im == \"+\" or im == \"-\":\n"
+"                im = im + \"1\"\n"
+"            return complex(float(re), float(im))\n"
+"        return complex(float(t), 0.0)\n"
+"    except ValueError:\n"
+"        raise ValueError(\"complex() arg is a malformed string\")\n";
+/* functools.cmp_to_key(f) as a sort key: lambda x: __mpy_CmpKey(x, f) (aot_types.c), its objects compared by f */
+static const char CMPKEY_PRELUDE[]=
+"from typing import Callable, Generic, TypeVar\n"
+"\n"
+"T = TypeVar(\"T\")\n"
+"\n"
+"class __mpy_CmpKey(Generic[T]):\n"
+"    def __init__(self, obj: T, cmp: Callable[[T, T], int]):\n"
+"        self.obj = obj\n"
+"        self.cmp = cmp\n"
+"    def __lt__(self, other: \"__mpy_CmpKey[T]\") -> bool:\n"
+"        return self.cmp(self.obj, other.obj) < 0\n"
+"    def __gt__(self, other: \"__mpy_CmpKey[T]\") -> bool:\n"
+"        return self.cmp(self.obj, other.obj) > 0\n"
+"    def __le__(self, other: \"__mpy_CmpKey[T]\") -> bool:\n"
+"        return self.cmp(self.obj, other.obj) <= 0\n"
+"    def __ge__(self, other: \"__mpy_CmpKey[T]\") -> bool:\n"
+"        return self.cmp(self.obj, other.obj) >= 0\n"
+"    def __eq__(self, other: \"__mpy_CmpKey[T]\") -> bool:\n"
+"        return self.cmp(self.obj, other.obj) == 0\n";
+/* the source has complex numbers: complex(), cmath or a literal like 2j */
+static int uses_complex(const char *s){
+    if(strstr(s,"complex") || strstr(s,"cmath")) return 1;
+    for(const char *p=s+1;*p;p++) if((*p=='j'||*p=='J') && ((p[-1]>='0'&&p[-1]<='9')||p[-1]=='.')){
+        char n=p[1]; if((n>='a'&&n<='z')||(n>='A'&&n<='Z')||(n>='0'&&n<='9')||n=='_') continue;
+        const char *q=p-1; while(q>s && ((*q>='0'&&*q<='9')||*q=='.'||*q=='_'||*q=='e'||*q=='E')) q--;
+        if(!((*q>='a'&&*q<='z')||(*q>='A'&&*q<='Z')||*q=='_')) return 1; }
+    return 0;
+}
+static int is_package_path(const char *path){ const char *b=strrchr(path,'/'); b=b?b+1:path; return !strncmp(b,"__init__.",9); }
+static char *concat3(const char *a, const char *b, const char *c){ size_t la=strlen(a), lb=strlen(b), lc=strlen(c); char *r=(char*)xmalloc(la+lb+lc+1); memcpy(r,a,la); memcpy(r+la,b,lb); memcpy(r+la+lb,c,lc+1); return r; }
+/* the file of module a.b.c when package a.b is loaded: in its folder */
+static char *package_member(Units *us, const char *dotted){
+    const char *dot=strrchr(dotted,'.'); if(!dot) return NULL;
+    char *parent=xstrndup2(dotted,(int)(dot-dotted)); AotUnit *t=find_unit(us,parent); free(parent);
+    if(!t || !t->path || !is_package_path(t->path)) return NULL;
+    char *dir=mpy_fs_dirname(t->path);
+    char *r=mpy_fs_find_module(dir,dot+1);
+    if(r && strncmp(r,dir,strlen(dir))){ free(r); r=NULL; }            /* (only the package's own) */
+    free(dir);
+    return r;
+}
 /* Make `dotted` and each of its prefixes available, as vm_import_dotted would. */
 static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line){
     char *dir=mpy_fs_dirname(from->path);
@@ -121,7 +465,8 @@ static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line
             if(is_builtin_module(prefix)){
                 if(!leaf && strcmp(dotted,"collections.abc")){ fprintf(stderr,"%s:%d: error: built-in module '%s' has no submodules\n",from->path,line,prefix); ok=0; }
             } else {
-                char *path=mpy_fs_find_module(dir,prefix), *err=NULL;   /* the importer's folder, MINIPYPATH, <minipy>/lib */
+                char *path=strchr(prefix,'.') ? package_member(us,prefix) : NULL, *err=NULL;    /* pkg.sub: next to the package */
+                if(!path) path=mpy_fs_find_module(dir,prefix);       /* the importer's folder, MINIPYPATH, <minipy>/lib */
                 char *src=path?mpy_fs_try_read_file(path,&err):NULL;
                 free(err);
                 if(src) add_unit(us,prefix,path,src);
@@ -161,25 +506,32 @@ static int nested_import_error(AotUnit *u, Stmt **b, int n, const char *where){
     return 0;
 }
 static int is_docstring(AotUnit *u, Stmt *s){
-    return s->kind==STMT_EXPR && s->expr && s->expr->end==s->expr->start+1 && u->tv.v[s->expr->start].kind==T_STRING;
+    (void)u;
+    return s->kind==STMT_EXPR && !s->ann_only && s->expr && s->expr->kind==EXPR_LITERAL && s->expr->tok->kind==T_STRING;
 }
-/* The import restriction, then the imported modules. */
-static int scan_imports(Units *us, AotUnit *u){
-    Stmt **b=u->ast->body; int n=u->ast->body_count, header=1;
+/* The imported modules: from import statements anywhere (one inside a
+   function or a block runs the module's top level where it is, as in Python). */
+static int scan_imports_in(Units *us, AotUnit *u, Stmt **b, int n){
     for(int i=0;i<n;i++){ Stmt *s=b[i];
         if(s->kind==STMT_IMPORT || s->kind==STMT_FROM_IMPORT){
-            if(!header){ fprintf(stderr,"%s:%d: error: import after other statements; in compiled programs every import must be at the top of the module\n",u->path,s->line); return 0; }
             char *mod=s->kind==STMT_IMPORT ? xstrdup2(s->name2?s->name2:s->name) : aot_from_import_module(u,s);
-            int ok=resolve_import(us,u,mod,s->line); free(mod);
+            if(!mod) return 0;
+            int ok=resolve_import(us,u,mod,s->line);
+            if(ok && s->kind==STMT_FROM_IMPORT && !is_builtin_module(mod))    /* from pkg import sub: a submodule, when there is one */
+                for(int k=0;k<s->nnames;k++){ if(!strcmp(s->names[k],"*")) continue;
+                    char *sub=concat3(mod,".",s->names[k]); AotUnit *pk=find_unit(us,mod);
+                    if(pk && pk->path && is_package_path(pk->path) && !find_unit(us,sub)){ char *path=package_member(us,sub);
+                        if(path){ char *err=NULL, *src=mpy_fs_try_read_file(path,&err); free(err); if(src) add_unit(us,sub,path,src); free(path); } }
+                    free(sub); }
+            free(mod);
             if(!ok) return 0;
             continue;
         }
-        if(!(i==0 && is_docstring(u,s))) header=0;
-        const char *w=construct_name(s,"a block");
-        if(nested_import_error(u,s->body,s->body_count,w) || nested_import_error(u,s->orelse,s->orelse_count,w)) return 0;
+        if(!scan_imports_in(us,u,s->body,s->body_count) || !scan_imports_in(us,u,s->orelse,s->orelse_count)) return 0;
     }
     return 1;
 }
+static int scan_imports(Units *us, AotUnit *u){ (void)nested_import_error; return scan_imports_in(us,u,u->ast->body,u->ast->body_count); }
 
 /* ---------------------------------------------------------------- running tools */
 
@@ -224,9 +576,7 @@ static int run_tool(const char *program, const char *args, const char *option, i
 
 /* ---------------------------------------------------------------- entry */
 
-int capi_main(int argc, char **argv);
 int aot_main(int argc, char **argv, const char *program){
-    for(int i=0;i+1<argc;i++) if(!strcmp(argv[i],"--target") && !strcmp(argv[i+1],"cpython")) return capi_main(argc,argv);   /* capi_driver.c */
     const char *src_path=NULL, *out=NULL, *fasm=getenv("MPY_FASM"), *fasm_tmpl=getenv("MPY_FASM_ARGS");
     const char *cc=getenv("MPY_CC"), *cc_tmpl=getenv("MPY_CC_ARGS");
     int only_asm=0, verbose=0; unsigned stack=0;
@@ -271,7 +621,14 @@ int aot_main(int argc, char **argv, const char *program){
     char *err=NULL, *src=mpy_fs_try_read_file(src_path,&err);
     if(!src){ fprintf(stderr,"minipy: %s\n",err?err:"cannot read input"); free(err); return 1; }
     add_unit(&us,"__main__",src_path,src);
+    if(uses_complex(src)) add_unit(&us,"cmath","<cmath>",xstrdup2(CMATH_PRELUDE));   /* (complex) */
     for(int i=0;i<us.n;i++) if(us.v[i]->ast && !scan_imports(&us,us.v[i])) return 1;
+    if(!find_unit(&us,"cmath")) for(int i=0;i<us.n;i++) if(us.v[i]->src && uses_complex(us.v[i]->src)){
+        add_unit(&us,"cmath","<cmath>",xstrdup2(CMATH_PRELUDE)); if(!scan_imports(&us,us.v[us.n-1])) return 1; break; }
+    { int eg=0; for(int i=0;i<us.n;i++) if(us.v[i]->src && (strstr(us.v[i]->src,"ExceptionGroup") || strstr(us.v[i]->src,"except*") || strstr(us.v[i]->src,"except *"))) eg=1;
+      if(eg) add_unit(&us,"__mpy_eg","<exceptiongroup>",xstrdup2(EG_PRELUDE)); }      /* ExceptionGroup, except*: written in Python */
+    { int ck=0; for(int i=0;i<us.n;i++) if(us.v[i]->src && strstr(us.v[i]->src,"cmp_to_key")) ck=1;
+      if(ck){ add_unit(&us,"__mpy_cmpkey","<cmp_to_key>",xstrdup2(CMPKEY_PRELUDE)); if(!scan_imports(&us,us.v[us.n-1])) return 1; } }
 
     /* 2. types, then one listing for the whole program */
     AotCodegenOptions co; co.target=target; co.stack_size=stack; co.count_allocs=count_allocs;

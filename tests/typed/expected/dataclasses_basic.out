@@ -1,0 +1,7 @@
+Point(x=1, y=2, tags=[]) True False 0 0
+Point(x=1, y=2, tags=['t']) Point(x=1, y=2, tags=[]) False
+Version(major=1, minor=2) True [Version(major=1, minor=2), Version(major=1, minor=3)] True True
+frozen: cannot assign to field 'major'
+P3(x=1, y=2, tags=[], z=1.5) 4.5 True
+K(a=1, b=2, c='c') K(a=1, b=5, c='x')
+2 True

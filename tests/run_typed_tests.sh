@@ -21,6 +21,10 @@
 #            run only for that target (*_linux also for macos, unless they need
 #            the scripted HTTP clients of x86run: <name>.requests). macos
 #            programs are native: no FASM, no RUN.
+#            interp: no compilation - the interpreter runs every program the
+#            host can (as macos does) and must print what the compiled one
+#            does (its traceback lines left out: a compiled program reports
+#            only the last line of an uncaught exception).
 #   OUT      scratch directory   (default build/typed)
 #   UPDATE=1 rewrite the expected files from the current results
 #
@@ -44,11 +48,12 @@ files="$*"
 for f in $files; do
     n=$(basename "$f" .mpy)
     case "$n" in
-    *_linux) [ "$TARGET" = linux ] || { [ "$TARGET" = macos ] && [ ! -f "$DIR/$n.requests" ]; } || continue;;
+    *_linux) [ "$TARGET" = linux ] || { [ "$TARGET" != kolibri ] && [ ! -f "$DIR/$n.requests" ]; } || continue;;
     *_kolibri) [ "$TARGET" = kolibri ] || continue;;
     esac
     case "$n" in
     err_*)
+        [ "$TARGET" = interp ] && continue
         "$MINIPY" --compile -S "$f" -o "$OUT/$n" >"$OUT/$n.err" 2>&1
         rc=$?
         sed -e "s|^$DIR/||" "$OUT/$n.err" > "$OUT/$n.got"
@@ -57,6 +62,17 @@ for f in $files; do
         else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (compiler exit $rc)"; diff "$EXP/$n.err" "$OUT/$n.got" | head -10; fi
         ;;
     *)
+        if [ "$TARGET" = interp ]; then
+            inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"
+            "$MINIPY" "$f" <"$inp" >"$OUT/$n.raw" 2>&1
+            rc=$?
+            awk '/^Traceback \(most recent call last\):$/ { tb=1; next } tb && /^  / { next } { tb=0; print }' "$OUT/$n.raw" >"$OUT/$n.got"
+            [ $rc -ne 0 ] && echo "[exit $rc]" >>"$OUT/$n.got"
+            exp="$EXP/$n.out"; [ -f "$EXP/$n.macos.out" ] && exp="$EXP/$n.macos.out"
+            if cmp -s "$OUT/$n.got" "$exp"; then pass=$((pass+1))
+            else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (interpreter)"; diff "$exp" "$OUT/$n.got" | head -20; fi
+            continue
+        fi
         if ! "$MINIPY" --compile --target "$TARGET" --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
             fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (does not compile)"; head -10 "$OUT/$n.log"; continue
         fi

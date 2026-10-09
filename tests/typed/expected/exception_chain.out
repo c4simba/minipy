@@ -1,0 +1,5 @@
+code 3 3 ('code 3',) ValueError invalid literal for int() with base 10: 'abc' True
+KeyError('k') ('k',) ZeroDivisionError True False
+('plain',) True True
+second True IndexError True
+() ('',)

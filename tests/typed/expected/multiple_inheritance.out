@@ -1,0 +1,5 @@
+{"name": 'ann', "email": 'a@x'} User(name='ann', email='a@x') True True False
+['User', 'JsonMixin', 'ReprMixin', 'Base', 'object']
+D>B>C>A B>A C>A ['D', 'B', 'C', 'A', 'object']
+[log] a #1 [log] b #2 [log] a #3 [log]
+r w True

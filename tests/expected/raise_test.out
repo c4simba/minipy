@@ -1,8 +1,8 @@
-RuntimeError: boom
 Traceback (most recent call last):
-  line 2, in bad
-  line 5, in wrap
-  line 7, in __main__
-MiniPy - Mini Python Interpreter
-Script: tests/raise_test.mpy
-
+  File "tests/raise_test.mpy", line 7, in <module>
+    wrap()
+  File "tests/raise_test.mpy", line 5, in wrap
+    bad()
+  File "tests/raise_test.mpy", line 2, in bad
+    raise "boom"
+TypeError: exceptions must derive from BaseException

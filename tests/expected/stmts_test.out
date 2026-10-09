@@ -1,6 +1,3 @@
-MiniPy - Mini Python Interpreter
-Script: tests/stmts_test.mpy
-
 asserts passed
 assert caught
 boom

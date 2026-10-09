@@ -1,4 +1,0 @@
-def scale(x: int, factor: int) -> int:
-    return x * factor
-f = scale
-print(f(2, factor=3))

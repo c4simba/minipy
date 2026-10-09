@@ -37,6 +37,18 @@ static void buf_cat(Buf *b, Buf *x){ if(x->len) buf_put(b,x->s,x->len); }
 static void put_cb(void *ctx, const char *s, size_t n){ buf_put((Buf*)ctx,s,n); }
 
 /* `db` operands for arbitrary bytes */
+/* the length of UTF-8 text in code points, counted like the runtime (and
+   the interpreter): a byte that does not start a valid sequence is one */
+static int u8_cplen(const char *s, int n){
+    const unsigned char *u=(const unsigned char*)s; int c=0;
+    for(int i=0;i<n;c++){
+        unsigned b=u[i]; int len= b<0xC0 ? 1 : b<0xE0 ? 2 : b<0xF0 ? 3 : b<0xF8 ? 4 : 1;
+        if(len>1 && i+len<=n){ int k=1; while(k<len && (u[i+k]&0xC0)==0x80) k++; if(k<len) len=1; }
+        else len=1;
+        i+=len;
+    }
+    return c;
+}
 static void buf_bytes(Buf *b, const char *s, int n, int nul){
     buf_put(b,"db ",3);
     int first=1;
@@ -67,6 +79,8 @@ typedef struct G {
     Buf text, data, bss;
     int labels;
     Lit *lits; int nlits, clits;            /* static str objects S<i> */
+    Lit *blits; int nblits, cblits;         /* static bytes objects B<i> */
+    char *btypes[32]; int nbtypes;          /* built-in types used as values: descriptors TYD_<name> */
     Lit *plits; int nplits, cplits;         /* print literals P<i>: text + newline */
     Lit *flts; int nflts, cflts;            /* float constants FC<i>, as decimal text fasm converts */
     Lit *zlits; int nzlits, czlits;         /* NUL-terminated strings Z<i> */
@@ -80,6 +94,7 @@ typedef struct G {
     char *fv_used, *cd_used;                /* per function: static closure FV<id>, closure destroy routine CD<id> */
     struct { Ty *to, *from; } *adapters; int nadapters, cadapters;   /* AD<k> */
     char *bm_used;                          /* per method: BM<id>, the code of its bound values */
+    char **kdlabels;                        /* per class: KDC<id>, the descriptor of its objects (class_kd) */
 } G;
 
 typedef struct Loop { int lcont, lbreak; } Loop;
@@ -109,7 +124,7 @@ typedef struct F {
 static G *gg;                   /* the generator (one compilation at a time) */
 
 /* a format spec, and where a formatted value comes from (an expression or a tuple field) */
-typedef struct { int fill, align, sign, alt, zero, width, comma, prec; char type; } Spec;
+typedef struct { int fill, align, sign, alt, zero, width, comma, prec; char type; int wslot, pslot; } Spec;   /* wslot / pslot: the width / precision is a value in that frame slot */
 typedef struct { Expr *e; Ty *tt; int tslot, idx; } ArgSrc;
 static int parse_spec(const char *s, int n, Spec *sp);
 static void emit_field(F *f, Spec *sp, Ty *t, ArgSrc *src, int repr, int pystyle, int line);
@@ -125,25 +140,40 @@ static void CALLRT(F *f, const char *name){ rt(name); E(f,"call %s",name); }
 static Ty *TY(Expr *e){ return ty_find(xinfo(e)->ty); }
 static int is_ptr(Ty *t){ return ty_is_ptr(t); }
 static int is_flt(Ty *t){ return ty_find(t)->k==TY_FLOAT; }
-/* container element kinds of the runtime: 0 int/bool, 1 str, 2 float, 3 other reference */
+static int is_lng(Ty *t){ return ty_find(t)->k==TY_INT; }     /* an int: 64 bits in edx:eax */
+/* The runtime's descriptor (kd) of values of type t: their size, whether they
+   are references, how they compare, hash and print (aot_rtlib.asm). Classes
+   get their own (class_kd), using __eq__, __lt__, __hash__ and their repr. */
 static void rt(const char *name);
-static int kind_of(Ty *t){
+static const char *class_kd(AClass *c);
+static const char *kd_of(Ty *t){
     t=ty_find(t);
-    if(t->k==TY_FLOAT) return 2;
-    if(t->k==TY_STR) return 1;
-    if(t->k==TY_TUPLE){ rt("rt_tuple_eq"); return 4; }      /* compared by value */
-    return ty_is_ptr(t)?3:0;
+    const char *n;
+    switch(t->k){
+        case TY_BOOL: n=t->opt?"rt_kd_obool":"rt_kd_bool"; break;    /* optional: None in the type's reserved value */
+        case TY_INT: n=t->opt?"rt_kd_oint":"rt_kd_int"; break;
+        case TY_FLOAT: n=t->opt?"rt_kd_ofloat":"rt_kd_float"; break;
+        case TY_STR: n="rt_kd_str"; break;
+        case TY_BYTES: n="rt_kd_bytes"; break;
+        case TY_TYPE: n="rt_kd_type"; break;
+        case TY_TUPLE: n="rt_kd_tuple"; break;
+        case TY_LIST: n="rt_kd_list"; break;
+        case TY_DICT: n="rt_kd_dict"; break;
+        case TY_SET: n="rt_kd_set"; break;
+        case TY_OBJ: return class_kd(t->cls);
+        case TY_VAR: case TY_VOID: n="rt_kd_word"; break;       /* never filled */
+        default: n="rt_kd_obj"; break;                          /* functions, files ...: identity */
+    }
+    rt(n); return n;
 }
 static int esize(Ty *t){ return ty_size(t); }
-static const char *list_destroy(Ty *elem){ const char *n=is_ptr(elem)?"rt_list_destroy_ptr":"rt_list_destroy"; rt(n); return n; }
-static const char *dict_destroy(Ty *elem){ const char *n=is_ptr(elem)?"rt_dict_destroy_ptr":"rt_dict_destroy"; rt(n); return n; }
 static void cg_fail(int line, const char *msg);
 /* a new empty dict of type t -> eax (owned) */
 static void new_dict(F *f, Ty *t){
-    Ty *k=ty_dkey(t); TyKind kk=ty_find(k)->k;
-    if(kk==TY_FLOAT||kk==TY_LIST||kk==TY_SET||kk==TY_DICT) cg_fail(0,"dictionary keys must be int, str, tuples or objects");
-    E(f,"mov eax,%s",dict_destroy(ty_find(t)->elem)); E(f,"mov edx,%d",kk==TY_BOOL?0:kind_of(k)); CALLRT(f,"rt_dict_new");
+    E(f,"mov eax,%s",kd_of(ty_dkey(t))); E(f,"mov edx,%s",kd_of(ty_find(t)->elem)); CALLRT(f,"rt_dict_new");
 }
+static void new_list(F *f, Ty *elem){ E(f,"mov eax,%s",kd_of(elem)); CALLRT(f,"rt_list_new"); }
+static void new_set(F *f, Ty *elem){ E(f,"mov eax,%s",kd_of(elem)); CALLRT(f,"rt_set_new"); }
 
 /* ---- literal pools ---- */
 static int lit_index(Lit **v, int *n, int *cap, const char *s, int len){
@@ -152,7 +182,9 @@ static int lit_index(Lit **v, int *n, int *cap, const char *s, int len){
     (*v)[*n].s=xstrndup2(s,len); (*v)[*n].len=len; return (*n)++;
 }
 static int str_lit(const char *s){ rt("rt_static"); return lit_index(&gg->lits,&gg->nlits,&gg->clits,s,(int)strlen(s)); }
-static int print_lit(const char *s){ return lit_index(&gg->plits,&gg->nplits,&gg->cplits,s,(int)strlen(s)); }
+static int print_lit(const char *s, int n){ return lit_index(&gg->plits,&gg->nplits,&gg->cplits,s,n); }
+static int str_litn(const char *s, int n){ rt("rt_static"); return lit_index(&gg->lits,&gg->nlits,&gg->clits,s,n); }
+static int bytes_lit(const char *s, int n){ rt("rt_static"); return lit_index(&gg->blits,&gg->nblits,&gg->cblits,s,n); }
 static int zlit(const char *s){ return lit_index(&gg->zlits,&gg->nzlits,&gg->czlits,s,(int)strlen(s)); }
 static int rlit(const char *s, int n){ return lit_index(&gg->rlits,&gg->nrlits,&gg->crlits,s,n); }
 /* A float literal's source text in fasm's syntax ("1e3" -> "1.0e3"); fasm does
@@ -174,7 +206,7 @@ static int float_const(const char *src){
 }
 
 static void use_fn(AFunc *fn){
-    if(fn->used) return;
+    if(fn->used || fn->unused) return;                  /* (unused: a mixin's own method, never run as such) */
     fn->used=1;
     if(gg->nq==gg->cq){ gg->cq=gg->cq?gg->cq*2:32; gg->queue=(AFunc**)xrealloc(gg->queue,sizeof(AFunc*)*(size_t)gg->cq); }
     gg->queue[gg->nq++]=fn;
@@ -197,8 +229,8 @@ static LabelSet g_labels;
 static int label_reserved(const char *s){
     static const char *fixed[]={"start","i_end","mem_end","stack_top","ADFREE",NULL};
     for(int i=0;fixed[i];i++) if(!strcmp(s,fixed[i])) return 1;
-    if(!strncmp(s,"rt_",3)||!strncmp(s,"RT_",3)||!strncmp(s,"DYN_",4)||!strncmp(s,"VTX_",4)||!strncmp(s,"DTX_",4)||!strncmp(s,"CI_",3)) return 1;
-    static const char *families[]={"L","S","Z","P","FC","RL","TD","FMT","AD","CI",NULL};   /* numbered internal labels */
+    if(!strncmp(s,"rt_",3)||!strncmp(s,"RT_",3)||!strncmp(s,"DYN_",4)||!strncmp(s,"VTX_",4)||!strncmp(s,"DTX_",4)||!strncmp(s,"CI_",3)||!strncmp(s,"TYD_",4)||!strcmp(s,"TYQ")||!strcmp(s,"TYQN")) return 1;
+    static const char *families[]={"L","S","B","Z","P","FC","RL","TD","FMT","AD","CI",NULL};   /* numbered internal labels */
     for(int i=0;families[i];i++){ size_t n=strlen(families[i]);
         if(!strncmp(s,families[i],n) && s[n]){ const char *q=s+n; while(*q>='0'&&*q<='9') q++; if(!*q) return 1; } }
     for(int i=0;i<g_labels.n;i++) if(!strcmp(g_labels.v[i],s)) return 1;
@@ -307,19 +339,44 @@ static int is_fn_body(AFunc *f){ return f->def||f->lam||f->genexp; }   /* not a 
 static AVar *root_var(AVar *v){ while(v->src) v=v->src; return v; }
 /* A function value: +0 refcount, +4 destroy, +8 code, +12 its name (str),
    captured values from +16: a copy, or the pointer of a shared cell. */
+/* the defaults of fn's function objects: at 16 on, in parameter order (positional ones first: a value call fills them from there) */
+static void layout_defaults(AFunc *fn){
+    if(fn->deflaid) return;
+    fn->deflaid=1; int off=0;
+    for(int i=0;i<fn->nparams && i<16;i++){ if(!fn->defaults[i] || i==fn->star || i==fn->dstar) continue; fn->defoff[i]=off; off+=ty_size(fn->params[i]->ty); }
+    fn->defsize=off;
+}
+/* a default evaluated where its function is defined (not a constant put in at the call) */
+static int dyn_defaults(AFunc *fn){
+    for(int i=0;i<fn->nparams;i++) if(fn->defaults[i] && i!=fn->star && i!=fn->dstar && !const_default(fn->defaults[i])) return 1;
+    return 0;
+}
+static int has_defaults(AFunc *fn){ for(int i=0;i<fn->nparams;i++) if(fn->defaults[i] && i!=fn->star && i!=fn->dstar) return 1; return 0; }
 static void layout_caps(AFunc *fn){
+    layout_defaults(fn);
     if(fn->capsize || !fn->ncaps) return;
-    int off=16;
+    int off=16+fn->defsize;
     for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; v->capoff=off; off+=root_var(v)->cell?4:ty_size(v->ty); }
     fn->capsize=off-16;
 }
 static const char *fn_display_name(AFunc *g){ return g->lam?"<lambda>":g->genexp?"<genexpr>":g->name; }
-static void var_addr(char *buf, size_t n, AVar *v){
-    if(v->global) snprintf(buf,n,"[%s]",global_label(v)); else snprintf(buf,n,"[ebp%+d]",v->offset);
+static void var_addr_at(char *buf, size_t n, AVar *v, int extra){
+    if(v->global){ if(extra) snprintf(buf,n,"[%s+%d]",global_label(v),extra); else snprintf(buf,n,"[%s]",global_label(v)); }
+    else snprintf(buf,n,"[ebp%+d]",v->offset+extra);
 }
+static void var_addr(char *buf, size_t n, AVar *v){ var_addr_at(buf,n,v,0); }
 static void load_mem(F *f, Ty *t, const char *reg, int off);
 static void store_mem(F *f, Ty *t, const char *reg, int off);
+/* v of `del v` somewhere: UnboundLocalError / NameError unless it holds a value */
+static void check_bound(F *f, AVar *v){
+    char a[320]; var_addr(a,sizeof a,v->bound); int l=new_label(); char msg[400];
+    E(f,"cmp dword %s,0",a); E(f,"jne L%d",l);
+    if(v->global){ snprintf(msg,sizeof msg,"name '%s' is not defined",v->name); E(f,"mov esi,Z%d",zlit(msg)); CALLRT(f,"rt_nameerr_text"); }
+    else { snprintf(msg,sizeof msg,"cannot access local variable '%s' where it is not associated with a value",v->name); E(f,"mov esi,Z%d",zlit(msg)); CALLRT(f,"rt_unbound_text"); }
+    LBL(f,l);
+}
 static void load_var(F *f, AVar *v){
+    if(v->bound) check_bound(f,v);
     if(v->src){                                         /* captured: in the closure (or its cell) */
         layout_caps(v->owner);
         E(f,"mov ecx,[ebp%+d]",f->env);
@@ -329,7 +386,9 @@ static void load_var(F *f, AVar *v){
     }
     if(v->cell){ E(f,"mov ecx,[ebp%+d]",v->offset); load_mem(f,v->ty,"ecx",8); return; }
     char a[320]; var_addr(a,sizeof a,v);
-    if(is_flt(v->ty)) E(f,"fld qword %s",a); else E(f,"mov eax,%s",a);
+    if(is_flt(v->ty)) E(f,"fld qword %s",a);
+    else if(is_lng(v->ty)){ char h[320]; var_addr_at(h,sizeof h,v,4); E(f,"mov eax,%s",a); E(f,"mov edx,%s",h); }
+    else E(f,"mov eax,%s",a);
 }
 /* Store eax/st0 (an owned reference for reference types) into the variable. */
 static void store_var(F *f, AVar *v){
@@ -339,29 +398,142 @@ static void store_var(F *f, AVar *v){
     if(!v->global && v->id>=0 && v->id<f->fn->nparams && f->fn->params[v->id]==v) f->param_stored[v->id]=1;
     if(is_flt(v->ty)) E(f,"fstp qword %s",a);
     else if(is_ptr(v->ty)){ rt("rt_decref"); E(f,"xchg eax,%s",a); E(f,"call rt_decref"); }
+    else if(is_lng(v->ty)){ char h[320]; var_addr_at(h,sizeof h,v,4); E(f,"mov %s,eax",a); E(f,"mov %s,edx",h); }
     else E(f,"mov %s,eax",a);
+    if(v->bound){ char b[320]; var_addr(b,sizeof b,v->bound); E(f,"mov dword %s,1",b); }   /* it holds a value again */
 }
 /* Store eax/st0 (owned) at [reg+off], releasing the previous reference. */
 static void store_mem(F *f, Ty *t, const char *reg, int off){
     if(is_flt(t)) E(f,"fstp qword [%s%+d]",reg,off);
     else if(is_ptr(t)){ rt("rt_decref"); E(f,"xchg eax,[%s%+d]",reg,off); E(f,"call rt_decref"); }
+    else if(is_lng(t)){ E(f,"mov [%s%+d],eax",reg,off); E(f,"mov [%s%+d],edx",reg,off+4); }
     else E(f,"mov [%s%+d],eax",reg,off);
 }
 /* Store into a fresh (zeroed or garbage) slot: nothing to release. */
 static void store_new(F *f, Ty *t, const char *reg, int off){
-    if(is_flt(t)) E(f,"fstp qword [%s%+d]",reg,off); else E(f,"mov [%s%+d],eax",reg,off);
+    if(is_flt(t)) E(f,"fstp qword [%s%+d]",reg,off);
+    else if(is_lng(t)){ E(f,"mov [%s%+d],eax",reg,off); E(f,"mov [%s%+d],edx",reg,off+4); }
+    else E(f,"mov [%s%+d],eax",reg,off);
 }
 static void load_mem(F *f, Ty *t, const char *reg, int off){
-    if(is_flt(t)) E(f,"fld qword [%s%+d]",reg,off); else E(f,"mov eax,[%s%+d]",reg,off);
+    if(is_flt(t)) E(f,"fld qword [%s%+d]",reg,off);
+    else if(is_lng(t)){
+        if(!strcmp(reg,"edx")){ E(f,"mov eax,[edx%+d]",off); E(f,"mov edx,[edx%+d]",off+4); }
+        else { E(f,"mov edx,[%s%+d]",reg,off+4); E(f,"mov eax,[%s%+d]",reg,off); } }
+    else E(f,"mov eax,[%s%+d]",reg,off);
 }
-static void zero_value(F *f, Ty *t){ if(is_flt(t)) E(f,"fldz"); else E(f,"xor eax,eax"); }
-static void push_value(F *f, Ty *t){ if(is_flt(t)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); } else E(f,"push eax"); }
-static void pop_value(F *f, Ty *t){ if(is_flt(t)){ E(f,"fld qword [esp]"); E(f,"add esp,8"); } else E(f,"pop eax"); }
+/* eax/st0 = the element at [base+idx*scale] (scale: the slot size) */
+static void load_at(F *f, Ty *t, const char *base, const char *idx, int scale){
+    if(is_flt(t)) E(f,"fld qword [%s+%s*%d]",base,idx,scale);
+    else if(is_lng(t)){ E(f,"mov edx,[%s+%s*%d+4]",base,idx,scale); E(f,"mov eax,[%s+%s*%d]",base,idx,scale); }
+    else E(f,"mov eax,[%s+%s*%d]",base,idx,scale);
+}
+/* ---- None: a null reference; an int -2**63, a float a NaN of its own, a bool 2 ---- */
+static int is_opt(Ty *t){ return ty_opt(t); }
+#define NONE_HI_INT "0x80000000"
+static void gen_none(F *f, Ty *t){
+    t=ty_find(t);
+    if(is_flt(t)){ rt("rt_fnone"); E(f,"fld qword [rt_fnone]"); }
+    else if(is_lng(t)){ E(f,"xor eax,eax"); E(f,"mov edx," NONE_HI_INT); }
+    else if(t->k==TY_BOOL) E(f,"mov eax,2");
+    else if(t->k!=TY_VOID) E(f,"xor eax,eax");
+}
+/* jump to `label` when the value in eax / edx:eax / st0 (of type t) is None; the value stays */
+static int new_label(void);
+static void LBL(F *f, int l);
+static void jump_if_none(F *f, Ty *t, int label){
+    t=ty_find(t);
+    if(is_flt(t)){ int l=new_label(); rt("rt_fnone");
+        E(f,"sub esp,8"); E(f,"fst qword [esp]"); E(f,"mov ecx,[esp+4]"); E(f,"cmp ecx,[rt_fnone+4]"); E(f,"jne L%d",l);
+        E(f,"mov ecx,[esp]"); E(f,"cmp ecx,[rt_fnone]"); LBL(f,l); E(f,"lea esp,[esp+8]"); E(f,"je L%d",label); }
+    else if(is_lng(t)){ int l=new_label(); E(f,"cmp edx," NONE_HI_INT); E(f,"jne L%d",l); E(f,"test eax,eax"); E(f,"jz L%d",label); LBL(f,l); }
+    else if(t->k==TY_BOOL){ E(f,"cmp eax,2"); E(f,"je L%d",label); }
+    else { E(f,"test eax,eax"); E(f,"jz L%d",label); }
+}
+/* exc(msg) when the value of type t is None (only for optional types) */
+static void CALLRT(F *f, const char *name);
+static int zlit(const char *s);
+static void check_none(F *f, Ty *t, const char *exc, const char *msg){
+    if(!is_opt(t)) return;
+    int lnone=new_label(), lok=new_label();
+    jump_if_none(f,t,lnone); E(f,"jmp L%d",lok);
+    LBL(f,lnone);
+    E(f,"mov esi,Z%d",zlit(msg));
+    CALLRT(f,!strcmp(exc,"AttributeError")?"rt_attrerr_text":"rt_typeerr_text");
+    LBL(f,lok);
+}
+static const char *py_type_name(Ty *t);
+static void use_class(AClass *c);
+/* the descriptor of a built-in type (name, base): TYD_<name>, emitted at the end */
+static const char *btype_label(const char *name){
+    static char buf[32][48];
+    int i=0;
+    for(;i<gg->nbtypes;i++) if(!strcmp(gg->btypes[i],name)) break;
+    if(i==gg->nbtypes){ if(i==32) cg_fail(0,"too many built-in types as values"); gg->btypes[gg->nbtypes++]=xstrdup2(name); }
+    if(!strcmp(name,"bool")) btype_label("int");
+    snprintf(buf[i],sizeof buf[i],"TYD_%s",name); return buf[i];
+}
+/* a class as a value (X_TYPEVAL): its descriptor */
+static const char *typeval_label(XInfo *xi){
+    if(xi->cls){ use_class(xi->cls); return class_label(xi->cls,0); }
+    return btype_label(xi->name);
+}
+static void gen_type_of(F *f, Expr *x);
+/* whether values of static type t are instances of the built-in type name (None aside) */
+static int btype_match(Ty *t, const char *name){
+    t=ty_find(t);
+    if(!strcmp(name,"object")) return 1;
+    switch(t->k){
+        case TY_INT: return !strcmp(name,"int");
+        case TY_BOOL: return !strcmp(name,"bool")||!strcmp(name,"int");
+        case TY_FLOAT: return !strcmp(name,"float");
+        case TY_STR: return !strcmp(name,"str");
+        case TY_BYTES: return !strcmp(name,"bytes");
+        case TY_LIST: return !strcmp(name,t->tup?"tuple":"list");
+        case TY_TUPLE: return !strcmp(name,t->names?"dict":"tuple");
+        case TY_DICT: return !strcmp(name,"dict");
+        case TY_SET: return !strcmp(name,"set");
+        case TY_TYPE: return !strcmp(name,"type");
+        default: return 0;
+    }
+}
+/* the Python name of t's values, for messages */
+static const char *py_type_name(Ty *t){
+    t=ty_find(t);
+    switch(t->k){ case TY_INT: return "int"; case TY_BOOL: return "bool"; case TY_FLOAT: return "float"; case TY_STR: return "str"; case TY_BYTES: return "bytes"; case TY_TYPE: return "type";
+        case TY_LIST: return t->tup?"tuple":"list"; case TY_DICT: return "dict"; case TY_SET: return "set"; case TY_TUPLE: return t->names?"dict":"tuple";
+        case TY_OBJ: return t->cls->name; case TY_FUNC: return "function"; case TY_GEN: return "generator"; case TY_FILE: return "TextIOWrapper";
+        case TY_BUF: return "buffer"; case TY_TASK: return "Task"; default: return "NoneType"; }
+}
+static char none_msg_buf[8][256]; static int none_msg_k;
+static const char *none_msg(const char *fmt, ...){
+    char *b=none_msg_buf[none_msg_k++&7]; va_list ap; va_start(ap,fmt); vsnprintf(b,256,fmt,ap); va_end(ap); return b;
+}
+/* what a check of a value going where None is not allowed says (set around the operations below) */
+static const char *g_none_exc="TypeError", *g_none_text=NULL;
+static void push_value(F *f, Ty *t){ if(is_flt(t)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); } else { if(is_lng(t)) E(f,"push edx"); E(f,"push eax"); } }
+static void pop_value(F *f, Ty *t){ if(is_flt(t)){ E(f,"fld qword [esp]"); E(f,"add esp,8"); } else { E(f,"pop eax"); if(is_lng(t)) E(f,"pop edx"); } }
+/* an int in edx:eax as 32 bits (an index, a count): the nearest such */
+static void to_i32(F *f, Ty *t){ if(is_lng(t)) CALLRT(f,"rt_i32sat"); }
+/* a 32-bit result (eax) as an int: sign- or zero-extended */
+static void widen(F *f, int is_signed){ if(is_signed) E(f,"cdq"); else E(f,"xor edx,edx"); }
 static void drop_value(F *f, Ty *t, int owned){
     t=ty_find(t);
     if(t->k==TY_VOID||t->k==TY_VAR) return;
     if(is_flt(t)) E(f,"fstp st0");
     else if(is_ptr(t) && owned){ rt("rt_decref"); E(f,"call rt_decref"); }
+}
+static void list_append_top(F *f, Ty *el);
+static void set_add_top(F *f, Ty *el);
+static void gen_int_const(F *f, Ty *t, int64_t n);
+static void put_arg(F *f, Ty *pt, int off);
+static void gen_list_of(F *f, Expr *x, Ty *elem);
+static void gen_codec_call(F *f, Expr *obj, Expr *enc, Expr *errs, const char *m, const char *routine);
+static void gen_byteorder(F *f, Expr *x);
+/* AttributeError for x.name when x (in eax) is None */
+static void attr_check(F *f, const char *name){
+    int l=new_label(); E(f,"test eax,eax"); E(f,"jnz L%d",l);
+    E(f,"mov esi,Z%d",zlit(none_msg("'NoneType' object has no attribute '%s'",name))); CALLRT(f,"rt_attrerr_text"); LBL(f,l);
 }
 static void panic_if_null(F *f){ int l=new_label(); rt("rt_panic_none"); E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"call rt_panic_none"); LBL(f,l); }
 static void incref(F *f){ CALLRT(f,"rt_incref"); }
@@ -370,7 +542,12 @@ static void incref(F *f){ CALLRT(f,"rt_incref"); }
 
 static int  gen(F *f, Expr *e);
 static void gen_bool(F *f, Expr *e);
+static void gen_jump(F *f, Expr *e, int label, int want);
 static void gen_yield_value(F *f, Ty *yt);
+static Ty *gpart(Ty *g, int i){ Ty *t=aot_gen_part(g,i); return t->k==TY_VAR ? TY_VOID_T : t; }   /* a generator's send / return type (void: None) */
+static void drop_sent(F *f);
+static int take_sent(F *f, Ty *st);
+static int gen_yield_from(F *f, Expr *src, int want);
 static void call_method_on_top(F *f, AFunc *m);
 static void gen_fmt(F *f, Ty *t, int repr);
 static void gen_stmts(F *f, Stmt **b, int n);
@@ -400,7 +577,9 @@ static void gen_borrow(F *f, Expr *e){ int o=gen(f,e); if(is_ptr(TY(e)) && o) ho
 /* convert eax (int/bool) to st0 when a float is wanted */
 static void conv_num(F *f, Ty *from, Ty *to){
     from=ty_find(from); to=ty_find(to);
-    if(to->k==TY_FLOAT && from->k!=TY_FLOAT && from->k!=TY_VAR){ E(f,"push eax"); E(f,"fild dword [esp]"); E(f,"add esp,4"); }
+    if(to->k==TY_FLOAT && from->k==TY_INT){ E(f,"push edx"); E(f,"push eax"); E(f,"fild qword [esp]"); E(f,"add esp,8"); }
+    else if(to->k==TY_FLOAT && from->k==TY_BOOL){ E(f,"push eax"); E(f,"fild dword [esp]"); E(f,"add esp,4"); }
+    else if(to->k==TY_INT && from->k==TY_BOOL) E(f,"xor edx,edx");
 }
 /* A function taking *args where a fixed signature is wanted: an adapter
    closure AD<k> (+16 the function) packs the extra arguments into the tuple. */
@@ -418,11 +597,23 @@ static void conv_func(F *f, Ty *from, Ty *to, int owned){
     if(!owned) hold(f);
 }
 /* the value in eax/st0 (owned) as a `to` */
-static void conv(F *f, Ty *from, Ty *to){ conv_num(f,from,to); conv_func(f,from,to,1); }
+/* an int / float (eax:edx / st0) where a complex is wanted: complex(x, 0.0), owned */
+static void conv_complex(F *f, Ty *from, Ty *to){
+    from=ty_find(from); to=ty_find(to);
+    if(!aot_is_complex(to) || (from->k!=TY_INT && from->k!=TY_BOOL && from->k!=TY_FLOAT)) return;
+    conv_num(f,from,TY_FLOAT_T);
+    AClass *k=ty_find(to)->cls; use_class(k);
+    AField *re=aot_find_field(k,"real"), *im=aot_find_field(k,"imag");
+    E(f,"sub esp,8"); E(f,"fstp qword [esp]");
+    E(f,"mov eax,%d",k->size); E(f,"mov edx,%s",class_label(k,0)); E(f,"mov ecx,%s",class_label(k,1)); CALLRT(f,"rt_obj_new");
+    E(f,"fld qword [esp]"); E(f,"fstp qword [eax+%d]",re->offset); E(f,"add esp,8");
+    E(f,"mov dword [eax+%d],0",im->offset); E(f,"mov dword [eax+%d],0",im->offset+4);
+}
+static void conv(F *f, Ty *from, Ty *to){ if(aot_is_complex(to) && !aot_is_complex(from)){ conv_complex(f,from,to); return; } conv_num(f,from,to); conv_func(f,from,to,1); }
 static int gen_zero(F *f, Ty *t);
 static int is_endpoint_ty(Ty *t){ t=ty_find(t); return t->k==TY_FUNC && (t->tup&4); }
 static void gen_as(F *f, Expr *e, Ty *want, int owned){
-    if(e->kind==EXPR_NONE){ int o=gen_zero(f,want); if(o && !owned) hold(f); return; }
+    if(e->kind==EXPR_NONE){ gen_none(f,want); return; }
     if(is_endpoint_ty(want) && !is_endpoint_ty(TY(e))){                /* a function as a minipy.Endpoint: its adapter */
         XInfo *x=xinfo(e);
         if(x->kind!=X_FUNCREF || !x->fn || !x->fn->ep_adapter) cg_fail(e->line,"a minipy.Endpoint is made from a function given by its name");
@@ -431,6 +622,16 @@ static void gen_as(F *f, Expr *e, Ty *want, int owned){
         return;
     }
     if(owned) gen_owned(f,e); else gen_borrow(f,e);
+    Ty *w=ty_find(want);
+    if(is_opt(TY(e)) && !w->opt && w->k!=TY_VAR && w->k!=TY_VOID){          /* None where a value is needed */
+        const char *msg=g_none_text;
+        if(!msg) msg = w->k==TY_INT||w->k==TY_BOOL ? "'NoneType' object cannot be interpreted as an integer"
+                     : w->k==TY_FLOAT ? "must be real number, not NoneType"
+                     : none_msg("expected %s, got NoneType",py_type_name(w));
+        check_none(f,TY(e),g_none_exc,msg);
+    }
+    if(aot_is_complex(want) && !aot_is_complex(TY(e)) && ty_find(TY(e))->k!=TY_OBJ){   /* 1 as a complex: a new object */
+        conv_complex(f,TY(e),want); if(!owned) hold(f); return; }
     conv_num(f,TY(e),want); conv_func(f,TY(e),want,owned);
 }
 
@@ -456,40 +657,49 @@ static int apply_binop(F *f, TokKind op, Ty *t, Ty *ta, Ty *tb, int line){
         }
         return 0;
     }
-    if(t->k==TY_INT||t->k==TY_BOOL){
+    if(t->k==TY_INT){                                         /* 64 bits: the left operand on the stack, the right in edx:eax */
+        rt("rt_int_overflow");
+        switch(op){
+            case T_PLUS: E(f,"add eax,[esp]"); E(f,"adc edx,[esp+4]"); E(f,"jo rt_int_overflow"); break;
+            case T_MINUS: E(f,"mov ecx,eax"); E(f,"mov eax,[esp]"); E(f,"sub eax,ecx"); E(f,"mov ecx,edx"); E(f,"mov edx,[esp+4]"); E(f,"sbb edx,ecx"); E(f,"jo rt_int_overflow"); break;
+            case T_STAR: CALLRT(f,"rt_imul"); break;
+            case T_AMP: E(f,"and eax,[esp]"); E(f,"and edx,[esp+4]"); break;
+            case T_PIPE: E(f,"or eax,[esp]"); E(f,"or edx,[esp+4]"); break;
+            case T_CARET: E(f,"xor eax,[esp]"); E(f,"xor edx,[esp+4]"); break;
+            case T_SHL: CALLRT(f,"rt_ishl"); break;
+            case T_SHR: CALLRT(f,"rt_isar"); break;
+            case T_FLOOR_DIV: CALLRT(f,"rt_idivmod"); break;
+            case T_PERCENT: CALLRT(f,"rt_idivmod"); E(f,"mov eax,[rt_scratch]"); E(f,"mov edx,[rt_scratch+4]"); break;
+            case T_POWER: CALLRT(f,"rt_ipow"); break;
+            default: cg_fail(line,"unsupported int operator");
+        }
+        E(f,"add esp,8");
+        return 0;
+    }
+    if(t->k==TY_BOOL){                                        /* bool & | ^ bool */
         E(f,"mov ecx,eax"); E(f,"pop eax");
         switch(op){
-            case T_PLUS: E(f,"add eax,ecx"); break;
-            case T_MINUS: E(f,"sub eax,ecx"); break;
-            case T_STAR: E(f,"imul eax,ecx"); break;
             case T_AMP: E(f,"and eax,ecx"); break;
             case T_PIPE: E(f,"or eax,ecx"); break;
             case T_CARET: E(f,"xor eax,ecx"); break;
-            case T_SHL: E(f,"shl eax,cl"); break;
-            case T_SHR: E(f,"sar eax,cl"); break;
-            case T_FLOOR_DIV: E(f,"mov edx,ecx"); CALLRT(f,"rt_floordiv"); break;
-            case T_PERCENT: E(f,"mov edx,ecx"); CALLRT(f,"rt_mod"); break;
-            case T_POWER: E(f,"mov edx,ecx"); CALLRT(f,"rt_ipow"); break;
-            default: cg_fail(line,"unsupported int operator");
+            default: cg_fail(line,"unsupported bool operator");
         }
         return 0;
     }
-    if(t->k==TY_STR){
-        if(op==T_PLUS){ E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_str_concat"); return 1; }
-        if(op==T_STAR){
-            if(ta->k==TY_STR){ E(f,"mov edx,eax"); E(f,"pop eax"); }      /* str * n */
-            else E(f,"pop edx");                                          /* n * str */
-            CALLRT(f,"rt_str_mul"); return 1;
+    if(t->k==TY_STR||t->k==TY_BYTES||t->k==TY_LIST){
+        if(op==T_STAR){                                       /* x * n, n * x: n as a 32-bit count */
+            if(ta->k==t->k){ to_i32(f,tb); E(f,"mov edx,eax"); E(f,"pop eax"); }
+            else { E(f,"mov ecx,eax"); E(f,"pop eax"); if(is_lng(ta)){ E(f,"pop edx"); to_i32(f,ta); } E(f,"mov edx,eax"); E(f,"mov eax,ecx"); }
+            if(t->k==TY_STR||t->k==TY_BYTES){ CALLRT(f,"rt_str_mul"); return 1; }
+            E(f,"mov ecx,%s",kd_of(t->elem)); CALLRT(f,"rt_list_mul"); return 1;
         }
-    }
-    if(t->k==TY_LIST){
-        int k=kind_of(t->elem);
-        if(op==T_PLUS){ E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k); CALLRT(f,"rt_list_concat"); return 1; }
-        if(op==T_STAR){ E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k); CALLRT(f,"rt_list_mul"); return 1; }
+        E(f,"mov edx,eax"); E(f,"pop eax");
+        if(t->k==TY_STR||t->k==TY_BYTES){ if(op==T_PLUS){ CALLRT(f,"rt_str_concat"); return 1; } }
+        else if(op==T_PLUS){ E(f,"mov ecx,%s",kd_of(t->elem)); CALLRT(f,"rt_list_concat"); return 1; }
     }
     if(t->k==TY_SET){
-        int code=op==T_PIPE?0:op==T_AMP?1:2;
-        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(t->elem)|(code<<8)); CALLRT(f,"rt_set_op"); return 1;
+        int code=op==T_PIPE?0:op==T_AMP?1:op==T_MINUS?2:3;
+        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",code); CALLRT(f,"rt_set_op"); return 1;
     }
     (void)tb;
     cg_fail(line,"unsupported operator");
@@ -498,15 +708,25 @@ static int apply_binop(F *f, TokKind op, Ty *t, Ty *ta, Ty *tb, int line){
 /* self.m(arg): an operator implemented by a method -> its result (owned if a reference) */
 static void call_on_top(F *f, AFunc *m){
     use_fn(m);
-    E(f,"mov eax,[esp]"); panic_if_null(f);
+    E(f,"mov eax,[esp]"); attr_check(f,m->name);
     if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
     else E(f,"call %s",fnl(m,LB_CODE));
+}
+/* self.__r<op>__(arg) for `arg <op> self`: arg (the left operand) evaluated first */
+static int gen_op_call_r(F *f, AFunc *m, Expr *self, Expr *arg){
+    Ty *pt=m->params[1]->ty; int total=4+esize(pt);
+    E(f,"sub esp,%d",total);
+    gen_as(f,arg,pt,0); put_arg(f,pt,4);
+    gen_borrow(f,self); E(f,"mov [esp],eax");
+    call_on_top(f,m);
+    E(f,"add esp,%d",total);
+    return is_ptr(m->ret);
 }
 static int gen_op_call(F *f, AFunc *m, Expr *self, Expr *arg){
     int total=4+(arg?esize(m->params[1]->ty):0);
     E(f,"sub esp,%d",total);
     gen_borrow(f,self); E(f,"mov [esp],eax");
-    if(arg){ Ty *pt=m->params[1]->ty; gen_as(f,arg,pt,0); if(is_flt(pt)) E(f,"fstp qword [esp+4]"); else E(f,"mov [esp+4],eax"); }
+    if(arg){ Ty *pt=m->params[1]->ty; gen_as(f,arg,pt,0); put_arg(f,pt,4); }
     call_on_top(f,m);
     E(f,"add esp,%d",total);
     return is_ptr(m->ret);
@@ -514,33 +734,93 @@ static int gen_op_call(F *f, AFunc *m, Expr *self, Expr *arg){
 static int gen_format(F *f, Expr *e);
 static int concat_worth(Expr *e);
 static int gen_concat(F *f, Expr *e);
+/* Python's spelling of a binary operator (for messages) */
+static const char *op_symbol(TokKind op){
+    switch(op){
+        case T_PLUS: case T_PLUS_ASSIGN: return "+"; case T_MINUS: case T_MINUS_ASSIGN: return "-";
+        case T_STAR: case T_STAR_ASSIGN: return "*"; case T_SLASH: case T_SLASH_ASSIGN: return "/";
+        case T_FLOOR_DIV: case T_FLOOR_DIV_ASSIGN: return "//"; case T_PERCENT: case T_PERCENT_ASSIGN: return "%";
+        case T_POWER: case T_POWER_ASSIGN: return "** or pow()"; case T_AMP: case T_AMP_ASSIGN: return "&";
+        case T_PIPE: case T_PIPE_ASSIGN: return "|"; case T_CARET: case T_CARET_ASSIGN: return "^";
+        case T_SHL: case T_SHL_ASSIGN: return "<<"; case T_SHR: case T_SHR_ASSIGN: return ">>"; default: return "?";
+    }
+}
+static int is_aug_op(TokKind op){ return op==T_PLUS_ASSIGN||op==T_MINUS_ASSIGN||op==T_STAR_ASSIGN||op==T_SLASH_ASSIGN||op==T_FLOOR_DIV_ASSIGN||op==T_PERCENT_ASSIGN||op==T_POWER_ASSIGN||op==T_AMP_ASSIGN||op==T_PIPE_ASSIGN||op==T_CARET_ASSIGN||op==T_SHL_ASSIGN||op==T_SHR_ASSIGN; }
+/* the TypeError of `None op b` (left) / `a op None` (right) */
+static const char *binop_none_msg(TokKind op, Ty *ta, Ty *tb, int left){
+    const char *sym=op_symbol(op); char aug[24]; snprintf(aug,sizeof aug,"%s%s",sym,is_aug_op(op)&&op!=T_POWER_ASSIGN?"=":"");
+    if(op==T_POWER_ASSIGN) snprintf(aug,sizeof aug,"**=");
+    Ty *x=ty_find(left?tb:ta);
+    if(!left && (op==T_PLUS||op==T_PLUS_ASSIGN) && (x->k==TY_STR||(x->k==TY_LIST&&!x->tup))) return none_msg("can only concatenate %s (not \"NoneType\") to %s",py_type_name(x),py_type_name(x));
+    if((op==T_STAR||op==T_STAR_ASSIGN) && !left && (x->k==TY_STR||x->k==TY_LIST)) return none_msg("can't multiply sequence by non-int of type 'NoneType'");
+    return left ? none_msg("unsupported operand type(s) for %s: 'NoneType' and '%s'",aug,py_type_name(x))
+                : none_msg("unsupported operand type(s) for %s: '%s' and 'NoneType'",aug,py_type_name(x));
+}
 static int gen_binary(F *f, Expr *e){
     Ty *t=TY(e), *ta=TY(e->a), *tb=TY(e->b);
-    if(xinfo(e)->kind==X_OPMETHOD) return gen_op_call(f,xinfo(e)->fn,e->a,e->b);
+    if(xinfo(e)->kind==X_OPMETHOD) return xinfo(e)->reflected ? gen_op_call_r(f,xinfo(e)->fn,e->b,e->a) : gen_op_call(f,xinfo(e)->fn,e->a,e->b);
     if(e->op==T_POWER && t->k==TY_FLOAT && e->b->kind==EXPR_LITERAL && e->b->tok->is_float && e->b->tok->f==0.5){
-        gen_as(f,e->a,TY_FLOAT_T,0); E(f,"fsqrt"); return 0; }                 /* x ** 0.5: exact */
+        g_none_text=binop_none_msg(e->op,ta,tb,1); gen_as(f,e->a,TY_FLOAT_T,0); g_none_text=NULL; E(f,"fsqrt"); return 0; }   /* x ** 0.5: exact */
     if(e->op==T_PERCENT && ta->k==TY_STR) return gen_format(f,e);
-    if(e->op==T_PLUS && t->k==TY_STR && concat_worth(e)) return gen_concat(f,e);
+    if(e->op==T_PLUS && t->k==TY_STR && concat_worth(e) && !is_opt(ta) && !is_opt(tb)) return gen_concat(f,e);
     int num=numeric_ty(t);
-    gen_as(f,e->a,num?t:ta,0); push_value(f,num?t:ta);
-    gen_as(f,e->b,num?t:tb,0);
+    g_none_text=binop_none_msg(e->op,ta,tb,1);
+    gen_as(f,e->a,num?t:ta,0); if(!num) check_none(f,ta,"TypeError",g_none_text);
+    push_value(f,num?t:ta);
+    g_none_text=binop_none_msg(e->op,ta,tb,0);
+    gen_as(f,e->b,num?t:tb,0); if(!num) check_none(f,tb,"TypeError",g_none_text);
+    g_none_text=NULL;
     return apply_binop(f,e->op,t,ta,tb,e->line);
 }
 
 /* ---- truth values ---- */
-static int has_length(Ty *t){ t=ty_find(t); return t->k==TY_STR||t->k==TY_LIST||t->k==TY_DICT||t->k==TY_SET||t->k==TY_BUF; }
+static int has_length(Ty *t){ t=ty_find(t); return t->k==TY_STR||t->k==TY_BYTES||t->k==TY_LIST||t->k==TY_DICT||t->k==TY_SET||t->k==TY_BUF; }
 /* eax = truth of the value in eax/st0 (references stay put) */
+static void truth_of(F *f, Ty *t);
 static void truth(F *f, Ty *t){
     t=ty_find(t);
+    if(t->opt && !is_ptr(t)){                              /* None is false */
+        int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone); truth_of(f,t); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t,0); E(f,"xor eax,eax"); LBL(f,lend); return; }
+    truth_of(f,t);
+}
+/* the method giving an object's truth: __bool__, else __len__ (NULL: always true) */
+static AFunc *truth_method(Ty *t){
+    t=ty_find(t); if(t->k!=TY_OBJ || !t->cls) return NULL;
+    AFunc *m=aot_find_method(t->cls,"__bool__"); if(!m) m=aot_find_method(t->cls,"__len__");
+    return m && m->nparams==1 ? m : NULL;
+}
+/* eax = the truth of the object in eax (kept in place) by its method; a null reference is false */
+static void truth_call(F *f, AFunc *m){
+    int l=new_label();
+    E(f,"test eax,eax"); E(f,"jz L%d",l);
+    E(f,"push eax"); call_method_on_top(f,m); E(f,"add esp,4");
+    if(ty_find(m->ret)->k!=TY_BOOL){ E(f,"or eax,edx"); E(f,"setne al"); E(f,"movzx eax,al"); }
+    LBL(f,l);
+}
+static void truth_of(F *f, Ty *t){
+    t=ty_find(t);
     if(t->k==TY_BOOL) return;
+    { AFunc *m=truth_method(t); if(m){ truth_call(f,m); return; } }
     if(t->k==TY_FLOAT){ E(f,"ftst"); E(f,"fnstsw ax"); E(f,"fstp st0"); E(f,"sahf"); E(f,"setne al"); E(f,"movzx eax,al"); return; }
+    if(t->k==TY_INT){ E(f,"or eax,edx"); E(f,"setne al"); E(f,"movzx eax,al"); return; }
     if(has_length(t)){ int l=new_label(); E(f,"xor ecx,ecx"); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"cmp dword [eax+8],0"); E(f,"setne cl"); LBL(f,l); E(f,"mov eax,ecx"); return; }
     E(f,"test eax,eax"); E(f,"setne al"); E(f,"movzx eax,al");
 }
 /* jump to `label` when the truth of eax/st0 equals want, keeping the value */
 static void truth_jump(F *f, Ty *t, int label, int want){
     t=ty_find(t);
+    if(t->opt && !is_ptr(t)){                              /* None is false */
+        int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone);
+        Ty plain=*t; plain.opt=0; truth_jump(f,&plain,label,want); E(f,"jmp L%d",lend);
+        LBL(f,lnone); if(!want) E(f,"jmp L%d",label);
+        LBL(f,lend); return; }
     if(t->k==TY_FLOAT){ E(f,"ftst"); E(f,"fnstsw ax"); E(f,"sahf"); E(f,"j%s L%d",want?"ne":"e",label); return; }
+    if(t->k==TY_INT){ E(f,"mov ecx,eax"); E(f,"or ecx,edx"); E(f,"j%s L%d",want?"nz":"z",label); return; }
+    { AFunc *m=truth_method(t);
+      if(m){ E(f,"push eax"); truth_call(f,m); E(f,"test eax,eax"); E(f,"pop eax"); E(f,"j%s L%d",want?"nz":"z",label); return; } }
     if(has_length(t)){
         if(want){ int skip=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",skip); E(f,"cmp dword [eax+8],0"); E(f,"jne L%d",label); LBL(f,skip); }
         else { E(f,"test eax,eax"); E(f,"jz L%d",label); E(f,"cmp dword [eax+8],0"); E(f,"je L%d",label); }
@@ -572,45 +852,96 @@ static const char *cc_of(int code, int is_float){
         default: return "ne";
     }
 }
+/* the type two numbers are compared as: float if either is, int if either is, else bool */
+static Ty *num_common(Ty *a, Ty *b){
+    a=ty_find(a); b=ty_find(b);
+    if(a->k==TY_FLOAT||b->k==TY_FLOAT) return TY_FLOAT_T;
+    if(a->k==TY_INT||b->k==TY_INT) return TY_INT_T;
+    return TY_BOOL_T;
+}
+/* the int on the stack (dropped) <code> the one in edx:eax -> eax = bool */
+static void cmp64(F *f, int code){
+    switch(code){
+        case CMP_EQ: case CMP_NE: case CMP_IS: case CMP_ISNOT:
+            E(f,"xor eax,[esp]"); E(f,"xor edx,[esp+4]"); E(f,"or eax,edx"); E(f,"set%s al",(code==CMP_EQ||code==CMP_IS)?"e":"ne"); break;
+        case CMP_LT: case CMP_GE:                       /* left - right */
+            E(f,"mov ecx,[esp]"); E(f,"sub ecx,eax"); E(f,"mov ecx,[esp+4]"); E(f,"sbb ecx,edx"); E(f,"set%s al",code==CMP_LT?"l":"ge"); break;
+        default:                                        /* >, <=: right - left */
+            E(f,"sub eax,[esp]"); E(f,"sbb edx,[esp+4]"); E(f,"set%s al",code==CMP_GT?"l":"ge"); break;
+    }
+    E(f,"movzx eax,al"); E(f,"add esp,8");
+}
+static const char *neg_cc(const char *cc);
+/* jump to `label` when (the int on the stack <code> the one in edx:eax) == want; the stack int is dropped */
+static void jcc64(F *f, int code, int want, int label){
+    const char *cc;
+    switch(code){
+        case CMP_EQ: case CMP_NE: E(f,"xor eax,[esp]"); E(f,"xor edx,[esp+4]"); E(f,"or eax,edx"); cc=code==CMP_EQ?"e":"ne"; break;
+        case CMP_LT: case CMP_GE: E(f,"mov ecx,[esp]"); E(f,"sub ecx,eax"); E(f,"mov ecx,[esp+4]"); E(f,"sbb ecx,edx"); cc=code==CMP_LT?"l":"ge"; break;
+        default: E(f,"sub eax,[esp]"); E(f,"sbb edx,[esp+4]"); cc=code==CMP_GT?"l":"ge"; break;
+    }
+    E(f,"lea esp,[esp+8]");                             /* keeps the flags */
+    E(f,"j%s L%d",want?cc:neg_cc(cc),label);
+}
 /* Left value pushed on the machine stack, right in eax/st0 -> eax = bool. */
 static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
     ta=ty_find(ta); tb=ty_find(tb);
     if(code==CMP_IN||code==CMP_NOTIN){
-        if(tb->k==TY_STR){ E(f,"pop edx"); CALLRT(f,"rt_str_find"); E(f,"cmp eax,-1"); E(f,"set%s al",code==CMP_IN?"ne":"e"); E(f,"movzx eax,al"); return; }
-        if(tb->k==TY_DICT){ E(f,"pop edx"); CALLRT(f,"rt_dict_find"); E(f,"cmp eax,-1"); E(f,"set%s al",code==CMP_IN?"ne":"e"); E(f,"movzx eax,al"); return; }
-        int k=kind_of(tb->elem);
-        if(k==2){ E(f,"mov edx,esp"); E(f,"mov ecx,2"); CALLRT(f,"rt_list_find"); E(f,"add esp,8"); }
-        else { E(f,"pop edx"); E(f,"mov ecx,%d",k); CALLRT(f,"rt_list_find"); }
+        if(tb->k==TY_STR||(tb->k==TY_BYTES&&ta->k==TY_BYTES)){ E(f,"pop edx"); CALLRT(f,"rt_str_contains"); if(code==CMP_NOTIN) E(f,"xor eax,1"); return; }
+        if(tb->k==TY_BYTES){                                    /* a byte value in bytes */
+            if(is_lng(ta)){ E(f,"pop ecx"); E(f,"pop edx"); } else { E(f,"pop ecx"); E(f,"xor edx,edx"); }
+            CALLRT(f,"rt_bytes_has"); if(code==CMP_NOTIN) E(f,"xor eax,1"); return; }
+        /* the value is on the machine stack: its address goes to the runtime */
+        int sz=esize(ta);
+        E(f,"mov edx,esp");
+        if(tb->k==TY_SET){ CALLRT(f,"rt_set_contains"); E(f,"add esp,%d",sz); if(code==CMP_NOTIN) E(f,"xor eax,1"); return; }
+        CALLRT(f,tb->k==TY_DICT?"rt_dict_find":"rt_list_find"); E(f,"add esp,%d",sz);
         E(f,"cmp eax,-1"); E(f,"set%s al",code==CMP_IN?"ne":"e"); E(f,"movzx eax,al"); return;
     }
     if(numeric_ty(ta)&&numeric_ty(tb)){
         if(ta->k==TY_FLOAT||tb->k==TY_FLOAT){
             conv_num(f,tb,TY_FLOAT_T);
-            if(ta->k==TY_FLOAT){ E(f,"fld qword [esp]"); E(f,"add esp,8"); } else { E(f,"fild dword [esp]"); E(f,"add esp,4"); }
+            if(ta->k==TY_FLOAT){ E(f,"fld qword [esp]"); E(f,"add esp,8"); }
+            else if(ta->k==TY_INT){ E(f,"fild qword [esp]"); E(f,"add esp,8"); }
+            else { E(f,"fild dword [esp]"); E(f,"add esp,4"); }
             E(f,"fcompp"); E(f,"fnstsw ax"); E(f,"sahf");
             E(f,"set%s al",cc_of(code,1));                     /* a NaN (unordered: PF) is unequal to everything */
             if(code==CMP_NE){ E(f,"setp cl"); E(f,"or al,cl"); } else { E(f,"setnp cl"); E(f,"and al,cl"); }
             E(f,"movzx eax,al"); return;
         }
+        if(ta->k==TY_INT||tb->k==TY_INT){ conv_num(f,tb,TY_INT_T); cmp64(f,code); return; }     /* (both int: see num_common) */
         E(f,"mov ecx,eax"); E(f,"pop eax"); E(f,"cmp eax,ecx"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
     }
-    if(ta->k==TY_STR&&tb->k==TY_STR){
+    if((ta->k==TY_STR&&tb->k==TY_STR)||(ta->k==TY_BYTES&&tb->k==TY_BYTES)){
         E(f,"mov edx,eax"); E(f,"pop eax");
         if(code==CMP_EQ||code==CMP_NE){ CALLRT(f,"rt_str_eq"); if(code==CMP_NE) E(f,"xor eax,1"); return; }
         CALLRT(f,"rt_str_cmp"); E(f,"cmp eax,0"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
     }
     if(ta->k==TY_TUPLE&&tb->k==TY_TUPLE){
         E(f,"mov edx,eax"); E(f,"pop eax");
+        if((code==CMP_EQ||code==CMP_NE) && aot_tuple_prefix(ta,tb)){ E(f,"mov eax,%d",code==CMP_NE); return; }   /* different lengths */
         if(code==CMP_EQ||code==CMP_NE){ CALLRT(f,"rt_tuple_eq"); if(code==CMP_NE) E(f,"xor eax,1"); return; }
         CALLRT(f,"rt_tuple_cmp"); E(f,"cmp eax,0"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
     }
     if(ta->k==TY_DICT&&(code==CMP_EQ||code==CMP_NE)){
-        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(ta->elem)); CALLRT(f,"rt_dict_eq");
+        E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_dict_eq");
         if(code==CMP_NE) E(f,"xor eax,1"); return;
     }
     if((ta->k==TY_LIST||ta->k==TY_SET)&&(code==CMP_EQ||code==CMP_NE)){
-        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(ta->elem)); CALLRT(f,ta->k==TY_LIST?"rt_list_eq":"rt_set_eq");
+        E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,ta->k==TY_LIST?"rt_list_eq":"rt_set_eq");
         if(code==CMP_NE) E(f,"xor eax,1"); return;
+    }
+    if(ta->k==TY_LIST&&tb->k==TY_LIST&&code<=CMP_GE){         /* lists: the first unequal elements decide */
+        E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_cmp"); E(f,"cmp eax,0"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
+    }
+    if(ta->k==TY_SET&&tb->k==TY_SET&&code<=CMP_GE){          /* sets: subset / superset */
+        int sup=code==CMP_GT||code==CMP_GE, strict=code==CMP_LT||code==CMP_GT;
+        E(f,"mov edx,eax"); E(f,"pop eax");
+        if(sup) E(f,"xchg eax,edx");                          /* a >= b: b <= a */
+        if(strict){ int l=new_label(); E(f,"push eax"); E(f,"push edx"); CALLRT(f,"rt_set_le");
+            E(f,"pop edx"); E(f,"pop ecx"); E(f,"test eax,eax"); E(f,"jz L%d",l);
+            E(f,"mov eax,[ecx+8]"); E(f,"cmp eax,[edx+8]"); E(f,"setne al"); E(f,"movzx eax,al"); LBL(f,l); return; }
+        CALLRT(f,"rt_set_le"); return;
     }
     if(code==CMP_EQ||code==CMP_NE||code==CMP_IS||code==CMP_ISNOT){     /* identity */
         E(f,"mov ecx,eax"); E(f,"pop eax"); E(f,"cmp eax,ecx"); E(f,"set%s al",cc_of(code,0)); E(f,"movzx eax,al"); return;
@@ -618,6 +949,7 @@ static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
     cg_fail(line,"unsupported comparison");
 }
 static void gen_cmp2_m(F *f, int code, Expr *a, Expr *b, int line, AFunc *m, int neg){
+    (void)line;
     if(code==CMP_IN||code==CMP_NOTIN){ int o=gen_op_call(f,m,b,a); (void)o; }     /* b.__contains__(a) */
     else gen_op_call(f,m,a,b);
     Ty *r=ty_find(m->ret);
@@ -625,33 +957,101 @@ static void gen_cmp2_m(F *f, int code, Expr *a, Expr *b, int line, AFunc *m, int
     if(neg || code==CMP_NOTIN) E(f,"xor eax,1");
 }
 static void gen_cmp2(F *f, int code, Expr *a, Expr *b, int line){
-    if(is_none_lit(a)||is_none_lit(b)){                 /* x is None / x == None: x is its zero value */
-        Expr *x=is_none_lit(a)?b:a;
-        if(is_none_lit(x)){ E(f,"mov eax,%d",(code==CMP_EQ||code==CMP_IS)?1:0); return; }
-        gen_borrow(f,x); truth(f,TY(x));
-        if(code==CMP_EQ||code==CMP_IS) E(f,"xor eax,1");
+    if(is_none_lit(a)||is_none_lit(b)){                 /* x is None / x == None */
+        Expr *x=is_none_lit(a)?b:a; int eq=code==CMP_EQ||code==CMP_IS;
+        if(is_none_lit(x)){ E(f,"mov eax,%d",eq); return; }
+        Ty *t=TY(x); int o=gen(f,x);
+        if(!is_opt(t) && !is_ptr(t)){ drop_value(f,t,o); E(f,"mov eax,%d",!eq); return; }   /* never None */
+        if(is_ptr(t)){ if(o) hold(f); E(f,"test eax,eax"); E(f,"set%s al",eq?"z":"nz"); E(f,"movzx eax,al"); return; }
+        int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone); drop_value(f,t,0); E(f,"mov eax,%d",!eq); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t,0); E(f,"mov eax,%d",eq); LBL(f,lend);
         return;
     }
     Ty *ta=TY(a), *tb=TY(b);
-    if((code==CMP_IN||code==CMP_NOTIN) && (tb->k==TY_LIST||tb->k==TY_SET) && is_flt(tb->elem)) ta=TY_FLOAT_T;
+    if((code==CMP_IN||code==CMP_NOTIN) && (tb->k==TY_LIST||tb->k==TY_SET)) ta=tb->elem;           /* as the elements are */
+    if((code==CMP_IN||code==CMP_NOTIN) && tb->k==TY_DICT) ta=ty_dkey(tb);
+    if(code!=CMP_IN && code!=CMP_NOTIN && numeric_ty(ta) && numeric_ty(tb)){                      /* numbers: as one type */
+        Ty *ct=num_common(ta,tb);
+        if((is_opt(ta)||is_opt(tb)) && (code==CMP_EQ||code==CMP_NE||code==CMP_IS||code==CMP_ISNOT)){   /* None == x: no error */
+            int sa=frame_slot(f,8), sb=frame_slot(f,8), cnt=frame_slot(f,4), lnum=new_label(), lend=new_label();
+            gen_borrow(f,a); store_new(f,ta,"ebp",sa); gen_borrow(f,b); store_new(f,tb,"ebp",sb);
+            E(f,"mov dword [ebp%+d],0",cnt);
+            for(int k=0;k<2;k++){ Ty *tk=k?tb:ta; if(!is_opt(tk)) continue; int ln=new_label(), lx=new_label();
+                load_mem(f,tk,"ebp",k?sb:sa); jump_if_none(f,tk,ln); drop_value(f,tk,0); E(f,"jmp L%d",lx);
+                LBL(f,ln); drop_value(f,tk,0); E(f,"add dword [ebp%+d],%d",cnt,k?2:1); LBL(f,lx); }
+            E(f,"cmp dword [ebp%+d],0",cnt); E(f,"je L%d",lnum);
+            E(f,"cmp dword [ebp%+d],3",cnt); E(f,"set%s al",(code==CMP_EQ||code==CMP_IS)?"e":"ne"); E(f,"movzx eax,al"); E(f,"jmp L%d",lend);
+            LBL(f,lnum);
+            load_mem(f,ta,"ebp",sa); conv_num(f,ta,ct); push_value(f,ct); load_mem(f,tb,"ebp",sb); conv_num(f,tb,ct);
+            cmp_finish(f,code,ct,ct,line); LBL(f,lend); return;
+        }
+        static const char *sym[]={"<","<=",">",">="};
+        if(code<=CMP_GE) g_none_text=none_msg("'%s' not supported between instances of 'NoneType' and '%s'",sym[code],py_type_name(tb));
+        gen_as(f,a,ct,0); push_value(f,ct);
+        if(code<=CMP_GE) g_none_text=none_msg("'%s' not supported between instances of '%s' and 'NoneType'",sym[code],py_type_name(ta));
+        gen_as(f,b,ct,0); g_none_text=NULL;
+        cmp_finish(f,code,ct,ct,line); return;
+    }
+    if(code<=CMP_GE && (is_opt(ta)||is_opt(tb))){                  /* ordering None: TypeError */
+        static const char *sym[]={"<","<=",">",">="};
+        gen_as(f,a,ta,0); check_none(f,ta,"TypeError",none_msg("'%s' not supported between instances of 'NoneType' and '%s'",sym[code],py_type_name(tb)));
+        push_value(f,ta); gen_borrow(f,b);
+        check_none(f,tb,"TypeError",none_msg("'%s' not supported between instances of '%s' and 'NoneType'",sym[code],py_type_name(ta)));
+        cmp_finish(f,code,ta,tb,line); return;
+    }
     gen_as(f,a,ta,0); push_value(f,ta);
     gen_borrow(f,b);
+    if(code==CMP_IN||code==CMP_NOTIN) check_none(f,tb,"TypeError","argument of type 'NoneType' is not a container or iterable");
     cmp_finish(f,code,ta,tb,line);
+}
+/* a < b < c where some comparison is an object's method: each operand once, kept in a slot */
+static void gen_compare_chain_m(F *f, Expr *e){
+    XInfo *xi=xinfo(e); int lend=new_label(), ps=frame_slot(f,8), cs=frame_slot(f,8);
+    Ty *prev=TY(e->items[0]);
+    gen_borrow(f,e->items[0]); store_new(f,prev,"ebp",ps);
+    for(int i=1;i<e->count;i++){
+        Ty *t=TY(e->items[i]); int code=e->items[i]->akind; AFunc *m=xi->cmpfn[i];
+        gen_borrow(f,e->items[i]); store_new(f,t,"ebp",cs);
+        if(m){
+            int contains= code==CMP_IN||code==CMP_NOTIN;              /* b.__contains__(a) */
+            Ty *at=contains?prev:t, *pt=m->params[1]->ty; int sslot=contains?cs:ps, aslot=contains?ps:cs, total=4+esize(pt);
+            E(f,"sub esp,%d",total);
+            E(f,"mov eax,[ebp%+d]",sslot); E(f,"mov [esp],eax");
+            load_mem(f,at,"ebp",aslot); conv_num(f,at,pt); put_arg(f,pt,4);
+            call_on_top(f,m); E(f,"add esp,%d",total);
+            Ty *r=ty_find(m->ret); if(r->k!=TY_BOOL) truth(f,r);
+            if(((xi->cmpneg>>i)&1) || code==CMP_NOTIN) E(f,"xor eax,1");
+        } else {
+            Ty *ct=(code!=CMP_IN && code!=CMP_NOTIN && numeric_ty(prev) && numeric_ty(t)) ? num_common(prev,t) : NULL;
+            Ty *lt=ct?ct:prev, *rtt=ct?ct:t;
+            load_mem(f,prev,"ebp",ps); conv_num(f,prev,lt); push_value(f,lt);
+            load_mem(f,t,"ebp",cs); conv_num(f,t,rtt);
+            cmp_finish(f,code,lt,rtt,e->line);
+        }
+        if(i<e->count-1){ E(f,"test eax,eax"); E(f,"jz L%d",lend); load_mem(f,t,"ebp",cs); store_new(f,t,"ebp",ps); }
+        prev=t;
+    }
+    LBL(f,lend);
 }
 static void gen_compare(F *f, Expr *e){
     XInfo *xi=xinfo(e);
     if(e->count==2 && xi->cmpfn && xi->cmpfn[1]){ gen_cmp2_m(f,e->items[1]->akind,e->items[0],e->items[1],e->line,xi->cmpfn[1],(xi->cmpneg>>1)&1); return; }
     if(e->count==2){ gen_cmp2(f,e->items[1]->akind,e->items[0],e->items[1],e->line); return; }
+    if(xi->cmpfn) for(int i=1;i<e->count;i++) if(xi->cmpfn[i]){ gen_compare_chain_m(f,e); return; }
     int lend=new_label(), slot=frame_slot(f,8);           /* a < b < c: each middle operand once */
     Ty *prev=TY(e->items[0]);
     gen_borrow(f,e->items[0]);
-    if(is_flt(prev)) E(f,"fstp qword [ebp%+d]",slot); else E(f,"mov [ebp%+d],eax",slot);
+    store_new(f,prev,"ebp",slot);
     for(int i=1;i<e->count;i++){
-        Ty *t=TY(e->items[i]);
-        if(is_flt(prev)){ E(f,"sub esp,8"); E(f,"fld qword [ebp%+d]",slot); E(f,"fstp qword [esp]"); } else E(f,"push dword [ebp%+d]",slot);
+        Ty *t=TY(e->items[i]); int code=e->items[i]->akind;
+        Ty *ct=(code!=CMP_IN && code!=CMP_NOTIN && numeric_ty(prev) && numeric_ty(t)) ? num_common(prev,t) : NULL;
+        Ty *lt=ct?ct:prev, *rtt=ct?ct:t;
+        load_mem(f,prev,"ebp",slot); conv_num(f,prev,lt); push_value(f,lt);
         gen_borrow(f,e->items[i]);
-        if(i<e->count-1){ if(is_flt(t)){ E(f,"fst qword [ebp%+d]",slot); } else E(f,"mov [ebp%+d],eax",slot); }
-        cmp_finish(f,e->items[i]->akind,prev,t,e->line);
+        if(i<e->count-1){ if(is_flt(t)) E(f,"fst qword [ebp%+d]",slot); else store_new(f,t,"ebp",slot); }
+        conv_num(f,t,rtt);
+        cmp_finish(f,code,lt,rtt,e->line);
         if(i<e->count-1){ E(f,"test eax,eax"); E(f,"jz L%d",lend); }
         prev=t;
     }
@@ -662,6 +1062,8 @@ static void gen_compare(F *f, Expr *e){
 static void gen_bool(F *f, Expr *e){
     if(e->kind==EXPR_COMPARE){ gen_compare(f,e); return; }
     if(e->kind==EXPR_UNARY && e->op==T_NOT){ gen_bool(f,e->a); E(f,"xor eax,1"); return; }
+    if(e->kind==EXPR_BOOL){ int yes=new_label(), done=new_label();       /* (its operands may differ in type) */
+        gen_jump(f,e,yes,1); E(f,"xor eax,eax"); E(f,"jmp L%d",done); LBL(f,yes); E(f,"mov eax,1"); LBL(f,done); return; }
     if(e->kind==EXPR_TRUE){ E(f,"mov eax,1"); return; }
     if(e->kind==EXPR_FALSE||e->kind==EXPR_NONE){ E(f,"xor eax,eax"); return; }
     gen_borrow(f,e);
@@ -686,39 +1088,49 @@ static void gen_jump(F *f, Expr *e, int label, int want){
     int mark=scope_open(f);
     if(e->kind==EXPR_COMPARE && e->count==2 && int_like(TY(e->items[0])) && int_like(TY(e->items[1]))
        && !is_none_lit(e->items[0]) && !is_none_lit(e->items[1]) && e->items[1]->akind<=CMP_NE){
-        gen(f,e->items[0]); E(f,"push eax"); gen(f,e->items[1]); E(f,"mov ecx,eax"); E(f,"pop eax");
-        const char *cc=cc_of(e->items[1]->akind,0);
-        if(f->tmp_used==mark){ E(f,"cmp eax,ecx"); E(f,"j%s L%d",want?cc:neg_cc(cc),label); return; }
-        E(f,"cmp eax,ecx"); E(f,"set%s al",cc); E(f,"movzx eax,al");
+        Ty *ct=num_common(TY(e->items[0]),TY(e->items[1])); int code=e->items[1]->akind;
+        gen_as(f,e->items[0],ct,0); push_value(f,ct); gen_as(f,e->items[1],ct,0);
+        if(is_lng(ct)){
+            if(f->tmp_used==mark){ jcc64(f,code,want,label); return; }
+            cmp64(f,code);
+        } else {
+            E(f,"mov ecx,eax"); E(f,"pop eax");
+            const char *cc=cc_of(code,0);
+            if(f->tmp_used==mark){ E(f,"cmp eax,ecx"); E(f,"j%s L%d",want?cc:neg_cc(cc),label); return; }
+            E(f,"cmp eax,ecx"); E(f,"set%s al",cc); E(f,"movzx eax,al");
+        }
     } else gen_bool(f,e);
     if(f->tmp_used>mark){ E(f,"push eax"); scope_close(f,mark); E(f,"pop eax"); }
     E(f,"test eax,eax"); E(f,"j%s L%d",want?"nz":"z",label);
 }
 
 /* ---- iteration (for loops and comprehensions) ---- */
-typedef enum { IT_RANGE, IT_SEQ, IT_STR, IT_KEYS, IT_ITEMS, IT_ENUM, IT_ZIP, IT_TUP, IT_GEN } ItKind;
+typedef enum { IT_RANGE, IT_SEQ, IT_STR, IT_KEYS, IT_ITEMS, IT_ENUM, IT_ZIP, IT_TUP, IT_GEN, IT_BYTES } ItKind;
 typedef struct {
     ItKind kind;
     int top, cont, exit;
     int idx, end, step, start;      /* frame slots */
     int step_const, has_step_const;
-    int src, src2;                  /* reference slots of the iterated objects */
+    int src;                        /* reference slot of the iterated object (zip: srcs) */
     Ty *elem, *elem2;               /* element types (enumerate: elem2 = the items) */
-    ItKind sub, sub2;               /* enumerate/zip: what the underlying objects are */
+    ItKind sub;                     /* enumerate: what the underlying object is */
+    int nsrc, srcs[8]; ItKind subs[8]; Ty *elems[8];   /* zip: its iterables */
 } Iter;
-static ItKind seq_kind(Ty *t){ t=ty_find(t); return t->k==TY_STR?IT_STR:t->k==TY_DICT?IT_KEYS:t->k==TY_TUPLE?IT_TUP:t->k==TY_GEN?IT_GEN:IT_SEQ; }
-static Ty *seq_elem(Ty *t){ t=ty_find(t); return t->k==TY_STR?TY_STR_T:t->k==TY_DICT?ty_dkey(t):t->k==TY_TUPLE?t->elems[0]:t->elem; }
+static ItKind seq_kind(Ty *t){ t=ty_find(t); return t->k==TY_STR?IT_STR:t->k==TY_BYTES?IT_BYTES:t->k==TY_DICT?IT_KEYS:t->k==TY_TUPLE?IT_TUP:t->k==TY_GEN?IT_GEN:IT_SEQ; }
+static Ty *seq_elem(Ty *t){ t=ty_find(t); return t->k==TY_STR?TY_STR_T:t->k==TY_BYTES?TY_INT_T:t->k==TY_DICT?ty_dkey(t):t->k==TY_TUPLE?t->elems[0]:t->elem; }
 /* the object a loop goes over, kept in a slot of its own: a sequence, a
    generator, obj.__iter__()'s result, a file's lines -> its kind and items */
 static ItKind iter_source(F *f, Expr *x, int *slot, Ty **elem){
     Ty *t=TY(x);
     *slot=ref_slot(f);
+    if(is_opt(t)){ int o=gen(f,x); if(o) hold(f); check_none(f,t,"TypeError","'NoneType' object is not iterable"); drop_value(f,t,0); }
     if(t->k==TY_OBJ){
         AFunc *m=aot_find_method(t->cls,"__iter__"); Ty *r=ty_find(m->ret);
         E(f,"sub esp,4"); gen_borrow(f,x); E(f,"mov [esp],eax"); call_method_on_top(f,m); E(f,"add esp,4");
         E(f,"mov [ebp%+d],eax",*slot); *elem=r->elem; return r->k==TY_GEN?IT_GEN:IT_SEQ;
     }
-    if(t->k==TY_FILE){ gen_borrow(f,x); CALLRT(f,"rt_file_readlines"); E(f,"mov [ebp%+d],eax",*slot); *elem=TY_STR_T; return IT_SEQ; }
+    if(t->k==TY_FILE){ gen_borrow(f,x); CALLRT(f,"rt_file_readlines"); E(f,"mov [ebp%+d],eax",*slot); *elem=t->elem?t->elem:TY_STR_T; return IT_SEQ; }
+    if(t->k==TY_SET){ gen_borrow(f,x); E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_set_to_list"); E(f,"mov [ebp%+d],eax",*slot); *elem=t->elem; return IT_SEQ; }   /* in its order */
     gen_owned(f,x); E(f,"mov [ebp%+d],eax",*slot);
     *elem=seq_elem(t); return seq_kind(t);
 }
@@ -726,87 +1138,102 @@ static void iter_begin(F *f, Expr *it, Iter *I){
     memset(I,0,sizeof *I);
     I->top=new_label(); I->cont=new_label(); I->exit=new_label();
     XInfo *xi=xinfo(it);
-    I->idx=frame_slot(f,4);
-    if(xi->kind==X_BUILTIN && !strcmp(xi->name,"reversed_range")){     /* stop-1 down to start */
-        Expr *r=it->items[0];
-        I->kind=IT_RANGE; I->elem=TY_INT_T; I->end=frame_slot(f,4); I->has_step_const=1; I->step_const=-1;
-        if(r->count==1){ gen(f,r->items[0]); E(f,"dec eax"); E(f,"mov [ebp%+d],eax",I->idx); E(f,"mov dword [ebp%+d],-1",I->end); }
-        else { gen(f,r->items[1]); E(f,"dec eax"); E(f,"mov [ebp%+d],eax",I->idx); gen(f,r->items[0]); E(f,"dec eax"); E(f,"mov [ebp%+d],eax",I->end); }
-        LBL(f,I->top);
-        E(f,"mov eax,[ebp%+d]",I->idx); E(f,"cmp eax,[ebp%+d]",I->end); E(f,"jle L%d",I->exit);
-        return;
-    }
-    if(xi->kind==X_BUILTIN && !strcmp(xi->name,"range")){
-        I->kind=IT_RANGE; I->elem=TY_INT_T; I->end=frame_slot(f,4);
-        if(it->count==1){ E(f,"mov dword [ebp%+d],0",I->idx); gen(f,it->items[0]); E(f,"mov [ebp%+d],eax",I->end); }
-        else { gen(f,it->items[0]); E(f,"mov [ebp%+d],eax",I->idx); gen(f,it->items[1]); E(f,"mov [ebp%+d],eax",I->end); }
-        I->has_step_const=1; I->step_const=1;
-        if(it->count==3){
-            Expr *s=it->items[2]; int neg=0;
-            if(s->kind==EXPR_UNARY&&s->op==T_MINUS&&s->a->kind==EXPR_LITERAL){ neg=1; s=s->a; }
-            if(s->kind==EXPR_LITERAL && s->tok->kind==T_NUMBER){ I->step_const=(int)(neg?-s->tok->i:s->tok->i); if(!I->step_const) cg_fail(it->line,"range() step must not be zero"); }
-            else { I->has_step_const=0; I->step=frame_slot(f,4); gen(f,it->items[2]); E(f,"mov [ebp%+d],eax",I->step);
-                int ok=new_label(); E(f,"test eax,eax"); E(f,"jnz L%d",ok); E(f,"mov esi,Z%d",zlit("range() arg 3 must not be zero")); CALLRT(f,"rt_panic_value"); LBL(f,ok); }
+    int ranged=xi->kind==X_BUILTIN && (!strcmp(xi->name,"range")||!strcmp(xi->name,"reversed_range"));
+    I->idx=frame_slot(f,ranged?8:4);                    /* a range's own int (64 bits); else a position */
+    if(ranged){
+        Expr *r=it; int rev=xi->name[0]=='r'&&xi->name[1]=='e';
+        if(rev) r=it->items[0];
+        I->kind=IT_RANGE; I->elem=TY_INT_T; I->end=frame_slot(f,8);
+        Expr *lo=r->count>=2?r->items[0]:NULL, *hi=r->count>=2?r->items[1]:r->items[0];
+        if(rev){                                        /* stop-1 down to start */
+            gen_as(f,hi,TY_INT_T,0); E(f,"sub eax,1"); E(f,"sbb edx,0"); store_new(f,TY_INT_T,"ebp",I->idx);
+            if(lo){ gen_as(f,lo,TY_INT_T,0); E(f,"sub eax,1"); E(f,"sbb edx,0"); } else gen_int_const(f,TY_INT_T,-1);
+            store_new(f,TY_INT_T,"ebp",I->end);
+            I->has_step_const=1; I->step_const=-1;
+        } else {
+            if(lo) gen_as(f,lo,TY_INT_T,0); else gen_int_const(f,TY_INT_T,0);
+            store_new(f,TY_INT_T,"ebp",I->idx);
+            gen_as(f,hi,TY_INT_T,0); store_new(f,TY_INT_T,"ebp",I->end);
+            I->has_step_const=1; I->step_const=1;
+            if(r->count==3){
+                Expr *s=r->items[2]; int neg=0;
+                if(s->kind==EXPR_UNARY&&s->op==T_MINUS&&s->a->kind==EXPR_LITERAL){ neg=1; s=s->a; }
+                if(s->kind==EXPR_LITERAL && s->tok->kind==T_NUMBER && s->tok->i<=0x7FFFFFFF){ I->step_const=(int)(neg?-s->tok->i:s->tok->i); if(!I->step_const) cg_fail(it->line,"range() step must not be zero"); }
+                else { I->has_step_const=0; I->step=frame_slot(f,8); gen_as(f,r->items[2],TY_INT_T,0); store_new(f,TY_INT_T,"ebp",I->step);
+                    int ok=new_label(); E(f,"or eax,edx"); E(f,"jnz L%d",ok); E(f,"mov esi,Z%d",zlit("range() arg 3 must not be zero")); CALLRT(f,"rt_panic_value"); LBL(f,ok); }
+            }
         }
         LBL(f,I->top);
-        E(f,"mov eax,[ebp%+d]",I->idx);
-        E(f,"cmp eax,[ebp%+d]",I->end);
-        if(I->has_step_const) E(f,"j%s L%d",I->step_const>0?"ge":"le",I->exit);
-        else { int neg=new_label(), go=new_label();
-            E(f,"cmp dword [ebp%+d],0",I->step); E(f,"jl L%d",neg);
-            E(f,"cmp eax,[ebp%+d]",I->end); E(f,"jge L%d",I->exit); E(f,"jmp L%d",go);
-            LBL(f,neg); E(f,"cmp eax,[ebp%+d]",I->end); E(f,"jle L%d",I->exit); LBL(f,go); }
+        int up=new_label(), go=new_label();
+        if(!I->has_step_const){ E(f,"cmp dword [ebp%+d],0",I->step+4); E(f,"jge L%d",up); }
+        if(!I->has_step_const || I->step_const<0){           /* down: stop once idx <= end */
+            E(f,"mov eax,[ebp%+d]",I->end); E(f,"cmp eax,[ebp%+d]",I->idx); E(f,"mov eax,[ebp%+d]",I->end+4); E(f,"sbb eax,[ebp%+d]",I->idx+4); E(f,"jge L%d",I->exit);
+            if(!I->has_step_const) E(f,"jmp L%d",go); }
+        LBL(f,up);
+        if(!I->has_step_const || I->step_const>0){           /* up: stop once idx >= end */
+            E(f,"mov eax,[ebp%+d]",I->idx); E(f,"cmp eax,[ebp%+d]",I->end); E(f,"mov eax,[ebp%+d]",I->idx+4); E(f,"sbb eax,[ebp%+d]",I->end+4); E(f,"jge L%d",I->exit); }
+        LBL(f,go);
         return;
     }
     E(f,"mov dword [ebp%+d],0",I->idx);
     if(xi->kind==X_BUILTIN && (!strcmp(xi->name,"enumerate")||!strcmp(xi->name,"zip"))){
-        int isenum=xi->name[0]=='e'; Ty *e0, *e1;
+        int isenum=xi->name[0]=='e'; Ty *e0;
         I->kind=isenum?IT_ENUM:IT_ZIP;
-        I->sub=iter_source(f,it->items[0],&I->src,&e0);
-        if(isenum){ I->elem=TY_INT_T; I->elem2=e0; I->start=frame_slot(f,4);
-            if(it->count==2){ gen(f,it->items[1]); E(f,"mov [ebp%+d],eax",I->start); } else E(f,"mov dword [ebp%+d],0",I->start); }
-        else { I->sub2=iter_source(f,it->items[1],&I->src2,&e1); I->elem=e0; I->elem2=e1; }
+        if(isenum){ I->sub=iter_source(f,it->items[0],&I->src,&e0);
+            I->elem=TY_INT_T; I->elem2=e0; I->start=frame_slot(f,8);
+            if(it->count==2) gen_as(f,it->items[1],TY_INT_T,0); else gen_int_const(f,TY_INT_T,0);
+            store_new(f,TY_INT_T,"ebp",I->start); }
+        else { if(it->count>8) cg_fail(it->line,"zip() of more than 8 iterables");
+            I->nsrc=it->count;
+            for(int k=0;k<it->count;k++) I->subs[k]=iter_source(f,it->items[k],&I->srcs[k],&I->elems[k]);
+            I->src=I->srcs[0]; I->elem=I->elems[0]; I->elem2=it->count>1?I->elems[1]:NULL; }
     } else if(xi->kind==X_TMETHOD && !strcmp(xi->name,"items")){
         Ty *e0; iter_source(f,it->a->a,&I->src,&e0); I->kind=IT_ITEMS; I->elem=ty_dkey(TY(it->a->a)); I->elem2=TY(it->a->a)->elem;
     } else {
         Ty *el; I->kind=iter_source(f,it,&I->src,&el); I->elem=el;
     }
     LBL(f,I->top);
-    int srcs[2]={I->src,I->src2};
-    for(int k=0;k<(I->kind==IT_ZIP?2:1);k++){
-        ItKind sk=I->kind==IT_ZIP||I->kind==IT_ENUM ? (k?I->sub2:I->sub) : I->kind;
-        E(f,"mov eax,[ebp%+d]",srcs[k]); E(f,"test eax,eax"); E(f,"jz L%d",I->exit);
+    for(int k=0;k<(I->kind==IT_ZIP?I->nsrc:1);k++){
+        ItKind sk= I->kind==IT_ZIP ? I->subs[k] : I->kind==IT_ENUM ? I->sub : I->kind;
+        E(f,"mov eax,[ebp%+d]",I->kind==IT_ZIP?I->srcs[k]:I->src); E(f,"test eax,eax"); E(f,"jz L%d",I->exit);
         if(sk==IT_GEN){ CALLRT(f,"rt_gen_next"); E(f,"test eax,eax"); E(f,"jz L%d",I->exit); continue; }
         E(f,"mov ecx,[ebp%+d]",I->idx);
-        if(sk==IT_TUP){ E(f,"mov edx,[eax+8]"); E(f,"cmp ecx,[edx]"); } else E(f,"cmp ecx,[eax+8]");
+        if(sk==IT_TUP){ E(f,"mov edx,[eax+8]"); E(f,"cmp ecx,[edx]"); }
+        else if(sk==IT_STR){ E(f,"push ecx"); CALLRT(f,"rt_str_cplen"); E(f,"pop ecx"); E(f,"cmp ecx,eax"); }
+        else E(f,"cmp ecx,[eax+8]");
         E(f,"jae L%d",I->exit);
     }
 }
-/* value number k (0 or 1) of the current iteration -> eax/st0 (borrowed) */
+/* value number k of the current iteration (enumerate, items: 0 or 1; zip: which iterable) -> eax/st0 (borrowed) */
+static Ty *iter_elem(Iter *I, int k){ return I->kind==IT_ZIP ? I->elems[k] : k ? I->elem2 : I->elem; }
 static void iter_value(F *f, Iter *I, int k){
-    ItKind kind=I->kind; int src=I->src; Ty *el=k?I->elem2:I->elem;
-    if(kind==IT_RANGE){ E(f,"mov eax,[ebp%+d]",I->idx); return; }
-    if(kind==IT_ENUM){ if(k==0){ E(f,"mov eax,[ebp%+d]",I->idx); E(f,"add eax,[ebp%+d]",I->start); return; } kind=I->sub; }
-    else if(kind==IT_ZIP){ kind=k?I->sub2:I->sub; src=k?I->src2:I->src; }
+    ItKind kind=I->kind; int src=I->src; Ty *el=iter_elem(I,k);
+    if(kind==IT_RANGE){ load_mem(f,TY_INT_T,"ebp",I->idx); return; }
+    if(kind==IT_ENUM){ if(k==0){ E(f,"mov eax,[ebp%+d]",I->idx); E(f,"xor edx,edx"); E(f,"add eax,[ebp%+d]",I->start); E(f,"adc edx,[ebp%+d]",I->start+4); return; } kind=I->sub; }
+    else if(kind==IT_ZIP){ kind=I->subs[k]; src=I->srcs[k]; }
     E(f,"mov eax,[ebp%+d]",src);
     if(kind==IT_GEN){ load_mem(f,el,"eax",24); return; }
     E(f,"mov ecx,[ebp%+d]",I->idx);
-    if(kind==IT_STR){ rt("rt_chars"); E(f,"movzx eax,byte [eax+12+ecx]"); E(f,"shl eax,4"); E(f,"add eax,rt_chars"); return; }
-    if(kind==IT_TUP){ if(is_flt(el)) E(f,"fld qword [eax+12+ecx*8]"); else E(f,"mov eax,[eax+12+ecx*4]"); return; }
-    if(kind==IT_KEYS||(kind==IT_ITEMS&&k==0)){ E(f,"mov eax,[eax+16]"); E(f,"mov eax,[eax+ecx*4]"); return; }
-    if(kind==IT_ITEMS){ E(f,"mov eax,[eax+20]"); if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]"); return; }
+    if(kind==IT_STR){ E(f,"mov edx,ecx"); CALLRT(f,"rt_str_char"); return; }
+    if(kind==IT_BYTES){ E(f,"movzx eax,byte [eax+12+ecx]"); E(f,"xor edx,edx"); return; }
+    if(kind==IT_TUP){ E(f,"add eax,12"); load_at(f,el,"eax","ecx",esize(el)); return; }
+    if(kind==IT_KEYS||(kind==IT_ITEMS&&k==0)){ E(f,"mov eax,[eax+16]"); E(f,"lea eax,[eax+ecx*8]"); load_mem(f,el,"eax",0); return; }   /* keys: 8 bytes each */
+    if(kind==IT_ITEMS){ E(f,"mov eax,[eax+20]"); load_at(f,el,"eax","ecx",esize(el)); return; }
     E(f,"mov eax,[eax+16]");
-    if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]");
+    load_at(f,el,"eax","ecx",esize(el));
 }
 static void iter_end(F *f, Iter *I){
     LBL(f,I->cont);
-    if(I->kind==IT_RANGE){ if(I->has_step_const) E(f,"add dword [ebp%+d],%d",I->idx,I->step_const); else { E(f,"mov eax,[ebp%+d]",I->step); E(f,"add [ebp%+d],eax",I->idx); } }
+    if(I->kind==IT_RANGE){
+        if(I->has_step_const){ E(f,"add dword [ebp%+d],%d",I->idx,I->step_const); E(f,"adc dword [ebp%+d],%d",I->idx+4,I->step_const<0?-1:0); }
+        else { E(f,"mov eax,[ebp%+d]",I->step); E(f,"add [ebp%+d],eax",I->idx); E(f,"mov eax,[ebp%+d]",I->step+4); E(f,"adc [ebp%+d],eax",I->idx+4); } }
     else E(f,"inc dword [ebp%+d]",I->idx);
     E(f,"jmp L%d",I->top);
 }
 static void iter_release(F *f, Iter *I){
-    int srcs[2]={I->src,I->src2};
-    for(int k=0;k<2;k++) if(srcs[k]){ rt("rt_decref"); E(f,"mov eax,[ebp%+d]",srcs[k]); E(f,"mov dword [ebp%+d],0",srcs[k]); E(f,"call rt_decref"); }
+    int n= I->kind==IT_ZIP ? I->nsrc : 1;
+    for(int k=0;k<n;k++){ int sl= I->kind==IT_ZIP ? I->srcs[k] : I->src;
+        if(sl){ rt("rt_decref"); E(f,"mov eax,[ebp%+d]",sl); E(f,"mov dword [ebp%+d],0",sl); E(f,"call rt_decref"); } }
 }
 /* store the iteration value (borrowed in eax/st0) into a variable */
 static void store_borrowed(F *f, AVar *v, Ty *from){
@@ -816,11 +1243,22 @@ static void store_borrowed(F *f, AVar *v, Ty *from){
     store_var(f,v);
 }
 static int tuple_off(Ty *t, int i);
+static int tuple_size(Ty *t);
+static int tdesc(Ty *t);
 /* The loop variables of one iteration: `x`, `i, x` (enumerate/zip/items), or
    `a, b` unpacking each element (a list or a tuple). */
 static void iter_store_vars(F *f, Iter *I, AVar **vars, int n){
+    if(n==1 && (I->kind==IT_ENUM || I->kind==IT_ZIP || I->kind==IT_ITEMS)){     /* for t in zip(a, b): a new tuple each time */
+        Ty *tt=ty_find(vars[0]->ty); int parts= I->kind==IT_ZIP ? I->nsrc : 2;
+        E(f,"mov eax,TD%d",tdesc(tt)); E(f,"mov edx,%d",tuple_size(tt)); CALLRT(f,"rt_tuple_new"); E(f,"push eax");
+        for(int k=0;k<parts;k++){ Ty *et=tt->elems[k];
+            iter_value(f,I,k); conv_num(f,iter_elem(I,k),et); if(is_ptr(et)) incref(f);
+            E(f,"mov ecx,[esp]"); store_mem(f,et,"ecx",tuple_off(tt,k)); }
+        E(f,"pop eax"); conv(f,tt,vars[0]->ty); store_var(f,vars[0]);
+        return;
+    }
     if(n==1 || I->kind==IT_ENUM || I->kind==IT_ZIP || I->kind==IT_ITEMS){
-        for(int k=0;k<n;k++){ iter_value(f,I,k); store_borrowed(f,vars[k],k?I->elem2:I->elem); }
+        for(int k=0;k<n;k++){ iter_value(f,I,k); store_borrowed(f,vars[k],iter_elem(I,k)); }
         return;
     }
     Ty *et=ty_find(I->elem);
@@ -832,40 +1270,50 @@ static void iter_store_vars(F *f, Iter *I, AVar **vars, int n){
         E(f,"mov edx,%d",n); CALLRT(f,"rt_unpack_check");
         for(int k=0;k<n;k++){
             E(f,"mov eax,[esp]"); E(f,"mov eax,[eax+16]");
-            if(is_flt(el)) E(f,"fld qword [eax+%d]",8*k); else E(f,"mov eax,[eax+%d]",4*k);
+            load_mem(f,el,"eax",esize(el)*k);
             store_borrowed(f,vars[k],el);
         }
     }
     E(f,"add esp,4");
 }
 
+static void store_target(F *f, Expr *t, Ty *vt, int line);
+/* a comprehension clause with a target: its loop variable unpacked into it */
+static void comp_unpack(F *f, Expr *e, int i){
+    CompClause *cl=&e->clauses[i];
+    for(int k=0;k<2;k++){ Expr *t=k?cl->target2:cl->target; if(!t) continue;
+        AVar *v=xinfo(e)->cvars[2*i+k];
+        load_var(f,v); if(is_ptr(v->ty)) incref(f);
+        store_target(f,t,v->ty,e->line); }
+}
 static int gen_comprehension(F *f, Expr *e){
     Ty *t=TY(e);
     int res=ref_slot(f);
     if(e->comp_kind=='D') new_dict(f,t);
-    else { E(f,"mov eax,%s",list_destroy(t->elem)); CALLRT(f,"rt_list_new"); }
+    else if(e->comp_kind=='S') new_set(f,t->elem);
+    else new_list(f,t->elem);
     E(f,"mov [ebp%+d],eax",res);
     Iter its[8]; int n=e->nclause;
     if(n>8) cg_fail(e->line,"too many for clauses");
     for(int i=0;i<n;i++){
         CompClause *cl=&e->clauses[i];
         iter_begin(f,cl->iter,&its[i]);
-        iter_store_vars(f,&its[i],&xinfo(e)->cvars[2*i],cl->nvars);
+        iter_store_vars(f,&its[i],&xinfo(e)->cvars[2*i],cl->nvars); comp_unpack(f,e,i);
         for(int k=0;k<cl->ncond;k++) gen_jump(f,cl->conds[k],its[i].cont,0);
     }
     int mark=scope_open(f);
     Ty *el=t->elem;
     if(e->comp_kind=='L'||e->comp_kind=='g'){
         gen_as(f,e->a,el,1);
-        if(is_flt(el)){ E(f,"mov eax,[ebp%+d]",res); E(f,"mov edx,8"); CALLRT(f,"rt_list_push"); E(f,"fstp qword [eax]"); }
-        else { E(f,"push eax"); E(f,"mov eax,[ebp%+d]",res); E(f,"mov edx,4"); CALLRT(f,"rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx"); }
+        E(f,"push dword [ebp%+d]",res); list_append_top(f,el); E(f,"add esp,4");
     } else if(e->comp_kind=='S'){
         gen_as(f,e->a,el,0);
-        if(is_flt(el)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); E(f,"mov edx,esp"); E(f,"mov eax,[ebp%+d]",res); E(f,"mov ecx,2"); CALLRT(f,"rt_set_add"); E(f,"add esp,8"); }
-        else { E(f,"mov edx,eax"); E(f,"mov eax,[ebp%+d]",res); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_set_add"); }
+        E(f,"push dword [ebp%+d]",res); set_add_top(f,el); E(f,"add esp,4");
     } else {
+        Ty *kt=ty_dkey(t);
         gen_as(f,e->b,el,1); push_value(f,el);
-        gen_borrow(f,e->a); E(f,"mov edx,eax"); E(f,"mov eax,[ebp%+d]",res); E(f,"mov ecx,%d",esize(el)); CALLRT(f,"rt_dict_slot");
+        gen_as(f,e->a,kt,0); push_value(f,kt);
+        E(f,"mov edx,esp"); E(f,"mov eax,[ebp%+d]",res); CALLRT(f,"rt_dict_slot"); E(f,"add esp,%d",esize(kt));
         E(f,"mov ecx,eax"); pop_value(f,el); store_mem(f,el,"ecx",0);
     }
     scope_close(f,mark);
@@ -877,9 +1325,11 @@ static int gen_comprehension(F *f, Expr *e){
 /* ---- tuples: +8 descriptor TD<i> (count, element kinds), items from +12 ---- */
 static int tuple_off(Ty *t, int i){ t=ty_find(t); int off=12; for(int k=0;k<i;k++) off+=esize(t->elems[k]); return off; }
 static int tuple_size(Ty *t){ t=ty_find(t); return tuple_off(t,t->nelems)-12; }
+static const char *kd_of(Ty *t);
 static int tdesc(Ty *t){
     t=ty_find(t);
-    for(int i=0;i<gg->ntdescs;i++) if(ty_same(gg->tdescs[i],t)) return i;
+    for(int i=0;i<gg->ntdescs;i++) if(ty_same_exact(gg->tdescs[i],t)) return i;
+    for(int k=0;k<t->nelems;k++) kd_of(t->elems[k]);        /* now, while functions are still being emitted */
     if(gg->ntdescs==gg->ctdescs){ gg->ctdescs=gg->ctdescs?gg->ctdescs*2:8; gg->tdescs=(Ty**)xrealloc(gg->tdescs,sizeof(Ty*)*(size_t)gg->ctdescs); }
     gg->tdescs[gg->ntdescs]=t;
     return gg->ntdescs++;
@@ -915,7 +1365,7 @@ static void gen_syscall_regs(F *f, Expr *e){
     for(int i=0;i<e->count;i++){
         Ty *t=TY(e->items[i]);
         gen_borrow(f,e->items[i]);
-        if(t->k==TY_STR){ int l=new_label(), l2=new_label();            /* its bytes, NUL-terminated ("" too) */
+        if(t->k==TY_STR||t->k==TY_BYTES){ int l=new_label(), l2=new_label();            /* its bytes, NUL-terminated ("" too) */
             E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
         else if(t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
         E(f,"mov [esp+%d],eax",4*i);
@@ -930,35 +1380,43 @@ static void gen_syscall_regs(F *f, Expr *e){
 static int gen_index(F *f, Expr *e){
     if(e->a->kind==EXPR_CALL && xinfo(e->a)->kind==X_SYSCALL && e->b->kind==EXPR_LITERAL && e->b->tok->kind==T_NUMBER
        && !e->b->tok->is_float && e->b->tok->i>=0 && e->b->tok->i<6){        /* sys.syscall(...)[k]: just register k */
-        gen_syscall_regs(f,e->a); E(f,"mov eax,[esp+%d]",4*(int)e->b->tok->i); E(f,"add esp,28"); return 0;
+        gen_syscall_regs(f,e->a); E(f,"mov eax,[esp+%d]",4*(int)e->b->tok->i); E(f,"add esp,28"); widen(f,1); return 0;
     }
     Ty *ct=TY(e->a);
+    if(xinfo(e)->kind==X_TYPEVAL){ E(f,"mov eax,%s",typeval_label(xinfo(e))); return 0; }      /* Box[int]: the class */
     if(ct->k==TY_OBJ) return gen_op_call(f,aot_find_method(ct->cls,"__getitem__"),e->a,e->b);   /* obj[key] */
+    if(is_opt(ct)){ int o=gen(f,e->a); if(o) hold(f); check_none(f,ct,"TypeError","'NoneType' object is not subscriptable"); drop_value(f,ct,0); }
     if(ct->k==TY_TUPLE){
         XInfo *xi=xinfo(e);
         if(xi->argmap[1]){ gen_borrow(f,e->a); panic_if_null(f); load_mem(f,ct->elems[xi->argmap[0]],"eax",tuple_off(ct,xi->argmap[0])); return 0; }
         Ty *et=ct->elems[0];                                     /* all items of one type */
-        gen_borrow(f,e->a); E(f,"push eax"); gen(f,e->b); E(f,"mov edx,eax"); E(f,"pop eax");
-        E(f,"mov ecx,%d",esize(et)); CALLRT(f,"rt_tuple_at"); load_mem(f,et,"eax",0); return 0;
+        gen_borrow(f,e->a); E(f,"push eax"); gen(f,e->b); to_i32(f,TY(e->b)); E(f,"mov edx,eax"); E(f,"pop eax");
+        CALLRT(f,"rt_tuple_at"); load_mem(f,et,"eax",0); return 0;
     }
     gen_borrow(f,e->a); E(f,"push eax");
-    if(ct->k==TY_DICT) gen_borrow(f,e->b); else gen(f,e->b);
+    if(ct->k==TY_DICT){                                          /* the key goes by address */
+        Ty *kt=ty_dkey(ct); gen_as(f,e->b,kt,0); push_value(f,kt);
+        E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",esize(kt)); CALLRT(f,"rt_dict_get"); E(f,"add esp,%d",esize(kt)+4);
+        load_mem(f,ct->elem,"eax",0); return 0;
+    }
+    gen(f,e->b); to_i32(f,TY(e->b));
     E(f,"mov edx,eax"); E(f,"pop eax");
     if(ct->k==TY_STR){ CALLRT(f,"rt_str_char"); return 0; }
-    if(ct->k==TY_LIST){ E(f,"mov ecx,%d",esize(ct->elem)); CALLRT(f,"rt_list_at"); load_mem(f,ct->elem,"eax",0); return 0; }
-    E(f,"mov ecx,%d",esize(ct->elem)); CALLRT(f,"rt_dict_get"); load_mem(f,ct->elem,"eax",0); return 0;
+    if(ct->k==TY_BYTES){ CALLRT(f,"rt_bytes_at"); widen(f,0); return 0; }
+    CALLRT(f,"rt_list_at"); load_mem(f,ct->elem,"eax",0); return 0;
 }
 static int gen_slice(F *f, Expr *e){
     Ty *t=TY(e->a); int list=t->k==TY_LIST, n=list?24:20, flags=0;
     E(f,"sub esp,%d",n);
-    gen_borrow(f,e->a); E(f,"mov [esp],eax");
+    gen_borrow(f,e->a); check_none(f,t,"TypeError","'NoneType' object is not subscriptable"); E(f,"mov [esp],eax");
+    if(t->k==TY_BYTES) CALLRT(f,"rt_bytes_cp");                 /* (a byte a code point) */
     Expr *parts[3]={e->b,e->c,e->d};
     for(int k=0;k<3;k++){
-        if(parts[k] && parts[k]->kind!=EXPR_NONE){ gen(f,parts[k]); E(f,"mov [esp+%d],eax",4+4*k); }
+        if(parts[k] && parts[k]->kind!=EXPR_NONE){ gen(f,parts[k]); to_i32(f,TY(parts[k])); E(f,"mov [esp+%d],eax",4+4*k); }
         else { flags|=1<<k; E(f,"mov dword [esp+%d],0",4+4*k); }
     }
     E(f,"mov dword [esp+16],%d",flags);
-    if(list) E(f,"mov dword [esp+20],%d",kind_of(t->elem));
+    if(list) E(f,"mov dword [esp+20],%s",kd_of(t->elem));
     CALLRT(f,list?"rt_list_slice":"rt_str_slice");
     E(f,"add esp,%d",n);
     return 1;
@@ -966,48 +1424,68 @@ static int gen_slice(F *f, Expr *e){
 
 /* ---- container literals ---- */
 static void list_append_top(F *f, Ty *el){         /* list at [esp], value in eax/st0 (owned) */
-    if(is_flt(el)){ E(f,"mov eax,[esp]"); E(f,"mov edx,8"); CALLRT(f,"rt_list_push"); E(f,"fstp qword [eax]"); }
-    else { E(f,"push eax"); E(f,"mov eax,[esp+4]"); E(f,"mov edx,4"); CALLRT(f,"rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx"); }
+    push_value(f,el);
+    E(f,"mov eax,[esp+%d]",esize(el)); CALLRT(f,"rt_list_push");
+    E(f,"mov ecx,eax"); pop_value(f,el); store_new(f,el,"ecx",0);
 }
 static void set_add_top(F *f, Ty *el){             /* set at [esp], value in eax/st0 (borrowed) */
-    if(is_flt(el)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); E(f,"mov edx,esp"); E(f,"mov eax,[esp+8]"); E(f,"mov ecx,2"); CALLRT(f,"rt_set_add"); E(f,"add esp,8"); }
-    else { E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_set_add"); }
+    push_value(f,el);
+    E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",esize(el)); CALLRT(f,"rt_set_add"); E(f,"add esp,%d",esize(el));
+}
+/* an expression CPython's optimizer folds into a constant (see set displays) */
+static int folds_const(Expr *e){
+    switch(e->kind){
+        case EXPR_LITERAL: case EXPR_TRUE: case EXPR_FALSE: case EXPR_NONE: return 1;
+        case EXPR_UNARY: return e->op!=T_NOT && folds_const(e->a);
+        case EXPR_BINARY: return folds_const(e->a) && folds_const(e->b);
+        case EXPR_TUPLE: for(int i=0;i<e->count;i++) if(!folds_const(e->items[i])) return 0; return 1;
+        default: return 0;
+    }
 }
 static int gen_literal_container(F *f, Expr *e){
     Ty *t=TY(e), *el=t->elem;
     if(e->kind==EXPR_DICT){
+        Ty *kt=ty_dkey(t);
         new_dict(f,t); E(f,"push eax");
         for(int i=0;i<e->count;i++){
+            if(e->items[i]->akind==2){ gen_borrow(f,e->items[i]); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_dict_update"); continue; }   /* **d */
             gen_as(f,e->vals[i],el,1); push_value(f,el);
-            gen_borrow(f,e->items[i]); E(f,"mov edx,eax"); E(f,"mov eax,[esp+%d]",esize(el)); E(f,"mov ecx,%d",esize(el)); CALLRT(f,"rt_dict_slot");
-            E(f,"mov ecx,eax");
-            if(is_flt(el)){ E(f,"fld qword [esp]"); E(f,"add esp,8"); E(f,"fstp qword [ecx]"); }
-            else if(is_ptr(el)){ E(f,"pop eax"); store_mem(f,el,"ecx",0); }
-            else { E(f,"pop eax"); E(f,"mov [ecx],eax"); }
+            gen_as(f,e->items[i],kt,0); push_value(f,kt);
+            E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",esize(kt)+esize(el)); CALLRT(f,"rt_dict_slot"); E(f,"add esp,%d",esize(kt));
+            E(f,"mov ecx,eax"); pop_value(f,el); store_mem(f,el,"ecx",0);
         }
         E(f,"pop eax"); return 1;
     }
-    E(f,"mov eax,%s",list_destroy(el)); CALLRT(f,"rt_list_new"); E(f,"push eax");
-    for(int i=0;i<e->count;i++){
-        if(e->kind==EXPR_LIST||e->kind==EXPR_TUPLE){ gen_as(f,e->items[i],el,1); list_append_top(f,el); }
-        else { gen_as(f,e->items[i],el,0); set_add_top(f,el); }
+    if(e->kind==EXPR_SET){
+        int consts=e->count>=3;
+        new_set(f,el); E(f,"push eax");
+        for(int i=0;i<e->count;i++){
+            if(e->items[i]->akind==1){ consts=0; gen_list_of(f,e->items[i],el); hold(f); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_set_add_list"); continue; }   /* *xs */
+            if(!folds_const(e->items[i])) consts=0; gen_as(f,e->items[i],el,0); set_add_top(f,el); }
+        if(consts){                                 /* CPython: a frozenset constant merged into a new set (its order) */
+            new_set(f,el); E(f,"push eax"); E(f,"mov edx,[esp+4]"); CALLRT(f,"rt_set_merge");
+            E(f,"pop eax"); E(f,"xchg eax,[esp]"); CALLRT(f,"rt_decref"); }
+        E(f,"pop eax"); return 1;
     }
+    new_list(f,el); E(f,"push eax");
+    for(int i=0;i<e->count;i++){
+        if(e->items[i]->akind==1){ gen_list_of(f,e->items[i],el); hold(f); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_list_extend"); continue; }   /* *xs */
+        gen_as(f,e->items[i],el,1); list_append_top(f,el); }
     E(f,"pop eax"); return 1;
 }
 
 /* ---- calls ---- */
-static void put_arg(F *f, Ty *pt, int off){ if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off); else E(f,"mov [esp+%d],eax",off); }
+static void put_arg(F *f, Ty *pt, int off){ if(is_flt(pt)) E(f,"fstp qword [esp+%d]",off); else { E(f,"mov [esp+%d],eax",off); if(is_lng(pt)) E(f,"mov [esp+%d],edx",off+4); } }
 static int tuple_off(Ty *t, int i);
-static void list_append_top(F *f, Ty *el);
 static int in_list(int *v, int n, int x){ for(int i=0;i<n;i++) if(v[i]==x) return 1; return 0; }
 /* *args of a call: a new tuple (list) of the extra positionals and f(*xs) -> eax (held) */
 static void gen_star_args(F *f, AFunc *fn, Expr *e, XInfo *xi){
     Ty *el=ty_find(fn->params[fn->star]->ty)->elem;
-    E(f,"mov eax,%s",list_destroy(el)); CALLRT(f,"rt_list_new"); E(f,"push eax");
+    new_list(f,el); E(f,"push eax");
     for(int j=0;j<xi->nxargs;j++){ gen_as(f,e->items[xi->xargs[j]],el,1); list_append_top(f,el); }
     if(xi->splat){
         Expr *sa=e->items[xi->splat-1]; Ty *st=TY(sa);
-        if(st->k==TY_LIST && is_flt(el)==is_flt(st->elem)){ gen_borrow(f,sa); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_list_extend"); }
+        if(st->k==TY_LIST && kd_of(el)==kd_of(st->elem)){ gen_borrow(f,sa); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_list_extend"); }
         else if(st->k==TY_LIST) cg_fail(e->line,"f(*list of int) into *args of float is not supported");
         else {
             int slot=frame_slot(f,4); gen_borrow(f,sa); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
@@ -1023,9 +1501,9 @@ static void gen_kwargs(F *f, AFunc *fn, Expr *e, XInfo *xi){
     new_dict(f,dt); E(f,"push eax");
     for(int j=0;j<xi->nkwargs;j++){ Expr *a=e->items[xi->kwargs[j]];
         gen_as(f,a,el,1); push_value(f,el);
-        E(f,"mov edx,S%d",str_lit(a->kw)); E(f,"mov eax,[esp+%d]",esize(el)); E(f,"mov ecx,%d",esize(el)); CALLRT(f,"rt_dict_slot");
+        E(f,"push S%d",str_lit(a->kw)); E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",4+esize(el)); CALLRT(f,"rt_dict_slot"); E(f,"add esp,4");
         E(f,"mov ecx,eax"); pop_value(f,el); store_mem(f,el,"ecx",0); }
-    if(xi->dsplat){ gen_borrow(f,e->items[xi->dsplat-1]); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); E(f,"mov ecx,%d",kind_of(el)); CALLRT(f,"rt_dict_update"); }
+    if(xi->dsplat){ gen_borrow(f,e->items[xi->dsplat-1]); E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_dict_update"); }
     E(f,"pop eax"); hold(f);
 }
 /* The arguments of a call of fn (parameters from `first` on) into [esp+off[i]],
@@ -1062,7 +1540,13 @@ static void gen_call_args(F *f, AFunc *fn, Expr *e, XInfo *xi, int *off, int fir
     if(!done_dstar){ gen_kwargs(f,fn,e,xi); put_arg(f,fn->params[fn->dstar]->ty,off[fn->dstar]); }
     for(int i=first;i<fn->nparams;i++) if(xi->argmap[i]<0 && fn->defaults[i] && i!=fn->star && i!=fn->dstar){
         Ty *pt=fn->params[i]->ty;
-        gen_as(f,fn->defaults[i],pt,fn->params[i]->consumed); put_arg(f,pt,off[i]);
+        if(const_default(fn->defaults[i])){ gen_as(f,fn->defaults[i],pt,fn->params[i]->consumed); put_arg(f,pt,off[i]); continue; }
+        layout_defaults(fn);                                 /* evaluated where it was defined: in its function object */
+        if(xi->kind==X_CALLNEST && fn->outer){ if(xi->var) load_var(f,xi->var); else E(f,"mov eax,[ebp%+d]",f->env); }
+        else { use_fn(fn); gg->fv_used[fn->id]=1; rt("rt_static"); E(f,"mov eax,%s",fnl(fn,LB_VALUE)); }
+        load_mem(f,pt,"eax",16+fn->defoff[i]);
+        if(fn->params[i]->consumed && is_ptr(pt)) incref(f);
+        put_arg(f,pt,off[i]);
     }
 }
 /* self_kind: 0 none, 1 the object of obj.method(), 2 the current method's self (super());
@@ -1075,12 +1559,12 @@ static void call_user(F *f, AFunc *fn, Expr *e, XInfo *xi, int self_kind){
     if(self_kind==1){ gen_borrow(f,e->a->a); E(f,"mov [esp],eax"); }
     if(self_kind==2){ E(f,"mov eax,[ebp+8]"); E(f,"mov [esp],eax"); }
     gen_call_args(f,fn,e,xi,off,self_kind?1:0);
-    if(xi->kind==X_CALLNEST && fn->ncaps){               /* its closure in edx */
+    if(xi->kind==X_CALLNEST && (fn->ncaps || dyn_defaults(fn))){   /* its closure in edx */
         if(xi->var){ load_var(f,xi->var); panic_if_null(f); E(f,"mov edx,eax"); }
         else E(f,"mov edx,[ebp%+d]",f->env);
     }
     if(self_kind==1 && fn->cls && !fn->is_static){
-        E(f,"mov eax,[esp]"); panic_if_null(f);
+        E(f,"mov eax,[esp]"); attr_check(f,fn->name);
         if(fn->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*fn->vslot); }
         else E(f,"call %s",fnl(fn,LB_CODE));
     } else E(f,"call %s",fnl(fn,LB_CODE));
@@ -1108,26 +1592,63 @@ static int call_value_of(F *f, Expr *e, AVar *dv){
     if(total) E(f,"sub esp,%d",total);
     if(dv){ gen_borrow(f,e->a->a); E(f,"mov [esp],eax"); }
     gen_call_args(f,&pseudo,e,xinfo(e),off+skip,0);
-    E(f,"mov eax,[ebp%+d]",cs); panic_if_null(f); E(f,"mov edx,eax"); E(f,"call dword [edx+8]");
+    if(ft->ndef){ int doff=16;                              /* omitted ones: the defaults kept in the function object */
+        for(int i=nreg-ft->ndef;i<nreg;i++){ Ty *pt=ft->elems[i];
+            if(i>=skip && xinfo(e)->argmap[i-skip]<0){ E(f,"mov eax,[ebp%+d]",cs); load_mem(f,pt,"eax",doff); put_arg(f,pt,off[i]); }
+            doff+=esize(pt); } }
+    E(f,"mov eax,[ebp%+d]",cs);
+    { int l=new_label(); E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov esi,Z%d",zlit("'NoneType' object is not callable")); CALLRT(f,"rt_typeerr_text"); LBL(f,l); }
+    E(f,"mov edx,eax"); E(f,"call dword [edx+8]");
     if(total) E(f,"add esp,%d",total);
     return is_ptr(ft->elem);
 }
 static int call_value(F *f, Expr *e){ return call_value_of(f,e,NULL); }
 static int gen_str_of(F *f, Expr *x);
-/* the message of an exception: str(x), owned, in eax */
-static void gen_exc_message(F *f, Expr *x){ int o=gen_str_of(f,x); if(!o) incref(f); }
+/* the message of an exception: str(x), owned, in eax; a KeyError keeps repr(x), which str(e) gives */
+static int is_keyerror(AClass *c){ for(;c;c=c->base) if(c->builtin && !strcmp(c->name,"KeyError")) return 1; return 0; }
+/* an exception's message shown as is by repr() (KeyError: the key's repr; a non-str argument: str(1) == repr(1)) */
+static int raw_message(Expr *x, AClass *cls){ if(!x) return 0; if(cls && is_keyerror(cls)) return 1; return ty_find(TY(x))->k!=TY_STR; }
+static int exc_rawoff(AClass *cls){ AField *fd=aot_find_field(cls,"_rawrepr"); return fd?fd->offset:0; }
+static void gen_exc_message_of(F *f, Expr *x, AClass *cls){
+    if(cls && is_keyerror(cls)){ rt("rt_sb_need"); E(f,"push dword [rt_sb_len]"); gen_borrow(f,x); gen_fmt(f,TY(x),1); E(f,"pop eax"); CALLRT(f,"rt_sb_take"); return; }
+    int o=gen_str_of(f,x); if(!o) incref(f);
+}
+/* A new object (eax, kept): the slots of class attributes an object may set start as the class's
+   value (the most derived class's, for one a subclass redefines). */
+/* eax/st0 = the attribute of the object in eax (borrowed) */
+static void load_field(F *f, AField *fd){
+    if(aot_field_shared(fd)){ load_var(f,fd->cvar); return; }        /* a class attribute no object sets */
+    if(fd->setoff){ int own=new_label(), done=new_label();          /* the object's own value once set */
+        E(f,"cmp dword [eax+%d],0",fd->setoff); E(f,"jne L%d",own); load_var(f,fd->cvar); E(f,"jmp L%d",done);
+        LBL(f,own); load_mem(f,fd->ty,"eax",fd->offset); LBL(f,done); return; }
+    load_mem(f,fd->ty,"eax",fd->offset);
+}
+static void seed_fields(F *f, AClass *cls){
+    AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
+    for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i], *src=NULL;
+        if(fd->over || aot_field_shared(fd) || fd->setoff) continue;
+        for(int j=0;j<=k && !src;j++) for(int q=0;q<chain[j]->nfields;q++){ AField *g=chain[j]->fields[q]; if(aot_field_root(g)==fd && g->cvar){ src=g; break; } }
+        if(!src && !fd->init) continue;
+        E(f,"push eax");
+        if(src){ load_var(f,src->cvar); if(is_ptr(fd->ty)) incref(f); }
+        else gen_as(f,fd->init,fd->ty,1);
+        E(f,"mov ecx,[esp]");
+        store_new(f,fd->ty,"ecx",fd->offset);
+        E(f,"pop eax");
+    }
+}
 static int gen_ctor(F *f, Expr *e, XInfo *xi){
     AClass *cls=xi->cls; AFunc *init=xi->fn;
+    if(xi->abstract_msg){                                  /* an abstract class: TypeError (after the arguments) */
+        for(int i=0;i<e->count;i++){ int o=gen(f,e->items[i]); drop_value(f,TY(e->items[i]),o); }
+        E(f,"mov esi,Z%d",zlit(xi->abstract_msg)); CALLRT(f,"rt_typeerr_text"); E(f,"xor eax,eax"); return 1; }
     use_class(cls);
     if(!init && aot_is_exception(cls)){                  /* ValueError("message") */
-        if(e->kind==EXPR_CALL && e->count){ gen_exc_message(f,e->items[0]); E(f,"push eax"); } else E(f,"push 0");
+        if(e->kind==EXPR_CALL && e->count){ gen_exc_message_of(f,e->items[0],cls); E(f,"push eax"); } else E(f,"push 0");
         E(f,"mov eax,%d",cls->size); E(f,"mov edx,%s",class_label(cls,0)); E(f,"mov ecx,%s",class_label(cls,1)); CALLRT(f,"rt_obj_new");
         E(f,"pop ecx"); E(f,"mov [eax+12],ecx");
-        AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
-        for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i];
-            if(!fd->init) continue;
-            E(f,"push eax"); gen_as(f,fd->init,fd->ty,1); E(f,"mov ecx,[esp]"); store_new(f,fd->ty,"ecx",fd->offset); E(f,"pop eax");
-        }
+        seed_fields(f,cls);
+        if(raw_message(e->count?e->items[0]:NULL,cls)) E(f,"mov dword [eax+%d],1",exc_rawoff(cls));
         return 1;
     }
     int off[16], total=0;
@@ -1135,27 +1656,18 @@ static int gen_ctor(F *f, Expr *e, XInfo *xi){
     if(total) E(f,"sub esp,%d",total);
     if(init) gen_call_args(f,init,e,xi,off,1);
     E(f,"mov eax,%d",cls->size); E(f,"mov edx,%s",class_label(cls,0)); E(f,"mov ecx,%s",class_label(cls,1)); CALLRT(f,"rt_obj_new");
-    AClass *chain[32]; int n=0; for(AClass *c=cls;c&&n<32;c=c->base) chain[n++]=c;
-    for(int k=n-1;k>=0;k--) for(int i=0;i<chain[k]->nfields;i++){ AField *fd=chain[k]->fields[i];
-        if(!fd->init) continue;
-        E(f,"push eax");
-        gen_as(f,fd->init,fd->ty,1);
-        E(f,"mov ecx,[esp]");
-        store_new(f,fd->ty,"ecx",fd->offset);
-        E(f,"pop eax");
-    }
+    seed_fields(f,cls);
     if(init){ E(f,"mov [esp],eax"); E(f,"call %s",fnl(init,LB_CODE)); E(f,"mov eax,[esp]"); }
     if(total) E(f,"add esp,%d",total);
     return 1;
 }
 static void call_method_on_top(F *f, AFunc *m){      /* object at [esp], one 4-byte argument area */
     use_fn(m);
-    E(f,"mov eax,[esp]"); panic_if_null(f);
+    E(f,"mov eax,[esp]"); attr_check(f,m->name);
     if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
     else E(f,"call %s",fnl(m,LB_CODE));
 }
 
-static int sort_kind(Ty *t);
 /* ---- key= functions ---- */
 /* key(element): the element (borrowed) in eax/st0 -> the key in eax/st0 (borrowed; an owned one is held) */
 static void gen_key_call(F *f, Expr *key, Ty *elem){
@@ -1191,36 +1703,35 @@ static int gen_sort_by_key(F *f, int src, Ty *el, Expr *key, int revslot, int in
     int td=tdesc(pt), koff=12, ioff=12+esize(kt);
     int pairs=ref_slot(f), idx=frame_slot(f,4), res=ref_slot(f);
     int ltop=new_label(), lend=new_label(), l2=new_label(), l2end=new_label();
-    E(f,"mov eax,%s",list_destroy(pt)); CALLRT(f,"rt_list_new"); E(f,"mov [ebp%+d],eax",pairs);
+    new_list(f,pt); E(f,"mov [ebp%+d],eax",pairs);
     E(f,"mov dword [ebp%+d],0",idx);
     LBL(f,ltop);
     E(f,"mov eax,[ebp%+d]",src); E(f,"test eax,eax"); E(f,"jz L%d",lend);
     E(f,"mov ecx,[ebp%+d]",idx); E(f,"cmp ecx,[eax+8]"); E(f,"jae L%d",lend);
     int mark=scope_open(f);
-    E(f,"mov eax,[eax+16]"); if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]");
+    E(f,"mov eax,[eax+16]"); load_at(f,el,"eax","ecx",esize(el));
     gen_key_call(f,key,el); push_value(f,kt);
     E(f,"mov eax,TD%d",td); E(f,"mov edx,%d",tuple_size(pt)); CALLRT(f,"rt_tuple_new");
     E(f,"mov ecx,eax"); pop_value(f,kt);
     if(is_ptr(kt)){ E(f,"push ecx"); incref(f); E(f,"pop ecx"); }
     store_new(f,kt,"ecx",koff);
     { int l=new_label(); E(f,"mov eax,[ebp%+d]",idx); E(f,"cmp dword [ebp%+d],0",revslot); E(f,"je L%d",l); E(f,"neg eax"); LBL(f,l); }  /* reverse keeps equal keys in order */
-    E(f,"mov [ecx+%d],eax",ioff);
-    E(f,"push ecx"); E(f,"mov eax,[ebp%+d]",pairs); E(f,"mov edx,4"); CALLRT(f,"rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx");
+    E(f,"cdq"); E(f,"mov [ecx+%d],eax",ioff); E(f,"mov [ecx+%d],edx",ioff+4);
+    E(f,"push ecx"); E(f,"mov eax,[ebp%+d]",pairs); CALLRT(f,"rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx");
     scope_close(f,mark);
     E(f,"inc dword [ebp%+d]",idx); E(f,"jmp L%d",ltop);
     LBL(f,lend);
-    rt("rt_tuple_cmp");
-    E(f,"mov eax,[ebp%+d]",pairs); E(f,"mov edx,4"); CALLRT(f,"rt_list_sort");
-    { int l=new_label(); E(f,"cmp dword [ebp%+d],0",revslot); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",pairs); E(f,"mov edx,4"); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
-    E(f,"mov eax,%s",list_destroy(el)); CALLRT(f,"rt_list_new"); E(f,"mov [ebp%+d],eax",res);
+    E(f,"mov eax,[ebp%+d]",pairs); CALLRT(f,"rt_list_sort");
+    { int l=new_label(); E(f,"cmp dword [ebp%+d],0",revslot); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",pairs); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
+    new_list(f,el); E(f,"mov [ebp%+d],eax",res);
     E(f,"mov dword [ebp%+d],0",idx);
     LBL(f,l2);
     E(f,"mov eax,[ebp%+d]",pairs); E(f,"mov ecx,[ebp%+d]",idx); E(f,"cmp ecx,[eax+8]"); E(f,"jae L%d",l2end);
     E(f,"mov eax,[eax+16]"); E(f,"mov eax,[eax+ecx*4]"); E(f,"mov ecx,[eax+%d]",ioff);
     { int l=new_label(); E(f,"test ecx,ecx"); E(f,"jns L%d",l); E(f,"neg ecx"); LBL(f,l); }
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov eax,[eax+16]");
-    if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else { E(f,"mov eax,[eax+ecx*4]"); if(is_ptr(el)) incref(f); }
-    E(f,"mov edx,[ebp%+d]",res); E(f,"push edx");
+    load_at(f,el,"eax","ecx",esize(el)); if(is_ptr(el)) incref(f);
+    E(f,"push dword [ebp%+d]",res);
     list_append_top(f,el);
     E(f,"add esp,4");
     E(f,"inc dword [ebp%+d]",idx); E(f,"jmp L%d",l2);
@@ -1243,40 +1754,38 @@ static int gen_minmax_key(F *f, Expr *e, int is_max){
     Expr *key=xinfo(e)->key; Ty *lt=TY(e->items[0]), *el=lt->k==TY_DICT?ty_dkey(lt):lt->elem, *kt=key_type(key);
     int src=ref_slot(f), idx=frame_slot(f,4), best=frame_slot(f,4), bkey=is_ptr(kt)?ref_slot(f):frame_slot(f,8);
     int ltop=new_label(), lend=new_label(), ltake=new_label(), lnext=new_label();
-    if(lt->k==TY_DICT){ gen_borrow(f,e->items[0]); CALLRT(f,"rt_dict_keys"); } else gen_owned(f,e->items[0]);
+    if(lt->k==TY_LIST) gen_owned(f,e->items[0]); else gen_list_of(f,e->items[0],el);
     E(f,"mov [ebp%+d],eax",src);
     { int l=new_label(), lok=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"cmp dword [eax+8],0"); E(f,"jne L%d",lok); LBL(f,l);
-      E(f,"mov esi,Z%d",zlit(is_max?"max() arg is an empty sequence":"min() arg is an empty sequence")); CALLRT(f,"rt_panic_value"); LBL(f,lok); }
+      E(f,"mov esi,Z%d",zlit(is_max?"max() iterable argument is empty":"min() iterable argument is empty")); CALLRT(f,"rt_panic_value"); LBL(f,lok); }
     E(f,"mov dword [ebp%+d],0",idx); E(f,"mov dword [ebp%+d],-1",best);
     LBL(f,ltop);
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",idx); E(f,"cmp ecx,[eax+8]"); E(f,"jae L%d",lend);
     int mark=scope_open(f);
-    E(f,"mov eax,[eax+16]"); if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]");
+    E(f,"mov eax,[eax+16]"); load_at(f,el,"eax","ecx",esize(el));
     gen_key_call(f,key,el);
     E(f,"cmp dword [ebp%+d],-1",best); E(f,"je L%d",ltake);
     if(is_flt(kt)){ E(f,"fld qword [ebp%+d]",bkey); E(f,"fcomp st1"); E(f,"fnstsw ax"); E(f,"sahf"); E(f,"j%s L%d",is_max?"b":"a",ltake); E(f,"fstp st0"); E(f,"jmp L%d",lnext); }
-    else {
-        const char *cmpfn=kt->k==TY_STR?"rt_str_cmp":kt->k==TY_TUPLE?"rt_tuple_cmp":NULL;
-        if(cmpfn){ E(f,"push eax"); E(f,"mov edx,[ebp%+d]",bkey); CALLRT(f,cmpfn); E(f,"mov ecx,eax"); E(f,"pop eax"); E(f,"cmp ecx,0"); }
-        else E(f,"cmp eax,[ebp%+d]",bkey);
+    else {                                                  /* the key type's ordering: cmp(key, best) */
+        push_value(f,kt); E(f,"mov eax,esp"); E(f,"lea edx,[ebp%+d]",bkey); E(f,"mov ecx,%s",kd_of(kt)); E(f,"call dword [ecx+12]");
+        E(f,"mov ecx,eax"); pop_value(f,kt); E(f,"cmp ecx,0");
         E(f,"j%s L%d",is_max?"g":"l",ltake); E(f,"jmp L%d",lnext);
     }
     LBL(f,ltake);
     if(is_ptr(kt)){ incref(f); E(f,"xchg eax,[ebp%+d]",bkey); CALLRT(f,"rt_decref"); }
-    else if(is_flt(kt)) E(f,"fstp qword [ebp%+d]",bkey); else E(f,"mov [ebp%+d],eax",bkey);
+    else store_new(f,kt,"ebp",bkey);
     E(f,"mov eax,[ebp%+d]",idx); E(f,"mov [ebp%+d],eax",best);
     LBL(f,lnext);
     scope_close(f,mark);
     E(f,"inc dword [ebp%+d]",idx); E(f,"jmp L%d",ltop);
     LBL(f,lend);
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",best); E(f,"mov eax,[eax+16]");
-    if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else { E(f,"mov eax,[eax+ecx*4]"); if(is_ptr(el)) incref(f); }
-    if(!is_flt(el)) E(f,"push eax");                                          /* the sequence is released */
+    load_at(f,el,"eax","ecx",esize(el)); if(is_ptr(el)) incref(f);
+    if(!is_flt(el)) push_value(f,el);                                         /* the sequence is released */
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref");
-    if(!is_flt(el)) E(f,"pop eax");
+    if(!is_flt(el)) pop_value(f,el);
     return is_ptr(el);
 }
-static int sort_kind(Ty *t){ t=ty_find(t); if(t->k==TY_TUPLE){ rt("rt_tuple_cmp"); return 4; } return t->k==TY_STR?1:t->k==TY_FLOAT?2:0; }
 
 /* any/all of a generator expression: its loops, stopping at the first deciding item */
 static int gen_comp_anyall(F *f, Expr *e, int isall){
@@ -1287,7 +1796,7 @@ static int gen_comp_anyall(F *f, Expr *e, int isall){
     for(int i=0;i<n;i++){
         CompClause *cl=&e->clauses[i];
         iter_begin(f,cl->iter,&its[i]);
-        iter_store_vars(f,&its[i],&xinfo(e)->cvars[2*i],cl->nvars);
+        iter_store_vars(f,&its[i],&xinfo(e)->cvars[2*i],cl->nvars); comp_unpack(f,e,i);
         for(int k=0;k<cl->ncond;k++) gen_jump(f,cl->conds[k],its[i].cont,0);
     }
     gen_jump(f,e->a,lfound,!isall);
@@ -1314,7 +1823,7 @@ static int gen_reduce(F *f, Expr *e, XInfo *xi){
     }
     LBL(f,ltop);
     E(f,"mov eax,[ebp%+d]",src); E(f,"mov ecx,[ebp%+d]",idx); E(f,"cmp ecx,[eax+8]"); E(f,"jae L%d",lend);
-    E(f,"mov eax,[eax+16]"); if(is_flt(el)) E(f,"fld qword [eax+ecx*8]"); else E(f,"mov eax,[eax+ecx*4]");
+    E(f,"mov eax,[eax+16]"); load_at(f,el,"eax","ecx",esize(el));
     store_borrowed(f,x,el);
     { int mark=scope_open(f); gen_as(f,xi->key,at,1); store_var(f,acc); scope_close(f,mark); }
     E(f,"inc dword [ebp%+d]",idx); E(f,"jmp L%d",ltop);
@@ -1323,11 +1832,90 @@ static int gen_reduce(F *f, Expr *e, XInfo *xi){
     load_var(f,acc); if(is_ptr(at)) incref(f);
     return is_ptr(at);
 }
+/* list(range(...)) of the range call r -> eax (owned) */
+static void gen_range_list(F *f, Expr *r){
+    E(f,"sub esp,24");                                   /* start, stop, step: 8 bytes each */
+    Expr *lo=r->count>=2?r->items[0]:NULL, *hi=r->count>=2?r->items[1]:r->items[0], *st=r->count==3?r->items[2]:NULL;
+    if(lo){ gen_as(f,lo,TY_INT_T,0); put_arg(f,TY_INT_T,0); } else { E(f,"mov dword [esp],0"); E(f,"mov dword [esp+4],0"); }
+    gen_as(f,hi,TY_INT_T,0); put_arg(f,TY_INT_T,8);
+    if(st){ gen_as(f,st,TY_INT_T,0); put_arg(f,TY_INT_T,16); } else { E(f,"mov dword [esp+16],1"); E(f,"mov dword [esp+20],0"); }
+    CALLRT(f,"rt_range_list"); E(f,"add esp,24");
+}
+/* eax = a new list of x's items: a list copied, a dict's keys, a str's
+   characters, a set's elements (in its order), what a generator yields */
+static void gen_list_of(F *f, Expr *x, Ty *elem){
+    Ty *t=TY(x);
+    gen_borrow(f,x);
+    switch(t->k){
+        case TY_DICT: CALLRT(f,"rt_dict_keys"); break;
+        case TY_STR: CALLRT(f,"rt_str_chars"); break;
+        case TY_BYTES: CALLRT(f,"rt_bytes_list"); break;
+        case TY_SET: E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_set_to_list"); break;
+        case TY_GEN: E(f,"mov edx,%s",kd_of(elem)); CALLRT(f,"rt_gen_drain"); break;
+        default: E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_list_copy"); break;
+    }
+}
+/* type(x) -> eax: the class of an object, else the descriptor of x's built-in type */
+static void gen_type_of(F *f, Expr *x){
+    Ty *t=TY(x);
+    if(is_none_lit(x)){ E(f,"mov eax,%s",btype_label("NoneType")); return; }
+    if(t->k==TY_OBJ){
+        gen_borrow(f,x);
+        if(is_opt(t)){ int l=new_label(), l2=new_label(); E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,%s",btype_label("NoneType")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"mov eax,[eax+8]"); LBL(f,l2); }
+        else E(f,"mov eax,[eax+8]");
+        return; }
+    int o=gen(f,x);
+    Ty plain=*ty_find(t); plain.opt=0;
+    const char *lbl=btype_label(py_type_name(&plain));
+    if(is_opt(t)){ int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone); drop_value(f,t,o); E(f,"mov eax,%s",lbl); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t,o); E(f,"mov eax,%s",btype_label("NoneType")); LBL(f,lend); return; }
+    drop_value(f,t,o); E(f,"mov eax,%s",lbl);
+}
+/* the generator in [ebp+gslot] finished: StopIteration, its return value as .value (and the message) */
+static void gen_raise_stop(F *f, int gslot, Ty *gt){
+    if(ty_find(gt)->tup){                                  /* an async generator: StopAsyncIteration */
+        AClass *sa=NULL; for(int i=0;i<gg->p->nclasses;i++) if(gg->p->classes[i]->builtin && !strcmp(gg->p->classes[i]->name,"StopAsyncIteration")) sa=gg->p->classes[i];
+        use_class(sa); E(f,"push 0");
+        E(f,"mov eax,%d",sa->size); E(f,"mov edx,%s",class_label(sa,0)); E(f,"mov ecx,%s",class_label(sa,1)); CALLRT(f,"rt_obj_new");
+        E(f,"pop ecx"); E(f,"mov [eax+12],ecx"); CALLRT(f,"rt_throw"); return; }
+    AClass *si=NULL; for(int i=0;i<gg->p->nclasses;i++) if(gg->p->classes[i]->builtin && !strcmp(gg->p->classes[i]->name,"StopIteration")) si=gg->p->classes[i];
+    use_class(si);
+    AField *vf=aot_find_field(si,"value"); Ty *vt=ty_find(vf->ty), *gr=gpart(gt,1);
+    int lnone=new_label(), lgo=new_label();
+    if(gr->k!=TY_VOID){
+        E(f,"mov ecx,[ebp%+d]",gslot); E(f,"cmp dword [ecx+108],0"); E(f,"je L%d",lnone);
+        rt("rt_sb_need"); E(f,"push dword [rt_sb_len]"); E(f,"mov ecx,[ebp%+d]",gslot); load_mem(f,gr,"ecx",100); gen_fmt(f,gr,0); E(f,"pop eax"); CALLRT(f,"rt_sb_take");
+        E(f,"jmp L%d",lgo); }
+    LBL(f,lnone); E(f,"xor eax,eax");
+    LBL(f,lgo); E(f,"push eax");
+    E(f,"mov eax,%d",si->size); E(f,"mov edx,%s",class_label(si,0)); E(f,"mov ecx,%s",class_label(si,1)); CALLRT(f,"rt_obj_new");
+    E(f,"pop ecx"); E(f,"mov [eax+12],ecx"); E(f,"push eax");
+    int l2=new_label(), l3=new_label();
+    if(gr->k!=TY_VOID){ E(f,"mov ecx,[ebp%+d]",gslot); E(f,"cmp dword [ecx+108],0"); E(f,"je L%d",l2);
+        load_mem(f,gr,"ecx",100); if(is_ptr(gr)) incref(f); conv(f,gr,vt); E(f,"jmp L%d",l3); }
+    LBL(f,l2); gen_none(f,vt);
+    LBL(f,l3); E(f,"mov ecx,[esp]"); store_new(f,vt,"ecx",vf->offset); E(f,"pop eax");
+    CALLRT(f,"rt_throw");
+}
+static int gen_builtin_in(F *f, Expr *e, XInfo *xi);
+static void gen_task_new(F *f, Expr *call);
 static int gen_builtin(F *f, Expr *e, XInfo *xi){
+    const char *save=g_none_text; int o=gen_builtin_in(f,e,xi); g_none_text=save; return o;
+}
+static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
     const char *n=xi->name; Ty *t=TY(e);
     Expr *a0=e->count?e->items[0]:NULL; Ty *t0=a0?TY(a0):NULL;
     if(!strcmp(n,"reduce")) return gen_reduce(f,e,xi);
-    if(!strcmp(n,"next")){
+    if(!strcmp(n,"downcast")) return gen(f,e->items[1]);                  /* (the same object, known to be of a subclass) */
+    if(!strcmp(n,"aiter")) return gen(f,a0);
+    if(!strncmp(n,"thread.",7)){ const char *m=n+7;                       /* threads: tasks */
+        if(!strcmp(m,"start")){ gen_task_new(f,xi->key); return 1; }      /* (at the end the program does not wait for them, as the interpreter) */
+        if(!strcmp(m,"join")){ gen_borrow(f,a0); CALLRT(f,"rt_thread_join"); return 0; }
+        if(!strcmp(m,"lock")){ CALLRT(f,"rt_thread_lock"); return 0; }
+        if(!strcmp(m,"acquire")||!strcmp(m,"release")){ gen(f,a0); to_i32(f,TY(a0)); CALLRT(f,m[0]=='a'?"rt_thread_acquire":"rt_thread_release"); return 0; }
+        if(!strcmp(m,"sleep")){ gen_as(f,a0,TY_FLOAT_T,0); CALLRT(f,"rt_thread_sleep"); return 0; } }
+    if(!strcmp(n,"next")||!strcmp(n,"anext")){
         Ty *el=t; int slot=frame_slot(f,4), lmiss=new_label(), lend=new_label();
         gen_borrow(f,a0); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
         CALLRT(f,"rt_gen_next"); E(f,"test eax,eax"); E(f,"jz L%d",lmiss);
@@ -1335,12 +1923,12 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         E(f,"jmp L%d",lend);
         LBL(f,lmiss);
         if(e->count==2){ gen_as(f,e->items[1],el,1); }
-        else CALLRT(f,"rt_panic_stop");
+        else gen_raise_stop(f,slot,TY(a0));
         LBL(f,lend);
         return is_ptr(el);
     }
     if((!strcmp(n,"any")||!strcmp(n,"all")) && a0->kind==EXPR_COMPREHENSION && a0->comp_kind=='g') return gen_comp_anyall(f,a0,n[1]=='l');
-    if(!strcmp(n,"len") && t0->k==TY_TUPLE){ int o=gen(f,a0); drop_value(f,t0,o); E(f,"mov eax,%d",t0->nelems); return 0; }
+    if(!strcmp(n,"len") && t0->k==TY_TUPLE){ int o=gen(f,a0); drop_value(f,t0,o); E(f,"mov eax,%d",t0->nelems); widen(f,0); return 0; }
     if(!strcmp(n,"divmod")){
         Ty *qt=t->elems[0];
         E(f,"mov eax,TD%d",tdesc(t)); E(f,"mov edx,%d",tuple_size(t)); CALLRT(f,"rt_tuple_new"); E(f,"push eax");
@@ -1349,44 +1937,69 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         if(is_flt(qt)){
             E(f,"fld qword [esp]"); E(f,"fld qword [esp+8]"); CALLRT(f,"rt_ffloordiv"); E(f,"mov ecx,[esp+16]"); E(f,"fstp qword [ecx+12]");
             E(f,"fld qword [esp+8]"); E(f,"fld qword [esp]"); E(f,"fxch"); CALLRT(f,"rt_fmod"); E(f,"mov ecx,[esp+16]"); E(f,"fstp qword [ecx+20]");
-        } else {
-            E(f,"mov eax,[esp+4]"); E(f,"mov edx,[esp]"); CALLRT(f,"rt_floordiv"); E(f,"mov ecx,[esp+8]"); E(f,"mov [ecx+12],eax");
-            E(f,"mov eax,[esp+4]"); E(f,"mov edx,[esp]"); CALLRT(f,"rt_mod"); E(f,"mov ecx,[esp+8]"); E(f,"mov [ecx+16],eax");
+        } else {                                            /* [esp] b, [esp+8] a, [esp+16] the tuple */
+            E(f,"push dword [esp+12]"); E(f,"push dword [esp+12]"); E(f,"mov eax,[esp+8]"); E(f,"mov edx,[esp+12]");
+            CALLRT(f,"rt_idivmod"); E(f,"add esp,8");
+            E(f,"mov ecx,[esp+16]"); E(f,"mov [ecx+12],eax"); E(f,"mov [ecx+16],edx");
+            E(f,"mov eax,[rt_scratch]"); E(f,"mov [ecx+20],eax"); E(f,"mov eax,[rt_scratch+4]"); E(f,"mov [ecx+24],eax");
         }
         E(f,"add esp,%d",2*sz); E(f,"pop eax");
         return 1;
     }
     if(!strcmp(n,"len")){
         if(xi->fn){ E(f,"sub esp,4"); gen_borrow(f,a0); E(f,"mov [esp],eax"); call_method_on_top(f,xi->fn); E(f,"add esp,4"); return 0; }
-        int l=new_label(); gen_borrow(f,a0); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"mov eax,[eax+8]"); LBL(f,l); return 0;
+        int l=new_label(); gen_borrow(f,a0); check_none(f,t0,"TypeError","object of type 'NoneType' has no len()");
+        if(t0->k==TY_STR){ CALLRT(f,"rt_str_cplen"); widen(f,0); return 0; }
+        E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"mov eax,[eax+8]"); LBL(f,l); widen(f,0); return 0;
     }
+    if(!strcmp(n,"str_decode")){ gen_codec_call(f,a0,e->items[1],e->count>2?e->items[2]:NULL,NULL,"rt_bytes_decode"); return 1; }
+    if(!strcmp(n,"bytes_empty")){ E(f,"xor eax,eax"); CALLRT(f,"rt_bytes_new"); return 1; }
+    if(!strcmp(n,"bytes_encode")){ gen_codec_call(f,a0,e->items[1],e->count>2?e->items[2]:NULL,NULL,"rt_str_encode"); return 1; }
+    if(!strcmp(n,"bytes_zeros")){ gen(f,a0); to_i32(f,t0); CALLRT(f,"rt_bytes_new"); return 1; }
+    if(!strcmp(n,"bytes_same")) return gen(f,a0);
+    if(!strcmp(n,"bytes_list")){ gen_borrow(f,a0);
+        if(t0->k==TY_SET){ E(f,"mov edx,%s",kd_of(t0->elem)); CALLRT(f,"rt_set_to_list"); hold(f); }
+        CALLRT(f,"rt_bytes_from_list"); return 1; }
+    if(!strcmp(n,"bytes.fromhex")){ gen_borrow(f,a0); CALLRT(f,"rt_bytes_fromhex"); return 1; }
+    if(!strcmp(n,"int.from_bytes")){
+        gen_borrow(f,a0); E(f,"push eax");
+        gen_byteorder(f,e->count>1?e->items[1]:NULL); E(f,"push edx");
+        if(e->count>2) gen(f,e->items[2]); else E(f,"xor eax,eax");
+        E(f,"mov ecx,eax"); E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,"rt_int_from_bytes"); return 0; }
     if(!strcmp(n,"str")||!strcmp(n,"repr")){
         if(!a0){ E(f,"xor eax,eax"); return 0; }
-        if(t0->k==TY_STR && !ty_find(t0)->tup && n[0]=='s') return gen(f,a0);
+        if(t0->k==TY_STR && !t0->opt && n[0]=='s') return gen(f,a0);
         rt("rt_sb_need"); E(f,"push dword [rt_sb_len]");
         gen_borrow(f,a0); gen_fmt(f,t0,n[0]=='r');
         E(f,"pop eax"); CALLRT(f,"rt_sb_take"); return 1;
     }
+    if(!strcmp(n,"int")||!strcmp(n,"float")) g_none_text=n[0]=='i'?"int() argument must be a string, a bytes-like object or a real number, not 'NoneType'":"float() argument must be a string or a real number, not 'NoneType'";
+    if(!strcmp(n,"abs")) g_none_text="bad operand type for abs(): 'NoneType'";
+    if(!strcmp(n,"round")) g_none_text="type NoneType doesn't define __round__ method";
     if(!strcmp(n,"int")){
-        if(!a0){ E(f,"xor eax,eax"); return 0; }
+        if(!a0){ gen_int_const(f,TY_INT_T,0); return 0; }
         if(t0->k==TY_FLOAT){ gen(f,a0); CALLRT(f,"rt_ftoi"); return 0; }
-        if(t0->k==TY_STR){ gen_borrow(f,a0); CALLRT(f,"rt_int_parse"); return 0; }
-        gen(f,a0); return 0;
+        if(t0->k==TY_STR){ gen_borrow(f,a0); check_none(f,t0,"TypeError",g_none_text); CALLRT(f,"rt_int_parse"); return 0; }
+        gen_as(f,a0,TY_INT_T,0); return 0;
     }
     if(!strcmp(n,"float")){
         if(!a0){ E(f,"fldz"); return 0; }
-        if(t0->k==TY_STR){ gen_borrow(f,a0); CALLRT(f,"rt_float_parse"); return 0; }
+        if(t0->k==TY_STR){ gen_borrow(f,a0); check_none(f,t0,"TypeError",g_none_text); CALLRT(f,"rt_float_parse"); return 0; }
         gen_as(f,a0,TY_FLOAT_T,0); return 0;
     }
     if(!strcmp(n,"bool")){ if(!a0) E(f,"xor eax,eax"); else gen_bool(f,a0); return 0; }
-    if(!strcmp(n,"abs")){ gen(f,a0); if(t0->k==TY_FLOAT) E(f,"fabs"); else { E(f,"cdq"); E(f,"xor eax,edx"); E(f,"sub eax,edx"); } return 0; }
+    if(!strcmp(n,"abs")){ if(t0->k==TY_FLOAT){ gen(f,a0); E(f,"fabs"); } else { gen_as(f,a0,TY_INT_T,0); CALLRT(f,"rt_iabs"); } return 0; }
     if((!strcmp(n,"min")||!strcmp(n,"max")) && xi->key) return gen_minmax_key(f,e,n[1]=='a');
     if(!strcmp(n,"min")||!strcmp(n,"max")){
         int mx=n[1]=='a';
-        if(e->count==1 && t0->k==TY_DICT){ gen_borrow(f,a0); CALLRT(f,"rt_dict_keys"); hold(f); E(f,"mov edx,%d",sort_kind(ty_dkey(t0))|(mx?0x100:0)); CALLRT(f,"rt_list_minmax"); return 0; }
-        if(e->count==1){ gen_borrow(f,a0); E(f,"mov edx,%d",sort_kind(t0->elem)|(mx?0x100:0)); CALLRT(f,"rt_list_minmax"); return 0; }
+        if(e->count==1){                                   /* of a container: the address of the element */
+            gen_borrow(f,a0);
+            if(t0->k==TY_DICT){ CALLRT(f,"rt_dict_keys"); hold(f); }
+            else if(t0->k==TY_SET){ E(f,"mov edx,%s",kd_of(t0->elem)); CALLRT(f,"rt_set_to_list"); hold(f); }
+            else if(t0->k==TY_STR){ CALLRT(f,"rt_str_chars"); hold(f); }
+            E(f,"mov edx,%d",mx); CALLRT(f,"rt_list_minmax"); load_mem(f,t,"eax",0); return 0; }
         int slot=frame_slot(f,8);
-        gen_as(f,a0,t,0); if(is_flt(t)) E(f,"fstp qword [ebp%+d]",slot); else E(f,"mov [ebp%+d],eax",slot);
+        gen_as(f,a0,t,0); store_new(f,t,"ebp",slot);
         for(int i=1;i<e->count;i++){
             int skip=new_label();
             gen_as(f,e->items[i],t,0);
@@ -1395,16 +2008,23 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
                 E(f,"fld qword [ebp%+d]",slot); E(f,"fcomp st1"); E(f,"fnstsw ax"); E(f,"sahf");   /* best vs x */
                 E(f,"j%s L%d",mx?"b":"a",take); E(f,"fstp st0"); E(f,"jmp L%d",skip);
                 LBL(f,take); E(f,"fstp qword [ebp%+d]",slot);
-            } else if(ty_find(t)->k==TY_STR){
-                E(f,"push eax"); E(f,"mov edx,[ebp%+d]",slot); CALLRT(f,"rt_str_cmp"); E(f,"pop ecx");
-                E(f,"cmp eax,0"); E(f,"j%s L%d",mx?"le":"ge",skip); E(f,"mov [ebp%+d],ecx",slot);
-            } else { E(f,"cmp eax,[ebp%+d]",slot); E(f,"j%s L%d",mx?"le":"ge",skip); E(f,"mov [ebp%+d],eax",slot); }
+            } else if(is_lng(t)){                               /* the first of equals stays */
+                if(mx){ E(f,"mov ecx,[ebp%+d]",slot); E(f,"sub ecx,eax"); E(f,"mov ecx,[ebp%+d]",slot+4); E(f,"sbb ecx,edx"); E(f,"jge L%d",skip); }
+                else { E(f,"cmp eax,[ebp%+d]",slot); E(f,"mov ecx,edx"); E(f,"sbb ecx,[ebp%+d]",slot+4); E(f,"jge L%d",skip); }
+                store_new(f,t,"ebp",slot);
+            } else if(ty_find(t)->k==TY_BOOL){ E(f,"cmp eax,[ebp%+d]",slot); E(f,"j%s L%d",mx?"le":"ge",skip); E(f,"mov [ebp%+d],eax",slot); }
+            else {                                              /* others: the type's ordering */
+                E(f,"push eax"); E(f,"mov eax,esp"); E(f,"lea edx,[ebp%+d]",slot); E(f,"mov ecx,%s",kd_of(t)); E(f,"call dword [ecx+12]");
+                E(f,"pop ecx"); E(f,"cmp eax,0"); E(f,"j%s L%d",mx?"le":"ge",skip); E(f,"mov [ebp%+d],ecx",slot);
+            }
             LBL(f,skip);
         }
-        if(is_flt(t)) E(f,"fld qword [ebp%+d]",slot); else E(f,"mov eax,[ebp%+d]",slot);
+        load_mem(f,t,"ebp",slot);
         return 0;
     }
-    if(!strcmp(n,"ord")){ gen_borrow(f,a0); CALLRT(f,"rt_ord"); return 0; }
+    if(!strcmp(n,"ord")){ gen_borrow(f,a0); CALLRT(f,"rt_ord"); widen(f,0); return 0; }
+    if(!strcmp(n,"hash")){                                  /* the type's hash (the interpreter's numbers) */
+        gen_borrow(f,a0); push_value(f,t0); E(f,"mov eax,esp"); E(f,"mov ecx,%s",kd_of(t0)); E(f,"call dword [ecx+16]"); E(f,"add esp,%d",esize(t0)); return 0; }
     if(!strcmp(n,"open")){
         gen_borrow(f,a0); E(f,"push eax");
         if(e->count==2) gen_borrow(f,e->items[1]); else E(f,"xor eax,eax");
@@ -1421,11 +2041,9 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         E(f,"mov eax,[ebp%+d]",res); return 0;
     }
     if(!strcmp(n,"reversed")){
-        gen_borrow(f,a0);
-        if(t0->k==TY_STR) CALLRT(f,"rt_str_chars");
-        else if(t0->k==TY_TUPLE) cg_fail(e->line,"reversed() of a tuple: use a list");
-        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); }
-        E(f,"push eax"); E(f,"mov edx,%d",esize(t->elem)); CALLRT(f,"rt_list_reverse"); E(f,"pop eax");
+        if(t0->k==TY_TUPLE) cg_fail(e->line,"reversed() of a tuple: use a list");
+        gen_list_of(f,a0,t->elem);
+        E(f,"push eax"); CALLRT(f,"rt_list_reverse"); E(f,"pop eax");
         return 1;
     }
     if(!strcmp(n,"hex")||!strcmp(n,"bin")||!strcmp(n,"oct")||!strcmp(n,"format")){
@@ -1437,224 +2055,411 @@ static int gen_builtin(F *f, Expr *e, XInfo *xi){
         E(f,"pop eax"); CALLRT(f,"rt_sb_take"); return 1;
     }
     if(!strcmp(n,"pow")){
-        if(e->count==3){ gen(f,a0); E(f,"push eax"); gen(f,e->items[1]); E(f,"push eax"); gen(f,e->items[2]); E(f,"mov ecx,eax"); E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,"rt_ipowmod"); return 0; }
+        if(e->count==3){                                    /* [esp] base, [esp+8] exp, the modulus in edx:eax */
+            gen_as(f,e->items[1],TY_INT_T,0); push_value(f,TY_INT_T); gen_as(f,a0,TY_INT_T,0); push_value(f,TY_INT_T);
+            gen_as(f,e->items[2],TY_INT_T,0); CALLRT(f,"rt_ipowmod"); E(f,"add esp,16"); return 0; }
         int num=1; (void)num;
         gen_as(f,a0,t,0); push_value(f,t); gen_as(f,e->items[1],t,0);
         return apply_binop(f,T_POWER,t,t,TY(e->items[1]),e->line);
     }
-    if(!strcmp(n,"chr")){ gen(f,a0); CALLRT(f,"rt_chr"); return 0; }
-    if(!strcmp(n,"sum")){ gen_borrow(f,a0); E(f,"mov edx,%d",is_flt(t0->elem)?2:0); CALLRT(f,"rt_list_sum"); return 0; }
+    if(!strcmp(n,"chr")){ gen(f,a0); to_i32(f,t0); CALLRT(f,"rt_chr"); return 0; }
+    if(!strcmp(n,"sum")){
+        gen_borrow(f,a0); if(t0->k==TY_SET){ E(f,"mov edx,%s",kd_of(t0->elem)); CALLRT(f,"rt_set_to_list"); hold(f); }
+        if(is_lng(t0->elem)) CALLRT(f,"rt_list_isum");
+        else { CALLRT(f,"rt_list_sum"); if(!is_flt(t0->elem)) widen(f,0); }     /* floats; bools counted */
+        return 0; }
     if(!strcmp(n,"sorted") && (xi->key||xi->rev)){
         int rev=gen_rev_flag(f,xi->rev), src=ref_slot(f);
-        gen_borrow(f,a0);
-        if(t0->k==TY_DICT) CALLRT(f,"rt_dict_keys"); else if(t0->k==TY_STR) CALLRT(f,"rt_str_chars"); else if(xi->key) incref(f);
-        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); }
+        if(xi->key && t0->k==TY_LIST){ gen_borrow(f,a0); incref(f); }     /* sorting by key makes a new list anyway */
+        else gen_list_of(f,a0,t->elem);
         E(f,"mov [ebp%+d],eax",src);
         if(xi->key) return gen_sort_by_key(f,src,t->elem,xi->key,rev,0);
-        E(f,"mov edx,%d",sort_kind(t->elem)); CALLRT(f,"rt_list_sort");
-        { int l=new_label(); E(f,"cmp dword [ebp%+d],0",rev); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",src); E(f,"mov edx,%d",esize(t->elem)); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
+        CALLRT(f,"rt_list_sort");
+        { int l=new_label(); E(f,"cmp dword [ebp%+d],0",rev); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",src); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
         E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); return 1;
     }
     if(!strcmp(n,"sorted")){
-        gen_borrow(f,a0);
-        if(t0->k==TY_DICT) CALLRT(f,"rt_dict_keys");
-        else if(t0->k==TY_STR) CALLRT(f,"rt_str_chars");
-        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); }
-        E(f,"push eax"); E(f,"mov edx,%d",sort_kind(t->elem)); CALLRT(f,"rt_list_sort"); E(f,"pop eax");
+        gen_list_of(f,a0,t->elem);
+        E(f,"push eax"); CALLRT(f,"rt_list_sort"); E(f,"pop eax");
         return 1;
+    }
+    if(!strcmp(n,"type")){ gen_type_of(f,a0); return 0; }
+    if(!strcmp(n,"issubclass")){
+        Expr *k=e->items[1]; int nk=k->kind==EXPR_TUPLE?k->count:1;
+        gen(f,a0); E(f,"push eax"); E(f,"push 0");
+        for(int i=0;i<nk;i++){ XInfo *ki=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k);
+            if(!ki->cls && !strcmp(ki->name,"object")){ E(f,"mov dword [esp],1"); continue; }
+            E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",typeval_label(ki)); CALLRT(f,"rt_issubclass"); E(f,"or [esp],eax"); }
+        E(f,"pop eax"); E(f,"add esp,4"); return 0;
     }
     if(!strcmp(n,"isinstance")){
         Expr *k=e->items[1]; int nk=k->kind==EXPR_TUPLE?k->count:1;
-        gen_borrow(f,a0); E(f,"push eax"); E(f,"push 0");
-        for(int i=0;i<nk;i++){ AClass *c=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k)->cls; use_class(c);
-            E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",class_label(c,0)); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax"); }
-        E(f,"pop eax"); E(f,"add esp,4"); return 0;
+        if(t0->k==TY_OBJ){                                     /* an object: its class (None: an instance of nothing here) */
+            gen_borrow(f,a0); E(f,"push eax"); E(f,"push 0");
+            for(int i=0;i<nk;i++){ XInfo *ki=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k);
+                if(!ki->cls){ if(!strcmp(ki->name,"object")){ int l=new_label(); E(f,"cmp dword [esp+4],0"); E(f,"je L%d",l); E(f,"mov dword [esp],1"); LBL(f,l); }
+                    else if(!strcmp(ki->name,"NoneType")){ int l=new_label(); E(f,"cmp dword [esp+4],0"); E(f,"jne L%d",l); E(f,"mov dword [esp],1"); LBL(f,l); }
+                    continue; }
+                for(int q=-1;q<ki->cls->ninsts;q++){ AClass *kc=q<0?ki->cls:ki->cls->insts[q];   /* (a generic class: any of its instances) */
+                    use_class(kc);
+                    E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",class_label(kc,0)); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax"); }
+                for(int q=0;q<gg->p->nclasses;q++){ AClass *kc=gg->p->classes[q];       /* a mixin: the classes it was copied into */
+                    for(int v=0;v<kc->nvbases;v++) if(kc->vbases[v]==ki->cls){ use_class(kc);
+                        E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",class_label(kc,0)); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax"); } } }
+            E(f,"pop eax"); E(f,"add esp,4"); return 0;
+        }
+        int match=0, none_ok=0;                                 /* a value of a built-in type: known but for None */
+        for(int i=0;i<nk;i++){ XInfo *ki=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k);
+            if(ki->cls) continue;
+            if(!strcmp(ki->name,"NoneType")) none_ok=1; else if(btype_match(t0,ki->name)) match=1; }
+        if(!is_opt(t0) && !is_none_lit(a0)){ int o=gen(f,a0); drop_value(f,t0,o); E(f,"mov eax,%d",match); return 0; }
+        if(is_none_lit(a0)){ E(f,"mov eax,%d",none_ok); return 0; }
+        int o=gen(f,a0); int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t0,lnone); drop_value(f,t0,o); E(f,"mov eax,%d",match); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t0,o); E(f,"mov eax,%d",none_ok); LBL(f,lend); return 0;
     }
     if(!strcmp(n,"input")){ if(a0) gen_borrow(f,a0); else E(f,"xor eax,eax"); CALLRT(f,"rt_input"); return 1; }
     if(!strcmp(n,"round")){
         if(e->count==1){ gen_as(f,a0,TY_FLOAT_T,0); CALLRT(f,"rt_fround"); return 0; }
         gen_as(f,a0,TY_FLOAT_T,0); E(f,"sub esp,8"); E(f,"fstp qword [esp]");
-        gen(f,e->items[1]); E(f,"fld qword [esp]"); E(f,"add esp,8"); CALLRT(f,"rt_fround_n"); return 0;
+        gen(f,e->items[1]); to_i32(f,TY(e->items[1])); E(f,"fld qword [esp]"); E(f,"add esp,8"); CALLRT(f,"rt_fround_n"); return 0;
     }
     if(!strcmp(n,"list")){
-        if(!a0){ E(f,"mov eax,%s",list_destroy(t->elem)); CALLRT(f,"rt_list_new"); return 1; }
+        if(!a0){ new_list(f,t->elem); return 1; }
         XInfo *ai=xinfo(a0);
-        if(ai->kind==X_BUILTIN && ai->name && !strcmp(ai->name,"range")){
-            E(f,"sub esp,12"); E(f,"mov dword [esp],0"); E(f,"mov dword [esp+8],1");
-            if(a0->count==1){ gen(f,a0->items[0]); E(f,"mov [esp+4],eax"); }
-            else { gen(f,a0->items[0]); E(f,"mov [esp],eax"); gen(f,a0->items[1]); E(f,"mov [esp+4],eax");
-                if(a0->count==3){ gen(f,a0->items[2]); E(f,"mov [esp+8],eax"); } }
-            E(f,"pop eax"); E(f,"pop edx"); E(f,"pop ecx"); CALLRT(f,"rt_range_list"); return 1;
-        }
-        gen_borrow(f,a0);
-        if(t0->k==TY_STR) CALLRT(f,"rt_str_chars");
-        else if(t0->k==TY_DICT) CALLRT(f,"rt_dict_keys");
-        else if(t0->k==TY_GEN){ E(f,"mov edx,%s",list_destroy(t->elem)); CALLRT(f,"rt_gen_drain"); }
-        else { E(f,"mov edx,%d",kind_of(t0->elem)); CALLRT(f,"rt_list_copy"); E(f,"mov dword [eax+4],%s",list_destroy(t->elem)); }
+        if(ai->kind==X_BUILTIN && ai->name && !strcmp(ai->name,"range")){ gen_range_list(f,a0); return 1; }
+        gen_list_of(f,a0,t->elem);
         return 1;
     }
     if(!strcmp(n,"set")){
-        if(!a0){ E(f,"mov eax,%s",list_destroy(t->elem)); CALLRT(f,"rt_list_new"); return 1; }
-        gen_borrow(f,a0);
-        if(t0->k==TY_STR||t0->k==TY_DICT){ CALLRT(f,t0->k==TY_STR?"rt_str_chars":"rt_dict_keys"); hold(f); }
-        E(f,"mov edx,%d",kind_of(t->elem)); CALLRT(f,"rt_set_from"); return 1;
+        if(!a0){ new_set(f,t->elem); return 1; }
+        if(t0->k==TY_SET){ gen_borrow(f,a0); E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_set_copy"); return 1; }   /* CPython: merged */
+        if(t0->k==TY_LIST) gen_borrow(f,a0);
+        else { gen_list_of(f,a0,t->elem); hold(f); }
+        E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_set_from_list"); return 1;
     }
-    if(!strcmp(n,"range_list")){                         /* range(...) as a value */
-        E(f,"sub esp,12"); E(f,"mov dword [esp],0"); E(f,"mov dword [esp+8],1");
-        if(e->count==1){ gen(f,a0); E(f,"mov [esp+4],eax"); }
-        else { gen(f,a0); E(f,"mov [esp],eax"); gen(f,e->items[1]); E(f,"mov [esp+4],eax");
-            if(e->count==3){ gen(f,e->items[2]); E(f,"mov [esp+8],eax"); } }
-        E(f,"pop eax"); E(f,"pop edx"); E(f,"pop ecx"); CALLRT(f,"rt_range_list"); return 1; }
-    if(!strcmp(n,"dict_copy")){ gen_borrow(f,a0); E(f,"mov edx,%d",kind_of(t->elem)); CALLRT(f,"rt_dict_copy"); return 1; }
+    if(!strcmp(n,"range_list")){ gen_range_list(f,e); return 1; }  /* range(...) as a value */
+    if(!strcmp(n,"dict_copy")){ gen_borrow(f,a0); CALLRT(f,"rt_dict_copy"); return 1; }
     if(!strcmp(n,"dict")){ new_dict(f,t); return 1; }
     cg_fail(e->line,"unsupported builtin");
 }
 
+/* the receiver of a method of a built-in type (AttributeError if None) */
+static void gen_recv(F *f, Expr *obj, const char *m){
+    gen_borrow(f,obj); check_none(f,TY(obj),"AttributeError",none_msg("'NoneType' object has no attribute '%s'",m));
+}
+/* s.find(sub[, start[, end]]) and the like: {s, sub, start, end, flags} on
+   the stack for the runtime (flags: 1 no start, 2 no end, 4 sub is a tuple) */
+static void gen_str_ranged(F *f, Expr *e, Expr *obj, const char *m, const char *routine, int mode){
+    int flags=0, isbytes=TY(obj)->k==TY_BYTES;
+    E(f,"sub esp,20");
+    gen_recv(f,obj,m); if(isbytes) CALLRT(f,"rt_bytes_cp"); E(f,"mov [esp],eax");
+    Ty *nt=TY(e->items[0]);
+    if(isbytes && (nt->k==TY_INT||nt->k==TY_BOOL)){ gen(f,e->items[0]); if(!is_lng(nt)) widen(f,0); CALLRT(f,"rt_bytes_byte"); }   /* b.find(65): one byte */
+    else gen_borrow(f,e->items[0]);
+    E(f,"mov [esp+4],eax");
+    if(TY(e->items[0])->k==TY_TUPLE) flags|=4;
+    for(int k=1;k<3;k++){
+        if(k<e->count && !is_none_lit(e->items[k])){ gen(f,e->items[k]); to_i32(f,TY(e->items[k])); E(f,"mov [esp+%d],eax",4+4*k); }
+        else { flags|=k; E(f,"mov dword [esp+%d],0",4+4*k); }
+    }
+    E(f,"mov dword [esp+16],%d",flags);
+    E(f,"mov eax,%d",mode); CALLRT(f,routine); E(f,"add esp,20");
+}
+/* an encoding's name -> rt_codec's number for it (-1: unknown, found out when the program runs) */
+static int codec_number(const char *name){
+    char n[40]; int k=0;
+    if(strlen(name)>=sizeof n) return -1;
+    for(const char *p=name;*p;p++){ char c=*p; if(c>='A'&&c<='Z') c=(char)(c+32); if(c=='_'||c==' ') c='-'; n[k++]=c; }
+    n[k]=0;
+    if(!strcmp(n,"utf-8")||!strcmp(n,"utf8")||!strcmp(n,"u8")) return 0;
+    if(!strcmp(n,"ascii")||!strcmp(n,"us-ascii")) return 1;
+    if(!strcmp(n,"latin-1")||!strcmp(n,"latin1")||!strcmp(n,"iso-8859-1")||!strcmp(n,"iso8859-1")||!strcmp(n,"l1")) return 2;
+    return -1;
+}
+/* s.encode(encoding, errors), b.decode(...): routine gets eax = the object, edx = the codec, ecx = errors (0: strict) */
+static void gen_codec_call(F *f, Expr *obj, Expr *enc, Expr *errs, const char *m, const char *routine){
+    if(m) gen_recv(f,obj,m); else gen_borrow(f,obj);
+    E(f,"push eax");
+    if(enc && !is_none_lit(enc)){
+        int k= enc->kind==EXPR_LITERAL && enc->tok->kind==T_STRING ? codec_number(enc->tok->text) : -1;
+        if(k>=0) E(f,"push %d",k); else { gen_borrow(f,enc); CALLRT(f,"rt_codec"); E(f,"push eax"); }
+    } else E(f,"push 0");
+    if(errs && !is_none_lit(errs)) gen_borrow(f,errs); else E(f,"xor eax,eax");
+    E(f,"mov ecx,eax"); E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,routine);
+}
+/* a byte order ("big" / "little") -> edx = 1 when little; checked when the program runs unless a literal */
+static void gen_byteorder(F *f, Expr *x){
+    if(!x || is_none_lit(x)){ E(f,"xor edx,edx"); return; }
+    if(x->kind==EXPR_LITERAL && x->tok->kind==T_STRING && (!strcmp(x->tok->text,"big")||!strcmp(x->tok->text,"little"))){ E(f,"mov edx,%d",x->tok->text[0]=='l'); return; }
+    gen_borrow(f,x); CALLRT(f,"rt_byteorder"); E(f,"mov edx,eax");
+}
 static int gen_tmethod(F *f, Expr *e, XInfo *xi){
     const char *m=xi->name; Expr *obj=e->a->a; Ty *t0=TY(obj);
+
     Expr *a0=e->count?e->items[0]:NULL, *a1=e->count>1?e->items[1]:NULL;
     if(t0->k==TY_STR){
         if(!strcmp(m,"format")) return gen_str_format(f,e);
         if(!strcmp(m,"ljust")||!strcmp(m,"rjust")||!strcmp(m,"center")||!strcmp(m,"zfill")){
+            int mode= m[0]=='l' ? 1 : m[0]=='c' ? 3 : m[0]=='z' ? 4|'0'<<8 : 0;           /* see rt_sb_pad */
             rt("rt_sb_need"); E(f,"push dword [rt_sb_len]");
-            gen_borrow(f,obj); CALLRT(f,"rt_sb_str");
-            if(a1){ gen_borrow(f,a1); E(f,"movzx eax,byte [eax+12]"); E(f,"shl eax,24"); E(f,"push eax"); } else E(f,"push 0");
-            gen(f,a0); E(f,"and eax,0xFFFF"); E(f,"or [esp],eax");
-            E(f,"pop edx"); E(f,"or edx,0x%x",m[0]=='l'?0x10000:m[0]=='c'?0x40000:m[0]=='z'?0x20000:0);
-            E(f,"mov eax,[esp]"); CALLRT(f,"rt_sb_pad");
+            gen_recv(f,obj,m); CALLRT(f,"rt_sb_str");
+            gen(f,a0); to_i32(f,TY(a0)); E(f,"push eax");
+            if(a1){ gen_borrow(f,a1); CALLRT(f,"rt_fillchar"); E(f,"shl eax,8"); E(f,"or eax,%d",mode); E(f,"mov edx,eax"); } else E(f,"mov edx,%d",mode);
+            E(f,"pop ecx"); E(f,"mov eax,[esp]"); CALLRT(f,"rt_sb_pad");
             E(f,"pop eax"); CALLRT(f,"rt_sb_take"); return 1;
         }
         if(!strcmp(m,"strip")||!strcmp(m,"lstrip")||!strcmp(m,"rstrip")){
-            gen_borrow(f,obj);
-            if(a0){ E(f,"push eax"); gen_borrow(f,a0); E(f,"mov ecx,eax"); E(f,"pop eax"); } else E(f,"xor ecx,ecx");
+            gen_recv(f,obj,m);
+            if(a0 && !is_none_lit(a0)){ E(f,"push eax"); gen_borrow(f,a0); E(f,"mov ecx,eax"); E(f,"pop eax"); } else E(f,"xor ecx,ecx");
             E(f,"mov edx,%d",m[0]=='s'?3:m[0]=='l'?1:2); CALLRT(f,"rt_str_strip"); return 1;
         }
-        if(!strcmp(m,"encode")||!strcmp(m,"decode")) return gen(f,obj);       /* str and bytes are the same bytes */
-        gen_borrow(f,obj);
-        if(!strcmp(m,"upper")||!strcmp(m,"lower")||!strcmp(m,"capitalize")||!strcmp(m,"title")||!strcmp(m,"swapcase")){
-            E(f,"mov edx,%d",m[0]=='u'?0:m[0]=='l'?1:m[0]=='c'?2:m[0]=='t'?3:4); CALLRT(f,"rt_str_case"); return 1; }
-        if(!strcmp(m,"splitlines")){ CALLRT(f,"rt_str_splitlines"); return 1; }
-        if(!strncmp(m,"is",2)){ static const char *cls[]={"isdigit","isalpha","isspace","isupper","islower","isalnum"};
-            int k=0; for(int i=0;i<6;i++) if(!strcmp(m,cls[i])) k=i; E(f,"mov edx,%d",k); CALLRT(f,"rt_str_is"); return 0; }
+        if(!strcmp(m,"encode")){ gen_codec_call(f,obj,a0,a1,m,"rt_str_encode"); return 1; }
+        if(!strcmp(m,"startswith")||!strcmp(m,"endswith")){ gen_str_ranged(f,e,obj,m,"rt_str_affix",m[0]=='e'); return 0; }
+        if(!strcmp(m,"find")||!strcmp(m,"rfind")||!strcmp(m,"index")||!strcmp(m,"rindex")){
+            gen_str_ranged(f,e,obj,m,"rt_str_find",(m[0]=='r')|(strstr(m,"index")?2:0)); widen(f,1); return 0; }
+        if(!strcmp(m,"count")){ gen_str_ranged(f,e,obj,m,"rt_str_count",0); widen(f,1); return 0; }
+        if(!strcmp(m,"replace")){
+            E(f,"sub esp,16"); gen_recv(f,obj,m); E(f,"mov [esp],eax");
+            gen_borrow(f,a0); E(f,"mov [esp+4],eax"); gen_borrow(f,a1); E(f,"mov [esp+8],eax");
+            if(e->count==3){ gen(f,e->items[2]); to_i32(f,TY(e->items[2])); E(f,"mov [esp+12],eax"); } else E(f,"mov dword [esp+12],-1");
+            CALLRT(f,"rt_str_replace"); E(f,"add esp,16"); return 1;
+        }
+        if(!strcmp(m,"split")||!strcmp(m,"rsplit")){
+            gen_recv(f,obj,m); E(f,"push eax");
+            if(a0 && !is_none_lit(a0)) gen_borrow(f,a0); else E(f,"xor eax,eax");
+            E(f,"push eax");
+            if(a1){ gen(f,a1); to_i32(f,TY(a1)); E(f,"mov ecx,eax"); } else E(f,"or ecx,-1");
+            E(f,"pop edx"); E(f,"pop eax"); rt("rt_str_split"); E(f,"call %s",m[0]=='r'?"rt_str_rsplit":"rt_str_split"); return 1;
+        }
+        if(!strcmp(m,"partition")||!strcmp(m,"rpartition")){
+            gen_recv(f,obj,m); E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax");
+            E(f,"mov ecx,TD%d",tdesc(TY(e))); rt("rt_str_partition"); E(f,"call %s",m[0]=='r'?"rt_str_rpartition":"rt_str_partition"); return 1;
+        }
+        if(!strcmp(m,"removeprefix")||!strcmp(m,"removesuffix")){
+            gen_recv(f,obj,m); E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax");
+            E(f,"mov ecx,%d",m[6]=='s'); CALLRT(f,"rt_str_remove"); return 1;
+        }
+        if(!strcmp(m,"expandtabs")){
+            gen_recv(f,obj,m);
+            if(a0){ E(f,"push eax"); gen(f,a0); to_i32(f,TY(a0)); E(f,"mov edx,eax"); E(f,"pop eax"); } else E(f,"mov edx,8");
+            CALLRT(f,"rt_str_expandtabs"); return 1;
+        }
+        if(!strcmp(m,"splitlines")){
+            gen_recv(f,obj,m);
+            if(a0){ E(f,"push eax"); gen(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); } else E(f,"xor edx,edx");
+            CALLRT(f,"rt_str_splitlines"); return 1;
+        }
+        gen_recv(f,obj,m);
+        if(!strcmp(m,"upper")||!strcmp(m,"lower")||!strcmp(m,"swapcase")||!strcmp(m,"title")||!strcmp(m,"capitalize")||!strcmp(m,"casefold")){
+            static const char *const modes[]={"upper","lower","swapcase","title","capitalize","casefold"};
+            int k=0; for(int i=0;i<6;i++) if(!strcmp(m,modes[i])) k=i;
+            E(f,"mov edx,%d",k); CALLRT(f,"rt_str_case"); return 1; }
+        if(str_is_mode(m)>=0){ E(f,"mov edx,%d",str_is_mode(m)); CALLRT(f,"rt_str_is"); return 0; }
         E(f,"push eax");
-        if(!strcmp(m,"replace")){ gen_borrow(f,a0); E(f,"push eax"); gen_borrow(f,a1); E(f,"mov ecx,eax"); E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,"rt_str_replace"); return 1; }
         if(a0) gen_borrow(f,a0); else E(f,"xor eax,eax");
         if(a0 && !strcmp(m,"join") && TY(a0)->k==TY_STR){ CALLRT(f,"rt_str_chars"); hold(f); }    /* sep.join("abc") */
+        if(a0 && !strcmp(m,"join") && TY(a0)->k==TY_SET){ E(f,"mov edx,%s",kd_of(TY(a0)->elem)); CALLRT(f,"rt_set_to_list"); hold(f); }
         E(f,"mov edx,eax"); E(f,"pop eax");
-        if(!strcmp(m,"startswith")||!strcmp(m,"endswith")){ E(f,"mov ecx,%d",m[0]=='e'); CALLRT(f,"rt_str_affix"); return 0; }
-        if(!strcmp(m,"find")){ CALLRT(f,"rt_str_find"); return 0; }
-        if(!strcmp(m,"rfind")){ CALLRT(f,"rt_str_rfind"); return 0; }
-        if(!strcmp(m,"rindex")){ CALLRT(f,"rt_str_rfind"); int l=new_label(); E(f,"cmp eax,-1"); E(f,"jne L%d",l); E(f,"mov esi,Z%d",zlit("substring not found")); CALLRT(f,"rt_panic_value"); LBL(f,l); return 0; }
-        if(!strcmp(m,"index")){ CALLRT(f,"rt_str_index"); return 0; }
-        if(!strcmp(m,"count")){ CALLRT(f,"rt_str_count"); return 0; }
-        if(!strcmp(m,"split")){ CALLRT(f,"rt_str_split"); return 1; }
         if(!strcmp(m,"join")){ CALLRT(f,"rt_str_join"); return 1; }
     }
+    if(t0->k==TY_BYTES){
+        if(!strcmp(m,"decode")){ gen_codec_call(f,obj,a0,a1,m,"rt_bytes_decode"); return 1; }
+        if(!strcmp(m,"startswith")||!strcmp(m,"endswith")){ gen_str_ranged(f,e,obj,m,"rt_str_affix",m[0]=='e'); return 0; }
+        if(!strcmp(m,"find")||!strcmp(m,"rfind")||!strcmp(m,"index")||!strcmp(m,"rindex")){
+            gen_str_ranged(f,e,obj,m,"rt_str_find",4|(m[0]=='r')|(strstr(m,"index")?2:0)); widen(f,1); return 0; }
+        if(!strcmp(m,"count")){ gen_str_ranged(f,e,obj,m,"rt_str_count",0); widen(f,1); return 0; }
+        if(!strcmp(m,"replace")){
+            E(f,"sub esp,16"); gen_recv(f,obj,m); E(f,"mov [esp],eax");
+            gen_borrow(f,a0); E(f,"mov [esp+4],eax"); gen_borrow(f,a1); E(f,"mov [esp+8],eax");
+            if(e->count==3){ gen(f,e->items[2]); to_i32(f,TY(e->items[2])); E(f,"mov [esp+12],eax"); } else E(f,"mov dword [esp+12],-1");
+            CALLRT(f,"rt_bytes_replace"); E(f,"add esp,16"); return 1;
+        }
+        if(!strcmp(m,"split")||!strcmp(m,"rsplit")){
+            gen_recv(f,obj,m); E(f,"push eax");
+            if(a0 && !is_none_lit(a0)) gen_borrow(f,a0); else E(f,"xor eax,eax");
+            E(f,"push eax");
+            if(a1){ gen(f,a1); to_i32(f,TY(a1)); E(f,"mov ecx,eax"); } else E(f,"or ecx,-1");
+            E(f,"pop edx"); E(f,"pop eax"); rt("rt_bytes_split"); E(f,"call %s",m[0]=='r'?"rt_bytes_rsplit":"rt_bytes_split"); return 1;
+        }
+        if(!strcmp(m,"strip")||!strcmp(m,"lstrip")||!strcmp(m,"rstrip")){
+            gen_recv(f,obj,m);
+            if(a0 && !is_none_lit(a0)){ E(f,"push eax"); gen_borrow(f,a0); E(f,"mov ecx,eax"); E(f,"pop eax"); } else E(f,"xor ecx,ecx");
+            E(f,"mov edx,%d",m[0]=='s'?3:m[0]=='l'?1:2); CALLRT(f,"rt_bytes_strip"); return 1;
+        }
+        if(!strcmp(m,"partition")||!strcmp(m,"rpartition")){
+            gen_recv(f,obj,m); E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax");
+            E(f,"mov ecx,TD%d",tdesc(TY(e))); rt("rt_str_partition"); E(f,"call %s",m[0]=='r'?"rt_str_rpartition":"rt_str_partition"); return 1;
+        }
+        if(!strcmp(m,"removeprefix")||!strcmp(m,"removesuffix")){
+            gen_recv(f,obj,m); E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax");
+            E(f,"mov ecx,%d",m[6]=='s'); CALLRT(f,"rt_str_remove"); return 1;
+        }
+        if(!strcmp(m,"splitlines")){
+            gen_recv(f,obj,m);
+            if(a0){ E(f,"push eax"); gen(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); } else E(f,"xor edx,edx");
+            CALLRT(f,"rt_bytes_splitlines"); return 1;
+        }
+        gen_recv(f,obj,m);
+        if(!strcmp(m,"hex")){ CALLRT(f,"rt_bytes_hex"); return 1; }
+        if(bytes_case_mode(m)>=0){ E(f,"mov edx,%d",bytes_case_mode(m)); CALLRT(f,"rt_bytes_case"); return 1; }
+        if(bytes_is_mode(m)>=0){ E(f,"mov edx,%d",bytes_is_mode(m)); CALLRT(f,"rt_bytes_is"); return 0; }
+        if(!strcmp(m,"join")){
+            E(f,"push eax"); gen_borrow(f,a0);
+            if(TY(a0)->k==TY_SET){ E(f,"mov edx,%s",kd_of(TY(a0)->elem)); CALLRT(f,"rt_set_to_list"); hold(f); }
+            E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_str_join"); return 1; }
+    }
+    if(t0->k==TY_INT||t0->k==TY_BOOL){
+        if(!strcmp(m,"to_bytes")){                              /* n.to_bytes(length=1, byteorder="big", signed=False) */
+            gen_as(f,obj,TY_INT_T,0); push_value(f,TY_INT_T);
+            if(a0 && !is_none_lit(a0)){ gen(f,a0); to_i32(f,TY(a0)); E(f,"push eax"); } else E(f,"push 1");
+            gen_byteorder(f,a1); E(f,"push edx");
+            if(e->count>2) gen(f,e->items[2]); else E(f,"xor eax,eax");
+            E(f,"push eax"); CALLRT(f,"rt_int_to_bytes"); E(f,"add esp,20"); return 1; }
+        gen_as(f,obj,TY_INT_T,0);
+        if(!strcmp(m,"bit_length")){ CALLRT(f,"rt_int_bitlen"); widen(f,0); return 0; }
+        if(!strcmp(m,"bit_count")){ CALLRT(f,"rt_int_bitcount"); widen(f,0); return 0; }
+    }
+    if(t0->k==TY_FLOAT && !strcmp(m,"is_integer")){             /* x - round(x) == 0 (a NaN for inf and nan) */
+        gen_as(f,obj,TY_FLOAT_T,0); E(f,"fld st0"); E(f,"frndint"); E(f,"fsubp st1,st0"); E(f,"ftst"); E(f,"fnstsw ax"); E(f,"fstp st0"); E(f,"sahf");
+        E(f,"sete al"); E(f,"setnp cl"); E(f,"and al,cl"); E(f,"movzx eax,al"); return 0; }
     if(t0->k==TY_LIST){
-        Ty *el=t0->elem; int k=kind_of(el), es=esize(el);
-        gen_borrow(f,obj);
-        if(!strcmp(m,"reverse")){ E(f,"mov edx,%d",es); CALLRT(f,"rt_list_reverse"); return 0; }
+        Ty *el=t0->elem; int es=esize(el);
+        gen_recv(f,obj,m);
+        if(!strcmp(m,"reverse")){ CALLRT(f,"rt_list_reverse"); return 0; }
         if(!strcmp(m,"sort") && (xi->key||xi->rev)){
             int src=ref_slot(f); incref(f); E(f,"mov [ebp%+d],eax",src);
             int rev=gen_rev_flag(f,xi->rev);
             if(xi->key){ gen_sort_by_key(f,src,el,xi->key,rev,1); E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref"); return 0; }
-            E(f,"mov eax,[ebp%+d]",src); E(f,"mov edx,%d",sort_kind(el)); CALLRT(f,"rt_list_sort");
-            { int l=new_label(); E(f,"cmp dword [ebp%+d],0",rev); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",src); E(f,"mov edx,%d",es); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
+            E(f,"mov eax,[ebp%+d]",src); CALLRT(f,"rt_list_sort");
+            { int l=new_label(); E(f,"cmp dword [ebp%+d],0",rev); E(f,"je L%d",l); E(f,"mov eax,[ebp%+d]",src); CALLRT(f,"rt_list_reverse"); LBL(f,l); }
             E(f,"mov eax,[ebp%+d]",src); E(f,"mov dword [ebp%+d],0",src); CALLRT(f,"rt_decref"); return 0;
         }
-        if(!strcmp(m,"sort")){ E(f,"mov edx,%d",sort_kind(el)); CALLRT(f,"rt_list_sort"); return 0; }
-        if(!strcmp(m,"clear")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_list_clear"); return 0; }
-        if(!strcmp(m,"copy")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_list_copy"); return 1; }
+        if(!strcmp(m,"sort")){ CALLRT(f,"rt_list_sort"); return 0; }
+        if(!strcmp(m,"clear")){ CALLRT(f,"rt_list_clear"); return 0; }
+        if(!strcmp(m,"copy")){ E(f,"mov edx,%s",kd_of(el)); CALLRT(f,"rt_list_copy"); return 1; }
         E(f,"push eax");
         if(!strcmp(m,"append")){ gen_as(f,a0,el,1); list_append_top(f,el); E(f,"add esp,4"); return 0; }
-        if(!strcmp(m,"pop")){ if(a0) gen(f,a0); else E(f,"or eax,-1");
-            E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",es); CALLRT(f,"rt_list_pop"); load_mem(f,el,"eax",0); return is_ptr(el); }
-        if(!strcmp(m,"insert")){ gen(f,a0); E(f,"push eax"); gen_as(f,a1,el,1); push_value(f,el);
-            E(f,"mov eax,[esp+%d]",es+4); E(f,"mov edx,[esp+%d]",es); E(f,"mov ecx,%d",es); CALLRT(f,"rt_list_insert");
-            if(is_flt(el)){ E(f,"fld qword [esp]"); E(f,"add esp,8"); E(f,"fstp qword [eax]"); } else { E(f,"pop edx"); E(f,"mov [eax],edx"); }
+        if(!strcmp(m,"pop")){ if(a0){ gen(f,a0); to_i32(f,TY(a0)); } else E(f,"or eax,-1");
+            E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_pop"); load_mem(f,el,"eax",0); return is_ptr(el); }
+        if(!strcmp(m,"insert")){ gen(f,a0); to_i32(f,TY(a0)); E(f,"push eax"); gen_as(f,a1,el,1); push_value(f,el);
+            E(f,"mov eax,[esp+%d]",es+4); E(f,"mov edx,[esp+%d]",es); CALLRT(f,"rt_list_insert");
+            E(f,"mov ecx,eax"); pop_value(f,el); store_new(f,el,"ecx",0);
             E(f,"add esp,8"); return 0; }
-        if(!strcmp(m,"extend")){ gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k); CALLRT(f,"rt_list_extend"); return 0; }
-        gen_as(f,a0,el,0);                                       /* remove / index / count */
-        if(is_flt(el)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); E(f,"mov edx,esp"); E(f,"mov eax,[esp+8]"); }
-        else { E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); }
-        E(f,"mov ecx,%d",k);
+        if(!strcmp(m,"extend")){
+            if(TY(a0)->k==TY_LIST) gen_borrow(f,a0); else { gen_list_of(f,a0,el); hold(f); }
+            E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_extend"); return 0; }
+        gen_as(f,a0,el,0); push_value(f,el);                     /* remove / index / count: the value by address */
+        E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",es);
         CALLRT(f,!strcmp(m,"remove")?"rt_list_remove":!strcmp(m,"index")?"rt_list_index":"rt_list_count");
-        E(f,"add esp,%d",is_flt(el)?12:4);
+        E(f,"add esp,%d",es+4);
+        if(m[0]!='r') widen(f,0);
         return 0;
     }
     if(t0->k==TY_DICT){
-        Ty *v=t0->elem; int k=kind_of(v), vs=esize(v);
-        gen_borrow(f,obj);
+        Ty *v=t0->elem, *kt=ty_dkey(t0); int vs=esize(v), ks=esize(kt);
+        gen_recv(f,obj,m);
         if(!strcmp(m,"keys")){ CALLRT(f,"rt_dict_keys"); return 1; }
         if(!strcmp(m,"items")){ E(f,"mov edx,TD%d",tdesc(ty_find(TY(e))->elem)); CALLRT(f,"rt_dict_items"); return 1; }
-        if(!strcmp(m,"values")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_dict_values"); return 1; }
-        if(!strcmp(m,"clear")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_dict_clear"); return 0; }
-        if(!strcmp(m,"copy")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_dict_copy"); return 1; }
+        if(!strcmp(m,"values")){ CALLRT(f,"rt_dict_values"); return 1; }
+        if(!strcmp(m,"clear")){ CALLRT(f,"rt_dict_clear"); return 0; }
+        if(!strcmp(m,"copy")){ CALLRT(f,"rt_dict_copy"); return 1; }
         E(f,"push eax");
-        if(!strcmp(m,"update")){ gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k); CALLRT(f,"rt_dict_update"); return 0; }
-        gen_borrow(f,a0); E(f,"push eax");                     /* [esp] key, [esp+4] dict */
-        E(f,"mov edx,eax"); E(f,"mov eax,[esp+4]"); CALLRT(f,"rt_dict_find");
+        if(!strcmp(m,"update")){ gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_dict_update"); return 0; }
+        gen_as(f,a0,kt,0); push_value(f,kt);                     /* [esp] key, [esp+ks] the dict */
+        E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",ks); CALLRT(f,"rt_dict_find");
         int lmiss=new_label(), lend=new_label(), owned=0;
         E(f,"cmp eax,-1"); E(f,"je L%d",lmiss);
         if(!strcmp(m,"get")||!strcmp(m,"setdefault")){
-            E(f,"mov ecx,[esp+4]"); E(f,"mov ecx,[ecx+20]");
-            if(is_flt(v)) E(f,"fld qword [ecx+eax*8]"); else E(f,"mov eax,[ecx+eax*4]");
+            E(f,"mov ecx,[esp+%d]",ks); E(f,"mov ecx,[ecx+20]");
+            if(vs==8) E(f,"lea ecx,[ecx+eax*8]"); else E(f,"lea ecx,[ecx+eax*4]");
+            load_mem(f,v,"ecx",0);
             E(f,"jmp L%d",lend); LBL(f,lmiss);
-            if(m[0]=='g'){ if(a1) gen_as(f,a1,v,0); else zero_value(f,v); }
+            if(m[0]=='g'){ if(a1) gen_as(f,a1,v,0); else gen_none(f,v); }
             else { gen_as(f,a1,v,1); push_value(f,v);
-                E(f,"mov eax,[esp+%d]",vs+4); E(f,"mov edx,[esp+%d]",vs); E(f,"mov ecx,%d",vs); CALLRT(f,"rt_dict_slot");
-                E(f,"mov ecx,eax"); pop_value(f,v); if(is_ptr(v)){ E(f,"mov [ecx],eax"); } else store_new(f,v,"ecx",0);
-                E(f,"mov eax,[esp+4]"); E(f,"mov edx,[esp]"); E(f,"mov ecx,%d",vs); CALLRT(f,"rt_dict_get"); load_mem(f,v,"eax",0); }
+                E(f,"lea edx,[esp+%d]",vs); E(f,"mov eax,[esp+%d]",vs+ks); CALLRT(f,"rt_dict_slot");
+                E(f,"mov ecx,eax"); pop_value(f,v); store_new(f,v,"ecx",0); load_mem(f,v,"ecx",0); }
         } else {                                                    /* pop */
-            E(f,"mov eax,[esp+4]"); E(f,"mov edx,[esp]"); E(f,"mov ecx,%d",vs); CALLRT(f,"rt_dict_del"); load_mem(f,v,"eax",0);
+            E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",ks); CALLRT(f,"rt_dict_del"); load_mem(f,v,"eax",0);
             E(f,"jmp L%d",lend); LBL(f,lmiss);
-            if(a1) gen_as(f,a1,v,1); else CALLRT(f,"rt_panic_key");
+            if(a1) gen_as(f,a1,v,1); else { E(f,"mov eax,esp"); E(f,"mov ecx,%s",kd_of(kt)); CALLRT(f,"rt_raise_key"); }
             owned=1;
         }
-        LBL(f,lend); E(f,"add esp,8");
+        LBL(f,lend); E(f,"add esp,%d",ks+4);
         return owned && is_ptr(v);
     }
     if(t0->k==TY_FILE){
-        gen_borrow(f,obj);
+        gen_recv(f,obj,m);
         if(!strcmp(m,"read")){ CALLRT(f,"rt_file_read"); return 1; }
         if(!strcmp(m,"readline")){ CALLRT(f,"rt_file_readline"); return 1; }
         if(!strcmp(m,"readlines")){ CALLRT(f,"rt_file_readlines"); return 1; }
         if(!strcmp(m,"close")){ CALLRT(f,"rt_file_close"); return 0; }
-        E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_file_write"); return 0;
+        E(f,"push eax"); gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_file_write"); widen(f,0); return 0;
+    }
+    if(t0->k==TY_GEN){                                     /* g.send(v), g.throw(exc), g.close() */
+        Ty *el=ty_find(t0->elem); int slot=frame_slot(f,4), lok=new_label();
+        gen_borrow(f,obj); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
+        if(!strcmp(m,"close")||!strcmp(m,"aclose")){ E(f,"mov edx,1"); CALLRT(f,"rt_gen_close"); E(f,"test eax,eax"); E(f,"jz L%d",lok);
+            rt("rt_raise_builtin"); E(f,"mov eax,VTX_RuntimeError"); E(f,"mov edx,DTX_RuntimeError"); E(f,"xor ecx,ecx");
+            E(f,"mov esi,Z%d",zlit(m[0]=='a'?"async generator ignored GeneratorExit":"generator ignored GeneratorExit")); E(f,"call rt_raise_builtin");
+            LBL(f,lok); return 0; }
+        if(!strcmp(m,"throw")||!strcmp(m,"athrow")){ gen_owned(f,a0); E(f,"mov edx,eax"); E(f,"mov eax,[ebp%+d]",slot); CALLRT(f,"rt_gen_throw"); }
+        else {
+            Ty *st=gpart(t0,0);
+            if(a0 && !is_none_lit(a0) && st->k!=TY_VOID){
+                gen_as(f,a0,st,1); push_value(f,st);
+                int ok=new_label(); E(f,"mov ecx,[ebp%+d]",slot); E(f,"cmp dword [ecx+8],0"); E(f,"jne L%d",ok);
+                E(f,"mov esi,Z%d",zlit("can't send non-None value to a just-started generator")); CALLRT(f,"rt_typeerr_text");
+                LBL(f,ok); pop_value(f,st);
+                E(f,"mov ecx,[ebp%+d]",slot); store_mem(f,st,"ecx",88); E(f,"mov ecx,[ebp%+d]",slot); E(f,"mov dword [ecx+96],1"); }
+            E(f,"mov eax,[ebp%+d]",slot); CALLRT(f,"rt_gen_next"); }
+        E(f,"test eax,eax"); E(f,"jnz L%d",lok); gen_raise_stop(f,slot,t0);
+        LBL(f,lok); E(f,"mov eax,[ebp%+d]",slot); load_mem(f,el,"eax",24); if(is_ptr(el)) incref(f);
+        return is_ptr(el);
     }
     if(t0->k==TY_TASK){
-        gen_borrow(f,obj);
+        gen_recv(f,obj,m);
         if(!strcmp(m,"done")){ E(f,"cmp dword [eax+8],4"); E(f,"sete al"); E(f,"movzx eax,al"); return 0; }
         CALLRT(f,"rt_task_result"); if(ty_find(t0->elem)->k!=TY_VOID) load_mem(f,t0->elem,"eax",24); return 0;
     }
     if(t0->k==TY_SET){
-        Ty *el=t0->elem; int k=kind_of(el);
-        gen_borrow(f,obj);
-        if(!strcmp(m,"clear")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_list_clear"); return 0; }
-        if(!strcmp(m,"copy")){ E(f,"mov edx,%d",k); CALLRT(f,"rt_list_copy"); return 1; }
+        Ty *el=t0->elem; int es=esize(el);
+        gen_recv(f,obj,m);
+        if(!strcmp(m,"clear")){ CALLRT(f,"rt_set_clear"); return 0; }
+        if(!strcmp(m,"copy")){ E(f,"mov edx,%s",kd_of(el)); CALLRT(f,"rt_set_copy"); return 1; }
+        if(!strcmp(m,"pop")){ CALLRT(f,"rt_set_pop"); load_mem(f,el,"eax",0); return is_ptr(el); }
         E(f,"push eax");
-        if(!strcmp(m,"union")||!strcmp(m,"intersection")||!strcmp(m,"difference")){
-            gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k|((m[0]=='u'?0:m[0]=='i'?1:2)<<8)); CALLRT(f,"rt_set_op"); return 1; }
+        static const char *ops[]={"union","intersection","difference","symmetric_difference",NULL};
+        static const char *iops[]={"update","intersection_update","difference_update","symmetric_difference_update",NULL};
+        for(int k=0;ops[k];k++) if(!strcmp(m,ops[k])||!strcmp(m,iops[k])){
+            if(TY(a0)->k!=TY_SET) cg_fail(e->line,"set methods take sets in compiled code");
+            gen_borrow(f,a0);
+            E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",k);
+            if(!strcmp(m,ops[k])){ CALLRT(f,"rt_set_op"); return 1; }
+            CALLRT(f,"rt_set_iop"); return 0; }
+        if(!strcmp(m,"issubset")||!strcmp(m,"issuperset")||!strcmp(m,"isdisjoint")){
+            gen_borrow(f,a0); E(f,"mov edx,eax"); E(f,"pop eax");
+            if(!strcmp(m,"issuperset")) E(f,"xchg eax,edx");
+            CALLRT(f,m[2]=='d'?"rt_set_disjoint":"rt_set_le"); return 0; }
         gen_as(f,a0,el,0);
         if(!strcmp(m,"add")){ set_add_top(f,el); E(f,"add esp,4"); return 0; }
-        if(is_flt(el)){ E(f,"sub esp,8"); E(f,"fstp qword [esp]"); E(f,"mov edx,esp"); E(f,"mov eax,[esp+8]"); }
-        else { E(f,"mov edx,eax"); E(f,"mov eax,[esp]"); }
-        E(f,"mov ecx,%d",k|(m[0]=='d'?0x100:0)); CALLRT(f,"rt_set_remove");
-        E(f,"add esp,%d",is_flt(el)?12:4); return 0;
+        push_value(f,el);                                        /* remove / discard: the value by address */
+        E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",es); CALLRT(f,m[0]=='d'?"rt_set_discard":"rt_set_remove");
+        E(f,"add esp,%d",es+4); return 0;
     }
     cg_fail(e->line,"unsupported method");
 }
 
 static int gen_sys(F *f, Expr *e, XInfo *xi){
     const char *m=xi->name;
-    if(!strcmp(m,"buffer")){ Ty *t0=TY(e->items[0]); gen_borrow(f,e->items[0]); CALLRT(f,t0->k==TY_STR?"rt_buf_from_str":"rt_buf_new"); return 1; }
-    if(!strcmp(m,"addr")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); return 0; }
+    if(!strcmp(m,"buffer")){ Ty *t0=TY(e->items[0]); gen_borrow(f,e->items[0]); to_i32(f,t0); CALLRT(f,t0->k==TY_STR||t0->k==TY_BYTES?"rt_buf_from_str":"rt_buf_new"); return 1; }
+    if(!strcmp(m,"addr")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); widen(f,0); return 0; }
     if(!strcmp(m,"exit")){ if(e->count) gen(f,e->items[0]); else E(f,"xor eax,eax"); E(f,"mov ebx,eax"); CALLRT(f,"rt_exit"); return 0; }
     if(!strcmp(m,"peek_at")||!strcmp(m,"peek_str_at")||!strcmp(m,"cstr_at")||!strcmp(m,"poke_str_at")){   /* raw memory: (address, n | str) */
         gen(f,e->items[0]); E(f,"push eax");
         if(m[1]=='o') gen_borrow(f,e->items[1]); else gen(f,e->items[1]);
         E(f,"mov edx,eax"); E(f,"pop eax");
-        if(!strcmp(m,"peek_at")){ CALLRT(f,"rt_mem_peek"); return 0; }
+        if(!strcmp(m,"peek_at")){ CALLRT(f,"rt_mem_peek"); widen(f,0); return 0; }
         if(!strcmp(m,"poke_str_at")){ CALLRT(f,"rt_mem_poke_str"); return 0; }
         CALLRT(f,m[0]=='c'?"rt_mem_cstr":"rt_mem_peek_str"); return 1;
     }
@@ -1664,7 +2469,7 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
     E(f,"sub esp,%d",4*n);
     for(int i=0;i<n;i++){ gen_borrow(f,e->items[i]); E(f,"mov [esp+%d],eax",4*i); }
     if(!strcmp(m,"poke")){ CALLRT(f,"rt_buf_poke"); E(f,"add esp,16"); return 0; }
-    if(!strcmp(m,"peek")){ CALLRT(f,"rt_buf_peek"); E(f,"add esp,12"); return 0; }
+    if(!strcmp(m,"peek")){ CALLRT(f,"rt_buf_peek"); E(f,"add esp,12"); widen(f,0); return 0; }
     E(f,"pop eax"); E(f,"pop edx"); E(f,"pop ecx");
     if(!strcmp(m,"poke_str")){ CALLRT(f,"rt_buf_poke_str"); return 0; }
     CALLRT(f,"rt_buf_peek_str"); return 1;
@@ -1711,12 +2516,11 @@ static int gen_ccall(F *f, Expr *e, XInfo *xi){
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i]; int k=xi->argmap[i]; Ty *t=TY(a);
         if(k==CT_DOUBLE||k==CT_FLOAT){ gen_as(f,a,TY_FLOAT_T,0); E(f,k==CT_DOUBLE?"fstp qword [esp+%d]":"fstp dword [esp+%d]",off[i]); continue; }
         gen_borrow(f,a);
-        if(t->k==TY_STR){ int l=new_label(), l2=new_label();                 /* the bytes, NUL-terminated ("" too) */
+        if(t->k==TY_STR||t->k==TY_BYTES){ int l=new_label(), l2=new_label();                 /* the bytes, NUL-terminated ("" too) */
             E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
         else if(t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
         E(f,"mov [esp+%d],eax",off[i]);
-        if(k==CT_LONGLONG){ E(f,"cdq"); E(f,"mov [esp+%d],edx",off[i]+4); }
-        else if(k==CT_ULONGLONG) E(f,"mov dword [esp+%d],0",off[i]+4);
+        if(k==CT_LONGLONG||k==CT_ULONGLONG){ if(!is_lng(t)) widen(f,k==CT_LONGLONG); E(f,"mov [esp+%d],edx",off[i]+4); }
     }
     int kinds[16]; for(int i=0;i<e->count;i++) kinds[i]=xi->argmap[i];
     ccall_marker(f,cf,kinds,e->count);
@@ -1731,6 +2535,8 @@ static int gen_ccall(F *f, Expr *e, XInfo *xi){
         case CT_CHARP:{ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); LBL(f,l); return 1; }
         default: break;
     }
+    if(is_lng(TY(e)) && cf->restype!=CT_LONGLONG && cf->restype!=CT_ULONGLONG)      /* as an int (64 bits) */
+        widen(f,cf->restype==CT_DEFAULT||cf->restype==CT_INT||cf->restype==CT_SHORT||cf->restype==CT_BYTE||cf->restype==CT_LONG);
     return 0;
 }
 /* ctypes.create_string_buffer / string_at / addressof / get_errno */
@@ -1740,13 +2546,13 @@ static int gen_ctypes_fn(F *f, Expr *e, XInfo *xi){
         if(t0->k==TY_STR){ CALLRT(f,"rt_buf_from_str"); E(f,"inc dword [eax+8]"); }   /* and its 0 byte (a buffer has one more) */
         else CALLRT(f,"rt_buf_new");
         return 1; }
-    if(!strcmp(m,"addressof")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); return 0; }
+    if(!strcmp(m,"addressof")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); widen(f,0); return 0; }
     if(!strcmp(m,"string_at")){ gen(f,e->items[0]); E(f,"push eax");
-        if(e->count==2){ gen(f,e->items[1]); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_mem_peek_str"); return 1; }
+        if(e->count==2){ gen(f,e->items[1]); to_i32(f,TY(e->items[1])); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_mem_peek_str"); return 1; }
         E(f,"pop eax"); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); return 1; }
     if(!strcmp(m,"get_errno")){ E(f,"mov eax,esp"); E(f,"and esp,-16"); E(f,"sub esp,12"); E(f,"push eax");
         ccall_marker(f,xi->cfn,NULL,0);
-        E(f,"call [CI%d]   ; __errno_location",xi->cfn->id); E(f,"pop esp"); E(f,"mov eax,[eax]"); return 0; }
+        E(f,"call [CI%d]   ; __errno_location",xi->cfn->id); E(f,"pop esp"); E(f,"mov eax,[eax]"); widen(f,1); return 0; }
     cg_fail(e->line,"unsupported ctypes function");
     return 0;
 }
@@ -1763,12 +2569,22 @@ static int gen_call(F *f, Expr *e){
         case X_METHOD: call_user(f,xi->fn,e,xi,1); return is_ptr(t);
         case X_SUPER:
             if(!xi->fn){                                         /* super().__init__(message) of an exception */
-                if(e->count) gen_exc_message(f,e->items[0]); else E(f,"xor eax,eax");
+                if(e->count) gen_exc_message_of(f,e->items[0],f->fn->cls); else E(f,"xor eax,eax");
                 E(f,"mov ecx,[ebp+8]"); store_mem(f,TY_STR_T,"ecx",12);
+                if(raw_message(e->count?e->items[0]:NULL,f->fn->cls)){ E(f,"mov ecx,[ebp+8]"); E(f,"mov dword [ecx+%d],1",exc_rawoff(f->fn->cls)); }
                 return 0;
             }
             call_user(f,xi->fn,e,xi,xi->fn->is_static?0:2); return is_ptr(t);
         case X_CTOR: return gen_ctor(f,e,xi);
+        case X_TYPECALL:{                                 /* cls_value(args): the constructor of the class it is */
+            int slot=frame_slot(f,4), lend=new_label();
+            gen(f,e->a); E(f,"mov [ebp%+d],eax",slot);
+            for(int i=0;i<xi->ncands;i++){ int lnext=new_label(); AClass *k=xi->cands[i]; use_class(k);
+                E(f,"cmp dword [ebp%+d],%s",slot,class_label(k,0)); E(f,"jne L%d",lnext);
+                gen_ctor(f,e,xi->cxi[i]); E(f,"jmp L%d",lend);
+                LBL(f,lnext); }
+            E(f,"mov esi,Z%d",zlit("'NoneType' object is not callable")); CALLRT(f,"rt_typeerr_text");
+            LBL(f,lend); return 1; }
         case X_BUILTIN: return gen_builtin(f,e,xi);
         case X_TMETHOD: return gen_tmethod(f,e,xi);
         case X_SYSCALL: gen_syscall_regs(f,e); E(f,"mov eax,esp"); CALLRT(f,"rt_syscall_list"); E(f,"add esp,28"); return 1;
@@ -1799,13 +2615,18 @@ static void fmt_arg(F *f, Expr *a, Ty *tt, int tslot, int i, int as_float){
 static int parse_spec(const char *s, int n, Spec *sp){
     memset(sp,0,sizeof *sp); sp->prec=-1;
     int i=0;
-    if(n>=2 && s[1] && strchr("<>^=",s[1])){ sp->fill=(unsigned char)s[0]; sp->align=s[1]; i=2; }
+    unsigned b0=n?(unsigned char)s[0]:0; int fl= b0>=0xF0 ? 4 : b0>=0xE0 ? 3 : b0>=0xC0 ? 2 : 1;   /* the fill: one UTF-8 character */
+    if(n>fl && s[fl] && strchr("<>^=",s[fl])){
+        unsigned c= fl==1 ? b0 : b0&(0xFF>>(fl+1));
+        for(int k=1;k<fl;k++) c=(c<<6)|((unsigned char)s[k]&0x3F);
+        sp->fill=(int)c; sp->align=s[fl]; i=fl+1; }
     else if(n>=1 && s[0] && strchr("<>^=",s[0])){ sp->align=s[0]; i=1; }
     for(;i<n;i++){ char c=s[i];
         if(c=='-') sp->align='<'; else if(c=='+'||c==' ') sp->sign=c; else if(c=='#') sp->alt=1; else if(c=='0') sp->zero=1; else break; }
-    for(;i<n && s[i]>='0' && s[i]<='9';i++) sp->width=sp->width*10+(s[i]-'0');
-    if(i<n && (s[i]==','||s[i]=='_')){ sp->comma=1; i++; }
-    if(i<n && s[i]=='.'){ i++; sp->prec=0; for(;i<n && s[i]>='0' && s[i]<='9';i++) sp->prec=sp->prec*10+(s[i]-'0'); }
+    if(i<n && s[i]=='\001'){ sp->wslot=-1; i++; }                        /* {w}: filled in by the caller */
+    else for(;i<n && s[i]>='0' && s[i]<='9';i++) sp->width=sp->width*10+(s[i]-'0');
+    if(i<n && (s[i]==','||s[i]=='_')){ sp->comma=s[i]; i++; }
+    if(i<n && s[i]=='.'){ i++; sp->prec=0; if(i<n && s[i]=='\001'){ sp->pslot=-1; i++; } else for(;i<n && s[i]>='0' && s[i]<='9';i++) sp->prec=sp->prec*10+(s[i]-'0'); }
     if(i<n) sp->type=s[i++];
     return i;
 }
@@ -1818,40 +2639,51 @@ static void emit_field(F *f, Spec *sp, Ty *t, ArgSrc *src, int repr, int pystyle
     if(!ty||ty=='n') ty = t->k==TY_FLOAT ? (sp->prec>=0?1:2) : (t->k==TY_INT||(t->k==TY_BOOL&&sp->width)) ? 'd' : 's';   /* 1: like g, keeps ".0"; 2: repr */
     int align=sp->align;
     if(!align) align = (pystyle && !num && ty=='s') ? '<' : '>';
-    int padded=sp->width>0;
+    int padded=sp->width>0 || sp->wslot;
     if(padded) E(f,"push dword [rt_sb_len]");
     if(sp->sign && num && ty!='s') E(f,"push dword [rt_sb_len]");
-    int prec=sp->prec;
+    int prec=sp->prec, ps=sp->pslot;
+    #define PREC(dflt,lo,hi,add) do{ if(ps){ int l1_=new_label(), l2_=new_label(); E(f,"mov edx,[ebp%+d]",ps); E(f,"cmp edx,%d",lo); E(f,"jge L%d",l1_); E(f,"mov edx,%d",lo); LBL(f,l1_); \
+        E(f,"cmp edx,%d",hi); E(f,"jle L%d",l2_); E(f,"mov edx,%d",hi); LBL(f,l2_); if(add) E(f,"add edx,%d",add); } \
+        else E(f,"mov edx,%d",(prec<0?(dflt):prec<(lo)?(lo):prec>(hi)?(hi):prec)+(add)); }while(0)
+    int grp= sp->comma && num && ty!='s' && ty!='c';             /* 1,234,567 / 1_2345_6789 */
+    if(grp) E(f,"push dword [rt_sb_len]");
     switch(ty){
-        case 's': case 'r': src_load(f,src,0); gen_fmt(f,t,repr||ty=='r'); break;
+        case 's': case 'r':
+            if(prec>=0||ps) E(f,"push dword [rt_sb_len]");
+            src_load(f,src,0); gen_fmt(f,t,repr||ty=='r');
+            if(prec>=0||ps){ E(f,"pop eax"); if(ps) E(f,"mov edx,[ebp%+d]",ps); else E(f,"mov edx,%d",prec); CALLRT(f,"rt_sb_trunc"); }       /* "%.3s": the first 3 characters */
+            break;
         case 'd': case 'i': case 'u':
-            src_load(f,src,0); if(is_flt(t)) CALLRT(f,"rt_ftoi"); CALLRT(f,sp->comma?"rt_sb_intc":"rt_sb_int"); break;
+            src_load(f,src,0); if(is_flt(t)) CALLRT(f,"rt_ftoi"); else if(!is_lng(t)) widen(f,0);
+            CALLRT(f,"rt_sb_int"); break;
         case 'x': case 'X': case 'o': case 'b':{
-            src_load(f,src,0); if(is_flt(t)) CALLRT(f,"rt_ftoi");
-            if(sp->alt){ int l=new_label(); E(f,"test eax,eax"); E(f,"jns L%d",l); E(f,"push eax"); E(f,"mov al,'-'"); CALLRT(f,"rt_sb_char"); E(f,"pop eax"); E(f,"neg eax"); LBL(f,l);
-                E(f,"push eax"); E(f,"mov al,'0'"); CALLRT(f,"rt_sb_char"); E(f,"mov al,'%c'",ty=='o'?'o':ty=='b'?'b':ty); CALLRT(f,"rt_sb_char"); E(f,"pop eax"); }
-            E(f,"mov edx,%d",ty=='o'?8:ty=='b'?2:16); E(f,"mov ecx,%d",ty=='X'); CALLRT(f,"rt_sb_radix"); break; }
+            src_load(f,src,0); if(is_flt(t)) CALLRT(f,"rt_ftoi"); else if(!is_lng(t)) widen(f,0);
+            if(sp->alt){ int l=new_label(); E(f,"test edx,edx"); E(f,"jns L%d",l); E(f,"push edx"); E(f,"push eax"); E(f,"mov al,'-'"); CALLRT(f,"rt_sb_char"); E(f,"pop eax"); E(f,"pop edx");
+                E(f,"neg eax"); E(f,"adc edx,0"); E(f,"neg edx"); LBL(f,l);
+                E(f,"push edx"); E(f,"push eax"); E(f,"mov al,'0'"); CALLRT(f,"rt_sb_char"); E(f,"mov al,'%c'",ty=='o'?'o':ty=='b'?'b':ty); CALLRT(f,"rt_sb_char"); E(f,"pop eax"); E(f,"pop edx"); }
+            E(f,"mov ecx,%d",(ty=='o'?8:ty=='b'?2:16)|(ty=='X'?0x100:0)); CALLRT(f,"rt_sb_radix"); break; }
         case 'f': case 'F': case '%':
             src_load(f,src,1);
             if(ty=='%'){ E(f,"push 100"); E(f,"fimul dword [esp]"); E(f,"add esp,4"); }
-            E(f,"mov edx,%d",prec<0?6:prec>40?40:prec); CALLRT(f,"rt_sb_fixed");
+            PREC(6,0,40,0); CALLRT(f,"rt_sb_fixed");
             if(ty=='%'){ E(f,"mov al,'%%'"); CALLRT(f,"rt_sb_char"); }
             break;
         case 'e': case 'E':
-            src_load(f,src,1); E(f,"mov edx,%d",(prec<0?6:prec>16?16:prec)+1); E(f,"mov ecx,4"); CALLRT(f,"rt_sb_gen"); break;
+            src_load(f,src,1); PREC(6,0,16,1); E(f,"mov ecx,4"); CALLRT(f,"rt_sb_gen"); break;
         case 'g': case 'G': case 1:
-            src_load(f,src,1); E(f,"mov edx,%d",prec<0?6:prec==0?1:prec>17?17:prec); E(f,"mov ecx,%d",ty==1?1:0); CALLRT(f,"rt_sb_gen"); break;
+            src_load(f,src,1); PREC(6,1,17,0); E(f,"mov ecx,%d",ty==1?1:0); CALLRT(f,"rt_sb_gen"); break;
         case 2: src_load(f,src,1); CALLRT(f,"rt_sb_float"); break;
-        case 'c': src_load(f,src,0); CALLRT(f,"rt_sb_char"); break;
+        case 'c': src_load(f,src,0); to_i32(f,t); CALLRT(f,"rt_sb_cp"); break;
         default: cg_fail(line,"unsupported format type");
     }
+    if(grp){ E(f,"pop eax"); E(f,"mov dl,'%c'",sp->comma); E(f,"mov ecx,%d",(ty=='x'||ty=='X'||ty=='o'||ty=='b')?4:3); CALLRT(f,"rt_sb_group"); }
     if(sp->sign && num && ty!='s'){ E(f,"pop eax"); E(f,"mov dl,'%c'",sp->sign); CALLRT(f,"rt_sb_sign"); }
-    if(padded){
-        unsigned flags=(unsigned)sp->width;
-        if(align=='<') flags|=0x10000; else if(align=='^') flags|=0x40000;
-        if(sp->zero && !sp->align && num) flags|=0x20000;
-        if(sp->fill) flags|=(unsigned)sp->fill<<24;
-        E(f,"pop eax"); E(f,"mov edx,0x%x",flags); CALLRT(f,"rt_sb_pad");
+    if(padded){                                                  /* see rt_sb_pad */
+        unsigned mode= align=='<' ? 1 : align=='^' ? 2 : 0, fill=(unsigned)sp->fill;
+        if(sp->zero && !sp->align && num){ mode|=4; fill='0'; }
+        if(align=='=' && num) mode|=4;
+        E(f,"pop eax"); if(sp->wslot) E(f,"mov ecx,[ebp%+d]",sp->wslot); else E(f,"mov ecx,%d",sp->width); E(f,"mov edx,0x%x",mode|fill<<8); CALLRT(f,"rt_sb_pad");
     }
 }
 static void gen_format_body(F *f, Expr *e){
@@ -1871,6 +2703,11 @@ static void gen_format_body(F *f, Expr *e){
         if(pystyle){                                         /* f-string: "%" + the whole Python spec */
             if(parse_spec(fmt+i,len-i,&sp)!=len-i) cg_fail(e->line,"invalid format spec");
             i=len;
+            int nx=0;                                          /* {w} / {p}: their values, now (into slots) */
+            if(sp.wslot<0 || sp.pslot<0){ int *slots[2]; int ns=0; if(sp.wslot<0) slots[ns++]=&sp.wslot; if(sp.pslot<0) slots[ns++]=&sp.pslot;
+                if(ns!=e->a->count) cg_fail(e->line,"a replacement field there is not supported in compiled code");
+                for(int k=0;k<ns;k++){ *slots[k]=frame_slot(f,4); gen(f,e->a->items[k]); to_i32(f,TY(e->a->items[k])); E(f,"mov [ebp%+d],eax",*slots[k]); nx++; } }
+            (void)nx;
         } else {
             int j=i;                                            /* printf: flags, width, precision, then the type letter */
             while(j<len && !((fmt[j]>='a'&&fmt[j]<='z')||(fmt[j]>='A'&&fmt[j]<='Z')||fmt[j]=='%')) j++;
@@ -1919,11 +2756,13 @@ static int gen_format(F *f, Expr *e){
 
 static int gen_await(F *f, Expr *e);
 /* a closure of g made here: its captured values (or cells) copied from this function -> eax (owned) */
+static void fill_defaults(F *f, AFunc *g, const char *lbl);
 static int gen_closure(F *f, AFunc *g){
     layout_caps(g); use_fn(g); gg->cd_used[g->id]=1;
-    E(f,"mov eax,%d",16+g->capsize); CALLRT(f,"rt_alloc");
+    E(f,"mov eax,%d",16+g->defsize+g->capsize); CALLRT(f,"rt_alloc");
     E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],%s",fnl(g,LB_FREE)); E(f,"mov dword [eax+8],%s",fnl(g,LB_CODE)); E(f,"mov dword [eax+12],S%d",str_lit(fn_display_name(g)));
     E(f,"push eax");
+    fill_defaults(f,g,NULL);                                /* its defaults, evaluated now */
     for(int k=0;k<g->ncaps;k++){ AVar *cv=g->caps[k], *src=cv->src;
         if(root_var(cv)->cell){                             /* share the cell */
             if(src->src){ layout_caps(src->owner); E(f,"mov ecx,[ebp%+d]",f->env); E(f,"mov eax,[ecx+%d]",src->capoff); }
@@ -1937,37 +2776,73 @@ static int gen_closure(F *f, AFunc *g){
     E(f,"pop eax");
     return 1;
 }
+/* g's default slots in its function object ([esp], or the static object lbl): its defaults, evaluated here */
+static void fill_defaults(F *f, AFunc *g, const char *lbl){
+    layout_defaults(g);
+    for(int i=0;i<g->nparams;i++){ Expr *d=g->defaults[i]; if(!d || i==g->star || i==g->dstar) continue;
+        Ty *pt=g->params[i]->ty;
+        gen_as(f,d,pt,1);
+        if(lbl) E(f,"mov ecx,%s",lbl); else E(f,"mov ecx,[esp]");
+        store_mem(f,pt,"ecx",16+g->defoff[i]); }
+}
 /* function g as a value -> eax */
 static int gen_funcref(F *f, AFunc *g){
     use_fn(g);
-    if(!g->ncaps){ gg->fv_used[g->id]=1; rt("rt_static"); E(f,"mov eax,%s",fnl(g,LB_VALUE)); return 0; }   /* nothing captured: a static object */
+    if(!g->ncaps && !dyn_defaults(g)){ gg->fv_used[g->id]=1; rt("rt_static");    /* nothing captured: a static object */
+        if(has_defaults(g)) fill_defaults(f,g,fnl(g,LB_VALUE));
+        E(f,"mov eax,%s",fnl(g,LB_VALUE)); return 0; }
     if(g==f->fn){ E(f,"mov eax,[ebp%+d]",f->env); return 0; }                                    /* a nested def naming itself */
     return gen_closure(f,g);
+}
+/* the constant n as a value of type t (int: edx:eax) */
+static void gen_int_const(F *f, Ty *t, int64_t n){
+    uint32_t lo=(uint32_t)n, hi=(uint32_t)((uint64_t)n>>32);
+    if(lo==0) E(f,"xor eax,eax"); else E(f,"mov eax,%u",lo);
+    if(is_lng(t)){ if(hi==0) E(f,"xor edx,edx"); else if(hi==0xFFFFFFFFu) E(f,"or edx,-1"); else E(f,"mov edx,%u",hi); }
 }
 static int gen(F *f, Expr *e){
     XInfo *xi=xinfo(e); Ty *t=TY(e);
     switch(e->kind){
         case EXPR_LITERAL:{
             Tok *tk=e->tok;
-            if(tk->kind==T_STRING){ if(!tk->text[0]) E(f,"xor eax,eax"); else E(f,"mov eax,S%d",str_lit(tk->text)); return 0; }
+            if(tk->kind==T_STRING && tk->i==2){ E(f,"mov eax,B%d",bytes_lit(tk->text,(int)tk->len)); return 0; }
+            if(tk->kind==T_STRING){ E(f,"mov eax,S%d",str_litn(tk->text,(int)tk->len)); return 0; }      /* "" too: a str (0 is None) */
             if(tk->is_float){ double d=tk->f; if(d==0.0) E(f,"fldz"); else if(d==1.0) E(f,"fld1"); else E(f,"fld qword [FC%d]",float_const(tk->text)); return 0; }
             if(t->k==TY_FLOAT){ char num[32]; snprintf(num,sizeof num,"%lld",(long long)tk->i);
                 if(tk->i==0) E(f,"fldz"); else if(tk->i==1) E(f,"fld1"); else E(f,"fld qword [FC%d]",float_const(num)); return 0; }
-            if(tk->i==0) E(f,"xor eax,eax"); else E(f,"mov eax,%u",(unsigned)(uint32_t)tk->i);
+            gen_int_const(f,t,tk->i);
             return 0; }
         case EXPR_TRUE: E(f,"mov eax,1"); return 0;
         case EXPR_FALSE: E(f,"xor eax,eax"); return 0;
-        case EXPR_NONE: return gen_zero(f,t);
+        case EXPR_NONE: gen_none(f,t); return 0;
         case EXPR_NAME:
             if(xi->kind==X_CONST_STR){ E(f,"mov eax,S%d",str_lit(xi->name)); return 0; }
             if(xi->kind==X_FUNCREF) return gen_funcref(f,xi->fn);
+            if(xi->kind==X_TYPEVAL){ E(f,"mov eax,%s",typeval_label(xi)); return 0; }
             load_var(f,xi->var); return 0;
         case EXPR_LAMBDA: return gen_funcref(f,xi->fn);
+        case EXPR_YIELD:{                                 /* (yield v): what send() gives; (yield from g): what g returns */
+            Ty *yt=f->fn->yield_ty;
+            if(e->akind==7){
+                if(ty_find(TY(e->a))->k==TY_GEN) return gen_yield_from(f,e->a,ty_find(t)->k!=TY_VOID);
+                Iter I; iter_begin(f,e->a,&I);
+                iter_value(f,&I,0); if(is_ptr(I.elem)) incref(f); conv(f,I.elem,yt);
+                gen_yield_value(f,yt); drop_sent(f);
+                iter_end(f,&I); LBL(f,I.exit); iter_release(f,&I);
+                return 0; }
+            if(e->a) gen_as(f,e->a,yt,1); else { int o=gen_zero(f,yt); if(is_ptr(yt)&&!o) incref(f); }
+            gen_yield_value(f,yt);
+            return take_sent(f,gpart(f->fn->ret,0)); }
         case EXPR_UNARY:
             if(e->op==T_NOT){ gen_bool(f,e->a); E(f,"xor eax,1"); return 0; }
             if(xi->kind==X_OPMETHOD) return gen_op_call(f,xi->fn,e->a,NULL);
-            gen_as(f,e->a,t,0);
-            if(e->op==T_MINUS) E(f,is_flt(t)?"fchs":"neg eax"); else E(f,"not eax");
+            if(e->op==T_MINUS && is_lng(t) && e->a->kind==EXPR_LITERAL && !e->a->tok->is_float && e->a->tok->kind==T_NUMBER){   /* -5 */
+                gen_int_const(f,t,-e->a->tok->i); return 0; }
+            g_none_text=none_msg("bad operand type for unary %s: 'NoneType'",e->op==T_MINUS?"-":e->op==T_PLUS?"+":"~");
+            gen_as(f,e->a,t,0); g_none_text=NULL;
+            if(e->op==T_PLUS) return 0;
+            if(e->op==T_MINUS){ if(is_flt(t)) E(f,"fchs"); else if(is_lng(t)) CALLRT(f,"rt_ineg"); else E(f,"neg eax"); }
+            else { E(f,"not eax"); if(is_lng(t)) E(f,"not edx"); }
             return 0;
         case EXPR_BINARY: return gen_binary(f,e);
         case EXPR_BOOL: return gen_boolop(f,e);
@@ -1982,22 +2857,44 @@ static int gen(F *f, Expr *e){
         case EXPR_CALL: return gen_call(f,e);
         case EXPR_ATTRIBUTE:
             if(xi->kind==X_CONST_STR){ E(f,"mov eax,S%d",str_lit(xi->name)); return 0; }
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type")){ gen_type_of(f,e->a); return 0; }        /* x.__class__ */
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"class_mro")){            /* C.__mro__ */
+                AClass *k=xi->cls, *ks[64]; int n=0;
+                if(k->mro) for(int i=0;i<k->nmro && n<64;i++) ks[n++]=k->mro[i]; else for(AClass *x=k;x && n<64;x=x->base) ks[n++]=x;
+                Ty *el=ty_find(t)->elem; new_list(f,el); E(f,"push eax");
+                for(int i=0;i<=n;i++){ if(i<n) use_class(ks[i]); E(f,"mov eax,%s",i<n?class_label(ks[i],0):btype_label("object")); list_append_top(f,el); }
+                E(f,"pop eax"); return 1; }
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_qualname") && xinfo(e->a)->kind==X_TYPEVAL && xinfo(e->a)->cls){   /* C.__qualname__: Outer.Inner */
+                E(f,"mov eax,S%d",str_lit(xinfo(e->a)->cls->qualname)); return 0; }
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_qualname")){ gen(f,e->a); CALLRT(f,"rt_type_qualname"); return 0; }   /* type(x).__qualname__ */
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_name")){ gen(f,e->a); E(f,"mov eax,[eax]"); return 0; }   /* C.__name__ (static) */
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"exc_args")){            /* e.args: (message,) or () */
+                AField *fm=aot_find_field(ty_find(TY(e->a))->cls,"_msg"); int l=new_label();
+                gen_borrow(f,e->a); E(f,"push dword [eax+%d]",fm->offset);
+                new_list(f,TY_STR_T); E(f,"pop ecx"); E(f,"test ecx,ecx"); E(f,"jz L%d",l);
+                E(f,"push eax");
+                if(is_keyerror(ty_find(TY(e->a))->cls)){ E(f,"mov eax,ecx"); CALLRT(f,"rt_str_unquote"); E(f,"mov ecx,eax"); }   /* (a KeyError keeps repr(key)) */
+                else E(f,"inc dword [ecx]");
+                E(f,"push ecx"); E(f,"mov eax,[esp+4]"); E(f,"call rt_list_push"); E(f,"pop ecx"); E(f,"mov [eax],ecx"); E(f,"pop eax"); rt("rt_list_push");
+                LBL(f,l); return 1; }
+            if(xi->kind==X_BMOD && (!strcmp(xi->name,"inf")||!strcmp(xi->name,"nan"))){ rt("rt_finf"); E(f,"fld qword [%s]",xi->name[0]=='i'?"rt_finf":"rt_fnan"); return 0; }
             if(xi->kind==X_BMOD){                         /* math.pi / math.e / math.tau */
                 E(f,"fld qword [FC%d]",float_const(!strcmp(xi->name,"pi")?"3.141592653589793":!strcmp(xi->name,"tau")?"6.283185307179586":"2.718281828459045"));
                 return 0; }
             if(xi->kind==X_VAR){ load_var(f,xi->var); return 0; }
             if(xi->kind==X_FUNCREF) return gen_funcref(f,xi->fn);
+            if(xi->kind==X_TYPEVAL){ E(f,"mov eax,%s",typeval_label(xi)); return 0; }      /* Outer.Inner */
             if(xi->kind==X_BOUND){                        /* obj.method: a closure of obj (+16) */
                 AFunc *m=xi->fn; use_fn(m); gg->bm_used[m->id]=1;
-                gen_owned(f,e->a); panic_if_null(f); E(f,"push eax");
+                gen_owned(f,e->a); attr_check(f,e->name); E(f,"push eax");
                 E(f,"mov eax,20"); CALLRT(f,"rt_alloc");
                 E(f,"mov dword [eax],1"); E(f,"mov dword [eax+4],ADFREE"); E(f,"mov dword [eax+8],%s",fnl(m,LB_BOUND)); E(f,"mov dword [eax+12],S%d",str_lit(m->name));
                 E(f,"pop ecx"); E(f,"mov [eax+16],ecx");
                 return 1; }
             if(xi->kind==X_PROP){ E(f,"sub esp,4"); gen_borrow(f,e->a); E(f,"mov [esp],eax"); call_on_top(f,xi->fn); E(f,"add esp,4"); return is_ptr(xi->fn->ret); }
             if(xi->kind==X_CLASSCONST){ gen_as(f,xi->field->init,xi->field->ty,0); return 0; }
-            gen_borrow(f,e->a); panic_if_null(f);
-            load_mem(f,xi->field->ty,"eax",xi->field->offset);
+            gen_borrow(f,e->a); attr_check(f,e->name);
+            load_field(f,xi->field);
             return 0;
         case EXPR_INDEX: return gen_index(f,e);
         case EXPR_SLICE: return gen_slice(f,e);
@@ -2015,25 +2912,25 @@ static int gen(F *f, Expr *e){
             }
             return gen_comprehension(f,e);
         case EXPR_AWAIT: return gen_await(f,e);
+        case EXPR_WALRUS:{                                       /* name := value: stored, and a reference kept as the result */
+            AVar *v=xi->var;
+            gen_as(f,e->a,v->ty,1);
+            if(is_flt(v->ty)){ E(f,"fld st0"); store_var(f,v); return 0; }
+            if(is_ptr(v->ty)){ incref(f); E(f,"push eax"); store_var(f,v); E(f,"pop eax"); return 1; }
+            store_var(f,v); return 0; }
         default: cg_fail(e->line,"unsupported expression");
     }
 }
 
-/* None as a value of type t: 0, 0.0, "" (null), a null object - and a fresh
-   empty container for list/dict/set (so it can be filled). Returns owned. */
-static int gen_zero(F *f, Ty *t){
-    t=ty_find(t);
-    if(t->k==TY_LIST||t->k==TY_SET){ E(f,"mov eax,%s",list_destroy(t->elem)); CALLRT(f,"rt_list_new"); return 1; }
-    if(t->k==TY_DICT){ new_dict(f,t); return 1; }
-    zero_value(f,t); return 0;
-}
+/* None as a value of type t (returns 0: nothing owned) */
+static int gen_zero(F *f, Ty *t){ gen_none(f,t); return 0; }
 
 /* ---------------------------------------------------------------- string building */
 
-static int is_str_lit(Expr *e){ return e->kind==EXPR_LITERAL && e->tok->kind==T_STRING; }
+static int is_str_lit(Expr *e){ return e->kind==EXPR_LITERAL && e->tok->kind==T_STRING && e->tok->i!=2; }   /* (not b"...") */
 static int is_str_call(Expr *e){ if(e->kind!=EXPR_CALL||e->count!=1) return 0; XInfo *xi=xinfo(e); return xi->kind==X_BUILTIN && !strcmp(xi->name,"str"); }
 static int is_fmt_expr(Expr *e){ return e->kind==EXPR_BINARY && e->op==T_PERCENT && is_str_lit(e->a) && TY(e)->k==TY_STR; }
-static int is_concat(Expr *e){ return e->kind==EXPR_BINARY && e->op==T_PLUS && TY(e)->k==TY_STR; }
+static int is_concat(Expr *e){ return e->kind==EXPR_BINARY && e->op==T_PLUS && TY(e)->k==TY_STR && !is_opt(TY(e->a)) && !is_opt(TY(e->b)); }
 static int concat_parts(Expr *e, int *special){
     if(is_concat(e)) return concat_parts(e->a,special)+concat_parts(e->b,special);
     if(is_str_call(e)||is_fmt_expr(e)) *special=1;
@@ -2043,7 +2940,7 @@ static int concat_worth(Expr *e){ int sp=0; int n=concat_parts(e,&sp); return n>
 
 /* append str(x) to the string builder */
 static void gen_into_sb(F *f, Expr *x){
-    if(is_str_lit(x)){ sb_bytes_lit(f,x->tok->text,(int)strlen(x->tok->text)); return; }
+    if(is_str_lit(x)){ sb_bytes_lit(f,x->tok->text,(int)x->tok->len); return; }
     if(is_concat(x)){ gen_into_sb(f,x->a); gen_into_sb(f,x->b); return; }
     if(is_fmt_expr(x)){ gen_format_body(f,x); return; }
     if(is_str_call(x)){ gen_into_sb(f,x->items[0]); return; }
@@ -2057,7 +2954,7 @@ static int gen_concat(F *f, Expr *e){
 }
 /* eax = str(x) (owned or borrowed: returns owned) */
 static int gen_str_of(F *f, Expr *x){
-    if(TY(x)->k==TY_STR && !ty_find(TY(x))->tup) return gen(f,x);
+    if(TY(x)->k==TY_STR && !TY(x)->opt) return gen(f,x);
     return gen_concat(f,x);
 }
 
@@ -2065,23 +2962,78 @@ static int gen_str_of(F *f, Expr *x){
 static int fmt_index(Ty *t, int repr){
     t=ty_find(t);
     if(t->k!=TY_OBJ && repr<2) repr=1;
-    for(int i=0;i<gg->nfmts;i++) if(gg->fmts[i].repr==repr && ty_same(gg->fmts[i].ty,t)) return i;
+    for(int i=0;i<gg->nfmts;i++) if(gg->fmts[i].repr==repr && ty_same_exact(gg->fmts[i].ty,t)) return i;
     if(gg->nfmts==gg->cfmts){ gg->cfmts=gg->cfmts?gg->cfmts*2:16; gg->fmts=(Fmt*)xrealloc(gg->fmts,sizeof(Fmt)*(size_t)gg->cfmts); }
     gg->fmts[gg->nfmts].ty=t; gg->fmts[gg->nfmts].repr=repr;
     return gg->nfmts++;
 }
+/* KDC<id>: the descriptor of a class's objects in containers (see kd_of):
+   ==, ordering and hash through __eq__, __lt__ and __hash__ when the class has
+   them (as CPython: __eq__ without __hash__ makes it unhashable), else identity */
+static void kd_call_method(Buf *o, AFunc *m){         /* the arguments are on the stack, self first */
+    if(m->overridden) buf_printf(o,"        mov eax,[esp]\n        mov eax,[eax+8]\n        call dword [eax+%d]\n",8+4*m->vslot);
+    else buf_printf(o,"        call %s\n",fnl(m,LB_CODE));
+}
+static void kd_truth(Buf *o, Ty *r){                  /* eax = truth of a method's result */
+    if(ty_find(r)->k!=TY_BOOL) buf_printf(o,"        test eax,eax\n        setne al\n        movzx eax,al\n");
+}
+static int kd_method_ok(AFunc *m, int nparams){
+    if(!m || m->is_static || m->nparams!=nparams) return 0;
+    for(int i=1;i<nparams;i++) if(!is_ptr(m->params[i]->ty) || is_flt(m->params[i]->ty)) return 0;
+    return 1;
+}
+static const char *class_kd(AClass *c){
+    if(!gg->kdlabels){ gg->kdlabels=(char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nclasses+1)); memset(gg->kdlabels,0,sizeof(char*)*(size_t)(gg->p->nclasses+1)); }
+    if(gg->kdlabels[c->id]) return gg->kdlabels[c->id];
+    char lab[64]; snprintf(lab,sizeof lab,"KDC%d",c->id);
+    gg->kdlabels[c->id]=xstrdup2(lab);
+    use_class(c);
+    Buf *o=&gg->text;
+    AFunc *eq=aot_find_method(c,"__eq__"), *lt=aot_find_method(c,"__lt__"), *hs=aot_find_method(c,"__hash__");
+    if(!kd_method_ok(eq,2)) eq=NULL;
+    if(!kd_method_ok(lt,2)) lt=NULL;
+    if(!kd_method_ok(hs,1) || !(ty_find(hs->ret)->k==TY_INT||ty_find(hs->ret)->k==TY_BOOL)) hs=NULL;
+    char eqf[64]="rt_eq_w", cmpf[64]="rt_cmp_no", hashf[64]="rt_hash_p";
+    if(eq){ use_fn(eq); snprintf(eqf,sizeof eqf,"KDC%d_eq",c->id);
+        int lid=++gg->labels;
+        buf_printf(o,"\n%s:                       ; %s.__eq__ for containers (None: identity)\n        mov ecx,[eax]\n        mov eax,[edx]\n        test ecx,ecx\n        jz L%d\n        test eax,eax\n        jz L%d\n        push eax\n        push ecx\n",eqf,c->name,lid,lid);
+        kd_call_method(o,eq); buf_printf(o,"        add esp,8\n"); kd_truth(o,eq->ret);
+        buf_printf(o,"        ret\nL%d:\n        cmp ecx,eax\n        sete al\n        movzx eax,al\n        ret\n",lid); }
+    if(lt){ use_fn(lt); snprintf(cmpf,sizeof cmpf,"KDC%d_cmp",c->id);
+        int l1=++gg->labels, l2=++gg->labels;
+        buf_printf(o,"\n%s:                       ; ordering by %s.__lt__\n        push ebx\n        push esi\n        mov ebx,[eax]\n        mov esi,[edx]\n        push esi\n        push ebx\n",cmpf,c->name);
+        kd_call_method(o,lt); buf_printf(o,"        add esp,8\n"); kd_truth(o,lt->ret);
+        buf_printf(o,"        test eax,eax\n        jz L%d\n        or eax,-1\n        jmp L%d\nL%d:\n        push ebx\n        push esi\n",l1,l2,l1);
+        kd_call_method(o,lt); buf_printf(o,"        add esp,8\n"); kd_truth(o,lt->ret);
+        buf_printf(o,"L%d:\n        pop esi\n        pop ebx\n        ret\n",l2); }
+    if(hs){ use_fn(hs); snprintf(hashf,sizeof hashf,"KDC%d_hash",c->id);
+        buf_printf(o,"\n%s:                       ; %s.__hash__\n        push dword [eax]\n",hashf,c->name);
+        kd_call_method(o,hs); buf_printf(o,"        add esp,4\n        cdq\n        jmp rt_hash_int\n"); rt("rt_hash_int"); }
+    else if(eq) snprintf(hashf,sizeof hashf,"rt_hash_no");
+    if(!eq) rt("rt_eq_w");
+    if(!lt) rt("rt_cmp_no");
+    if(!hs) rt(hashf);
+    int fi=fmt_index(ty_new(TY_OBJ,NULL,c),1); rt("rt_sb_need");
+    buf_printf(o,"\nKDC%d_repr:                     ; repr of a %s\n        mov eax,[eax]\n        jmp FMT%d\n",c->id,c->name,fi);
+    buf_printf(&gg->data,"align 4\nKDC%d dd 4,1,%s,%s,%s,KDC%d_repr,Z%d   ; objects of %s\n",c->id,eqf,cmpf,hashf,c->id,zlit(c->name),c->name);
+    return gg->kdlabels[c->id];
+}
 /* append str()/repr() of the value in eax/st0 (borrowed) to the string builder */
 static void gen_fmt(F *f, Ty *t, int repr){
     t=ty_find(t);
+    if(t->opt && (!is_ptr(t) || t->k==TY_STR || t->k==TY_BYTES)){             /* None prints as None (other references: their formatters) */
+        int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone);
+        Ty plain=*t; plain.opt=0; gen_fmt(f,&plain,repr); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t,0); E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr");
+        LBL(f,lend); return; }
     switch(t->k){
         case TY_INT: CALLRT(f,"rt_sb_int"); return;
         case TY_BOOL: CALLRT(f,"rt_sb_bool"); return;
         case TY_FLOAT: CALLRT(f,"rt_sb_float"); return;
-        case TY_STR:
-            if(t->tup){ int l=new_label(), l2=new_label();       /* Optional[str]: None prints as None */
-                E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",l2);
-                LBL(f,l); CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); LBL(f,l2); return; }
-            CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); return;
+        case TY_STR: CALLRT(f,repr?"rt_sb_repr_str":"rt_sb_str"); return;
+        case TY_BYTES: CALLRT(f,"rt_sb_repr_bytes"); return;
+        case TY_TYPE: CALLRT(f,"rt_sb_type"); return;
         case TY_BUF: E(f,"mov eax,Z%d",zlit("<buffer>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_TASK: E(f,"mov eax,Z%d",zlit("<Task>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_FILE: E(f,"mov eax,Z%d",zlit("<file>")); CALLRT(f,"rt_sb_cstr"); return;
@@ -2103,15 +3055,17 @@ static void sb_cstr_lit(F *f, const char *s){ E(f,"mov eax,Z%d",zlit(s)); CALLRT
 /* append the JSON text of the value in eax/st0 (borrowed) */
 static void gen_json(F *f, Ty *t, int v){
     t=ty_find(t);
+    if(t->opt && (!is_ptr(t) || t->k==TY_STR)){             /* None: null */
+        int lnone=new_label(), lend=new_label();
+        jump_if_none(f,t,lnone);
+        Ty plain=*t; plain.opt=0; gen_json(f,&plain,v); E(f,"jmp L%d",lend);
+        LBL(f,lnone); drop_value(f,t,0); sb_cstr_lit(f,"null");
+        LBL(f,lend); return; }
     switch(t->k){
         case TY_INT: CALLRT(f,"rt_sb_int"); return;
         case TY_BOOL:{ int l=new_label(); E(f,"mov ecx,Z%d",zlit("true")); E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov ecx,Z%d",zlit("false")); LBL(f,l); E(f,"mov eax,ecx"); CALLRT(f,"rt_sb_cstr"); return; }
         case TY_FLOAT: CALLRT(f,"rt_sb_jfloat"); return;
-        case TY_STR:
-            if(t->tup){ int l=new_label(), l2=new_label();                 /* Optional[str]: None is null */
-                E(f,"test eax,eax"); E(f,"jnz L%d",l); sb_cstr_lit(f,"null"); E(f,"jmp L%d",l2); LBL(f,l);
-                E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); LBL(f,l2); return; }
-            E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); return;
+        case TY_STR: E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); return;
         case TY_LIST: case TY_DICT: case TY_OBJ: case TY_TUPLE: rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(t,2+v)); return;
         default: sb_cstr_lit(f,"null"); return;
     }
@@ -2127,7 +3081,8 @@ static void emit_json_formatter(int i){
         E(f,"push eax"); E(f,"mov al,'{'"); CALLRT(f,"rt_sb_char");
         AField *fl[256]; int nf=0;
         if(t->k==TY_OBJ){ AClass *chain[32]; int nc=0; for(AClass *k=t->cls;k && nc<32;k=k->base) chain[nc++]=k;
-            for(int c=nc-1;c>=0;c--) for(int k=0;k<chain[c]->nfields && nf<256;k++) if(chain[c]->fields[k]->name[0]!='_') fl[nf++]=chain[c]->fields[k]; }
+            for(int c=nc-1;c>=0;c--) for(int k=0;k<chain[c]->nfields && nf<256;k++){ AField *fd=chain[c]->fields[k];
+                if(fd->name[0]!='_' && !fd->over && !aot_field_shared(fd) && !(fd->cvar && !aot_field_root(fd)->inst_set)) fl[nf++]=fd; } }
         int n=t->k==TY_OBJ?nf:t->nelems;
         for(int k=0;k<n;k++){
             const char *name=t->k==TY_OBJ?fl[k]->name:t->names[k];
@@ -2155,15 +3110,14 @@ static void emit_json_formatter(int i){
         E(f,"test esi,esi"); E(f,"jz L%d",lskip); sb_cstr_lit(f,isep); LBL(f,lskip);
         if(isdict){
             Ty *kt=ty_find(ty_dkey(t));
-            E(f,"mov eax,[ebx+16]"); E(f,"mov eax,[eax+esi*4]");
-            if(kt->k==TY_STR){ E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); }
-            else { E(f,"push eax"); E(f,"mov al,'\"'"); CALLRT(f,"rt_sb_char"); E(f,"pop eax");
-                if(kt->k==TY_FLOAT) E(f,"fld qword [eax]");
+            if(kt->k==TY_STR){ E(f,"mov eax,[ebx+16]"); load_at(f,kt,"eax","esi",8); E(f,"mov edx,%d",gg->jvars[v].ascii); CALLRT(f,"rt_sb_json_str"); }
+            else { E(f,"mov al,'\"'"); CALLRT(f,"rt_sb_char");
+                E(f,"mov eax,[ebx+16]"); load_at(f,kt,"eax","esi",8);
                 gen_json(f,kt,v); E(f,"mov al,'\"'"); CALLRT(f,"rt_sb_char"); }
             sb_cstr_lit(f,ksep);
             E(f,"mov eax,[ebx+20]");
         } else E(f,"mov eax,[ebx+16]");
-        if(is_flt(el)) E(f,"fld qword [eax+esi*8]"); else E(f,"mov eax,[eax+esi*4]");
+        load_at(f,el,"eax","esi",esize(el));
         gen_json(f,el,v);
         E(f,"inc esi"); E(f,"jmp L%d",ltop);
         LBL(f,lend); E(f,"mov al,'%c'",isdict?'}':']'); CALLRT(f,"rt_sb_char");
@@ -2184,6 +3138,13 @@ static int gen_json_dumps(F *f, Expr *e, XInfo *xi){
     return 1;
 }
 
+/* what str() / repr() of an object of class k calls: __str__ (an exception: none, its message), else __repr__ */
+static AFunc *fmt_method(AClass *k, int repr){
+    AFunc *m=repr?NULL:aot_find_method(k,"__str__");
+    if(!m && (repr || !aot_is_exception(k))) m=aot_find_method(k,"__repr__");
+    if(m && (m->is_static || ty_find(m->ret)->k!=TY_STR)) m=NULL;
+    return m;
+}
 static void emit_formatter(int i){
     if(gg->fmts[i].repr>=2){ emit_json_formatter(i); return; }
     F ff; memset(&ff,0,sizeof ff); F *f=&ff;
@@ -2191,26 +3152,45 @@ static void emit_formatter(int i){
     buf_printf(&f->code,"\nFMT%d:                         ; %s of %s\n",i,repr?"repr":"str",ty_name(t));
     if(t->k==TY_OBJ){
         AClass *cls=t->cls;
-        AFunc *m=repr?NULL:aot_find_method(cls,"__str__");
-        if(!m) m=aot_find_method(cls,"__repr__");
+        AFunc *m=fmt_method(cls,repr);
         int lnone=new_label();
         E(f,"test eax,eax"); E(f,"jz L%d",lnone);
-        if(m && !m->is_static && ty_find(m->ret)->k==TY_STR){
+        {   /* an object of a subclass with a __str__ / __repr__ of its own (not an override of this one's) */
+            AClass *ds[64]; int nd=0;
+            for(int i=0;i<gg->p->nclasses && nd<64;i++){ AClass *d=gg->p->classes[i]; AFunc *dm;
+                if(d==cls || !aot_subclass(d,cls) || !(dm=fmt_method(d,repr)) || dm->cls!=d || dm==m) continue;
+                if(m && !strcmp(m->name,dm->name)) continue;          /* (the vtable call reaches it) */
+                ds[nd++]=d; }
+            for(int a=0;a<nd;a++) for(int b=a+1;b<nd;b++){ int da=0, db=0; for(AClass *x=ds[a];x;x=x->base) da++; for(AClass *x=ds[b];x;x=x->base) db++; if(db>da){ AClass *tmp=ds[a]; ds[a]=ds[b]; ds[b]=tmp; } }
+            for(int i=0;i<nd;i++){ AFunc *dm=fmt_method(ds[i],repr); int lnext=new_label();
+                use_class(ds[i]); use_fn(dm);
+                E(f,"push eax"); E(f,"mov edx,%s",class_label(ds[i],0)); CALLRT(f,"rt_isinstance"); E(f,"test eax,eax"); E(f,"pop eax"); E(f,"jz L%d",lnext);
+                E(f,"push eax");
+                if(dm->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*dm->vslot); }
+                else E(f,"call %s",fnl(dm,LB_CODE));
+                E(f,"mov [esp],eax"); CALLRT(f,"rt_sb_str"); E(f,"pop eax"); CALLRT(f,"rt_decref"); E(f,"ret");
+                LBL(f,lnext); }
+        }
+        if(m){
             use_fn(m);
             E(f,"push eax");
             if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
             else E(f,"call %s",fnl(m,LB_CODE));
             E(f,"mov [esp],eax"); CALLRT(f,"rt_sb_str"); E(f,"pop eax"); CALLRT(f,"rt_decref"); E(f,"ret");
         } else if(aot_is_exception(cls)){                   /* str(e): the message; repr(e): Name('message') */
-            int keyerr=0; for(AClass *k=cls;k;k=k->base) if(k->builtin && !strcmp(k->name,"KeyError")) keyerr=1;
-            if(!repr){ E(f,"mov eax,[eax+12]"); if(keyerr){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"jmp rt_sb_repr_str"); LBL(f,l); E(f,"ret"); rt("rt_sb_repr_str"); }
-                       else { E(f,"jmp rt_sb_str"); rt("rt_sb_str"); } }
+            if(!repr){ E(f,"mov eax,[eax+12]"); E(f,"jmp rt_sb_str"); rt("rt_sb_str"); }
             else {
-                int lno=new_label();
+                int lno=new_label(), lstr=new_label(), ldone=new_label();
                 E(f,"push eax"); E(f,"mov eax,[eax+8]"); E(f,"mov eax,[eax]"); CALLRT(f,"rt_sb_str");
                 E(f,"mov al,'('"); CALLRT(f,"rt_sb_char");
-                E(f,"pop eax"); E(f,"mov eax,[eax+12]"); E(f,"test eax,eax"); E(f,"jz L%d",lno); CALLRT(f,"rt_sb_repr_str");
-                LBL(f,lno); E(f,"mov al,')'"); E(f,"jmp rt_sb_char");
+                AClass *ke=NULL; for(int i=0;i<gg->p->nclasses;i++) if(gg->p->classes[i]->builtin && !strcmp(gg->p->classes[i]->name,"KeyError")) ke=gg->p->classes[i];
+                E(f,"mov eax,[esp]"); E(f,"cmp dword [eax+12],0"); E(f,"je L%d",lno);
+                E(f,"cmp dword [eax+%d],0",exc_rawoff(cls)); E(f,"jne L%d",lstr);          /* the message is the repr already */
+                if(is_keyerror(cls)) E(f,"jmp L%d",lstr);                                  /* (a KeyError the run time raised) */
+                else if(ke && aot_subclass(ke,cls)){ use_class(ke); E(f,"mov edx,%s",class_label(ke,0)); CALLRT(f,"rt_isinstance"); E(f,"test eax,eax"); E(f,"jnz L%d",lstr); E(f,"mov eax,[esp]"); }
+                E(f,"mov eax,[eax+12]"); CALLRT(f,"rt_sb_repr_str"); E(f,"jmp L%d",ldone);
+                LBL(f,lstr); E(f,"mov eax,[esp]"); E(f,"mov eax,[eax+12]"); CALLRT(f,"rt_sb_str");
+                LBL(f,ldone); LBL(f,lno); E(f,"pop eax"); E(f,"mov al,')'"); E(f,"jmp rt_sb_char");
             }
         } else {
             E(f,"push eax"); E(f,"mov al,'<'"); CALLRT(f,"rt_sb_char");
@@ -2252,28 +3232,30 @@ static void emit_formatter(int i){
     int ltop=new_label(), lend=new_label(), lskip=new_label(), lout=new_label();
     int isdict=t->k==TY_DICT, isset=t->k==TY_SET;
     Ty *el=t->elem;
-    E(f,"push ebx"); E(f,"push esi"); E(f,"mov ebx,eax");
+    E(f,"push ebx"); E(f,"push esi"); E(f,"push 0"); E(f,"mov ebx,eax");
+    { int l=new_label(); E(f,"test ebx,ebx"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",lout); LBL(f,l); }
     if(isset){ int lne=new_label(), lgo=new_label();               /* the empty set prints as set() */
         E(f,"test ebx,ebx"); E(f,"jz L%d",lne); E(f,"cmp dword [ebx+8],0"); E(f,"jne L%d",lgo);
         LBL(f,lne); E(f,"mov eax,Z%d",zlit("set()")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",lout);
-        LBL(f,lgo); }
+        LBL(f,lgo);                                                 /* its elements in its order, as a list */
+        E(f,"mov eax,ebx"); E(f,"mov edx,%s",kd_of(el)); CALLRT(f,"rt_set_to_list"); E(f,"mov ebx,eax"); E(f,"mov [esp],eax"); }
     E(f,"mov al,'%c'",t->k==TY_LIST?(t->tup?'(':'['):'{'); CALLRT(f,"rt_sb_char");
     E(f,"xor esi,esi");
     LBL(f,ltop);
     E(f,"test ebx,ebx"); E(f,"jz L%d",lend); E(f,"cmp esi,[ebx+8]"); E(f,"jae L%d",lend);
     E(f,"test esi,esi"); E(f,"jz L%d",lskip); E(f,"mov eax,Z%d",zlit(", ")); CALLRT(f,"rt_sb_cstr"); LBL(f,lskip);
     if(isdict){
-        E(f,"mov eax,[ebx+16]"); E(f,"mov eax,[eax+esi*4]"); gen_fmt(f,ty_dkey(t),1);
+        E(f,"mov eax,[ebx+16]"); load_at(f,ty_dkey(t),"eax","esi",8); gen_fmt(f,ty_dkey(t),1);
         E(f,"mov eax,Z%d",zlit(": ")); CALLRT(f,"rt_sb_cstr");
         E(f,"mov eax,[ebx+20]");
     } else E(f,"mov eax,[ebx+16]");
-    if(is_flt(el)) E(f,"fld qword [eax+esi*8]"); else E(f,"mov eax,[eax+esi*4]");
+    load_at(f,el,"eax","esi",esize(el));
     gen_fmt(f,el,1);
     E(f,"inc esi"); E(f,"jmp L%d",ltop);
     LBL(f,lend);
     if(t->k==TY_LIST && t->tup){ int l=new_label(); E(f,"cmp esi,1"); E(f,"jne L%d",l); E(f,"mov al,','"); CALLRT(f,"rt_sb_char"); LBL(f,l); }   /* (x,) */
     E(f,"mov al,'%c'",t->k==TY_LIST?(t->tup?')':']'):'}'); CALLRT(f,"rt_sb_char");
-    LBL(f,lout); E(f,"pop esi"); E(f,"pop ebx"); E(f,"ret");
+    LBL(f,lout); E(f,"pop eax"); CALLRT(f,"rt_decref"); E(f,"pop esi"); E(f,"pop ebx"); E(f,"ret");
     buf_cat(&gg->text,&f->code); free(f->code.s);
 }
 
@@ -2295,7 +3277,7 @@ static void emit_task_stub(int i){
     else buf_printf(o,"        call %s\n",fnl(fn,LB_CODE));
     buf_printf(o,"        mov ecx,[rt_cur_task]\n");
     if(is_flt(ret)) buf_printf(o,"        fstp qword [ecx+24]\n");
-    else if(ret->k!=TY_VOID){ buf_printf(o,"        mov [ecx+24],eax\n"); if(is_ptr(ret)) buf_printf(o,"        mov dword [ecx+44],1\n"); }
+    else if(ret->k!=TY_VOID){ buf_printf(o,"        mov [ecx+24],eax\n"); if(is_lng(ret)) buf_printf(o,"        mov [ecx+28],edx\n"); if(is_ptr(ret)) buf_printf(o,"        mov dword [ecx+44],1\n"); }
     int off=0;
     for(int k=0;k<fn->nparams;k++){ Ty *pt=fn->params[k]->ty;
         if(is_ptr(pt)){ rt("rt_decref"); buf_printf(o,"        mov eax,[esp+%d]\n        call rt_decref\n",off); }
@@ -2334,7 +3316,7 @@ static int gen_asyncio(F *f, Expr *e, XInfo *xi){
 }
 static int gen_await(F *f, Expr *e){
     XInfo *xi=xinfo(e); Ty *t=TY(e); Expr *x=e->a;
-    if(!strcmp(xi->name,"call")) return gen(f,x);
+    if(!strcmp(xi->name,"call")||!strcmp(xi->name,"plain")) return gen(f,x);
     if(!strcmp(xi->name,"sleep")){ gen_as(f,x->items[0],TY_FLOAT_T,0); CALLRT(f,"rt_async_sleep"); return 0; }
     if(!strcmp(xi->name,"task")){
         gen_borrow(f,x); CALLRT(f,"rt_task_wait");
@@ -2347,7 +3329,7 @@ static int gen_await(F *f, Expr *e){
     for(int i=0;i<n;i++){ gen_task_new(f,x->items[i]); hold(f); slots[i]=f->tmp[f->tmp_used-1]; }
     if(ty_find(t)->k==TY_VOID){ for(int i=0;i<n;i++){ E(f,"mov eax,[ebp%+d]",slots[i]); CALLRT(f,"rt_task_wait"); } return 0; }
     Ty *el=ty_find(t)->elem;
-    E(f,"mov eax,%s",list_destroy(el)); CALLRT(f,"rt_list_new"); E(f,"push eax");
+    new_list(f,el); E(f,"push eax");
     for(int i=0;i<n;i++){
         E(f,"mov eax,[ebp%+d]",slots[i]); CALLRT(f,"rt_task_wait");
         load_mem(f,el,"eax",24); if(is_ptr(el)) incref(f);
@@ -2372,8 +3354,8 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi){
     if(!strcmp(mod,"math")){
         if(!strcmp(m,"floor")||!strcmp(m,"ceil")){ farg(f,a[0]); if(m[0]=='c') E(f,"fchs"); CALLRT(f,"rt_ffloor"); if(m[0]=='c') E(f,"fchs"); CALLRT(f,"rt_ftoi"); return 0; }
         if(!strcmp(m,"trunc")){ farg(f,a[0]); CALLRT(f,"rt_ftoi"); return 0; }
-        if(!strcmp(m,"gcd")){ gen(f,a[0]); E(f,"push eax"); gen(f,a[1]); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_gcd"); return 0; }
-        if(!strcmp(m,"isqrt")){ gen(f,a[0]); CALLRT(f,"rt_isqrt"); return 0; }
+        if(!strcmp(m,"gcd")){ gen_as(f,a[0],TY_INT_T,0); push_value(f,TY_INT_T); gen_as(f,a[1],TY_INT_T,0); CALLRT(f,"rt_gcd"); E(f,"add esp,8"); return 0; }
+        if(!strcmp(m,"isqrt")){ gen_as(f,a[0],TY_INT_T,0); CALLRT(f,"rt_isqrt"); return 0; }
         if(e->count==2){                                                   /* two floats */
             farg(f,a[0]); E(f,"sub esp,8"); E(f,"fstp qword [esp]");
             farg(f,a[1]); E(f,"fld qword [esp]"); E(f,"add esp,8");          /* st0 = x, st1 = y */
@@ -2381,9 +3363,18 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi){
             else if(!strcmp(m,"pow")) CALLRT(f,"rt_fpow");
             else if(!strcmp(m,"hypot")){ E(f,"fmul st0,st0"); E(f,"fxch"); E(f,"fmul st0,st0"); E(f,"faddp st1,st0"); E(f,"fsqrt"); }
             else if(!strcmp(m,"fmod")) CALLRT(f,"rt_fmod_c");
+            else if(!strcmp(m,"copysign")){ int l=new_label(); E(f,"fabs"); E(f,"fxch"); E(f,"sub esp,8"); E(f,"fstp qword [esp]");   /* |x|, y's sign */
+                E(f,"mov eax,[esp+4]"); E(f,"add esp,8"); E(f,"test eax,eax"); E(f,"jns L%d",l); E(f,"fchs"); LBL(f,l); }
             else { E(f,"fldln2"); E(f,"fxch"); E(f,"fyl2x"); E(f,"fxch"); E(f,"fldln2"); E(f,"fxch"); E(f,"fyl2x"); E(f,"fdivp st1,st0"); }  /* log(x, base) */
             return 0;
         }
+        if(!strcmp(m,"isnan")||!strcmp(m,"isinf")||!strcmp(m,"isfinite")){         /* (comparisons: unordered for a NaN) */
+            farg(f,a[0]);
+            if(m[2]=='n' && m[3]=='a'){ E(f,"fld st0"); E(f,"fcompp"); E(f,"fnstsw ax"); E(f,"sahf"); E(f,"setp al"); }
+            else { rt("rt_finf"); E(f,"fabs"); E(f,"fld qword [rt_finf]"); E(f,"fcompp"); E(f,"fnstsw ax"); E(f,"sahf");
+                if(m[2]=='i') E(f,"sete al"); else E(f,"seta al");
+                E(f,"setnp cl"); E(f,"and al,cl"); }
+            E(f,"movzx eax,al"); return 0; }
         farg(f,a[0]);
         if(!strcmp(m,"sqrt")) E(f,"fsqrt");
         else if(!strcmp(m,"sin")) E(f,"fsin");
@@ -2411,15 +3402,17 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi){
         if(!strcmp(m,"seed")){ gen(f,a[0]); CALLRT(f,"rt_rand_seed"); return 0; }
         if(!strcmp(m,"uniform")){ farg(f,a[0]); E(f,"sub esp,8"); E(f,"fstp qword [esp]"); farg(f,a[1]); E(f,"fsub qword [esp]");
             CALLRT(f,"rt_rand_float"); E(f,"fmulp st1,st0"); E(f,"fadd qword [esp]"); E(f,"add esp,8"); return 0; }
-        if(!strcmp(m,"randint")||!strcmp(m,"randrange")){
-            if(e->count==1){ E(f,"push 0"); gen(f,a[0]); }
-            else { gen(f,a[0]); E(f,"push eax"); gen(f,a[1]); if(m[4]=='i') E(f,"inc eax"); }
-            E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_rand_range"); return 0; }
+        if(!strcmp(m,"randint")||!strcmp(m,"randrange")){        /* [esp] lo, edx:eax hi (exclusive), ecx: 0 randrange(n), 1 randrange(a, b), 2 randint */
+            if(e->count==1){ E(f,"push 0"); E(f,"push 0"); gen_as(f,a[0],TY_INT_T,0); E(f,"xor ecx,ecx"); }
+            else { gen_as(f,a[0],TY_INT_T,0); push_value(f,TY_INT_T); gen_as(f,a[1],TY_INT_T,0); E(f,"mov ecx,%d",m[4]=='i'?2:1); }
+            CALLRT(f,"rt_rand_range"); E(f,"add esp,8"); return 0; }
         if(!strcmp(m,"choice")){
             Ty *t=TY(a[0]);
-            gen_borrow(f,a[0]); E(f,"push eax");
-            E(f,"xor eax,eax"); E(f,"mov edx,[esp]"); E(f,"test edx,edx"); int l=new_label(); E(f,"jz L%d",l); E(f,"mov edx,[edx+8]"); LBL(f,l);
-            CALLRT(f,"rt_rand_range"); E(f,"mov edx,eax"); E(f,"pop eax");
+            gen_borrow(f,a[0]); E(f,"push eax"); E(f,"push 0"); E(f,"push 0");
+            E(f,"xor eax,eax"); E(f,"xor edx,edx"); E(f,"mov ecx,[esp+8]"); E(f,"test ecx,ecx"); int l=new_label(); E(f,"jz L%d",l);
+            if(t->k==TY_STR){ E(f,"mov eax,ecx"); CALLRT(f,"rt_str_cplen"); E(f,"xor edx,edx"); } else E(f,"mov eax,[ecx+8]");
+            LBL(f,l);
+            E(f,"mov ecx,3"); CALLRT(f,"rt_rand_range"); E(f,"add esp,8"); E(f,"mov edx,eax"); E(f,"pop eax");
             if(t->k==TY_STR){ CALLRT(f,"rt_str_char"); return 0; }
             E(f,"mov ecx,%d",esize(t->elem)); CALLRT(f,"rt_list_at"); load_mem(f,t->elem,"eax",0); return 0; }
         if(!strcmp(m,"shuffle")){ Ty *t=TY(a[0]); gen_borrow(f,a[0]); E(f,"mov edx,%d",esize(t->elem)); CALLRT(f,"rt_shuffle"); return 0; }
@@ -2460,12 +3453,12 @@ static void gen_print(F *f, APrint *pr){
     int n=pr->n;
     for(int i=0;i<n;i++) if(pr->star[i]){ gen_print_star(f,pr); return; }
     if(!pr->sep && !pr->end){
-        if(n==0){ E(f,"mov ecx,P%d",print_lit("")); E(f,"mov edx,1"); CALLRT(f,"rt_write"); return; }
+        if(n==0){ E(f,"mov ecx,P%d",print_lit("",0)); E(f,"mov edx,1"); CALLRT(f,"rt_write"); return; }
         Expr *a=pr->args[0]; Ty *t=TY(a);
-        if(n==1 && is_str_lit(a) && !memchr(a->tok->text,0,1)){
-            E(f,"mov ecx,P%d",print_lit(a->tok->text)); E(f,"mov edx,%d",(int)strlen(a->tok->text)+1); CALLRT(f,"rt_write"); return; }
+        if(n==1 && is_str_lit(a) && a->tok->len){
+            E(f,"mov ecx,P%d",print_lit(a->tok->text,(int)a->tok->len)); E(f,"mov edx,%d",(int)a->tok->len+1); CALLRT(f,"rt_write"); return; }
         if(n==1 && t->k==TY_STR && !is_concat(a) && !is_fmt_expr(a) && !is_str_call(a)){ gen_borrow(f,a); CALLRT(f,"rt_print_str"); return; }
-        if(n==1 && t->k==TY_INT){ gen(f,a); CALLRT(f,"rt_print_int"); return; }
+        if(n==1 && t->k==TY_INT){ gen(f,a); CALLRT(f,"rt_print_int"); return; }      /* edx:eax */
     }
     /* print(xs, xs.pop()): every argument is evaluated before any is formatted */
     int early=0, slots[32];
@@ -2476,7 +3469,7 @@ static void gen_print(F *f, APrint *pr){
     for(int i=0;i<n;i++){
         if(i){ if(pr->sep) gen_into_sb(f,pr->sep); else { E(f,"mov al,' '"); CALLRT(f,"rt_sb_char"); } }
         if(early){ Ty *t=TY(pr->args[i]);
-            if(slots[i]){ if(is_flt(t)) E(f,"fld qword [ebp%+d]",slots[i]); else E(f,"mov eax,[ebp%+d]",slots[i]); }
+            if(slots[i]) load_mem(f,t,"ebp",slots[i]);
             gen_fmt(f,t,0); }
         else gen_into_sb(f,pr->args[i]);
     }
@@ -2485,16 +3478,72 @@ static void gen_print(F *f, APrint *pr){
 }
 
 /* Store the owned value in eax/st0 (of type vt) into an assignment target. */
+/* a, *b, c = value (in eax, owned): b gets a new list of the middle items */
+static void gen_star_unpack(F *f, Expr *t, Ty *lt, int star, int line){
+    int n=t->count, after=n-1-star;
+    hold(f); int slot=f->tmp[f->tmp_used-1];
+    if(lt->k==TY_TUPLE){                                     /* a fixed tuple: its items by position */
+        int rest=lt->nelems-(n-1);
+        for(int i=0;i<star;i++){ Ty *et=lt->elems[i]; E(f,"mov eax,[ebp%+d]",slot); load_mem(f,et,"eax",tuple_off(lt,i)); if(is_ptr(et)) incref(f); store_target(f,t->items[i],et,line); }
+        Ty *mt=ty_find(TY(t->items[star])), *el=mt->elem;
+        new_list(f,el); E(f,"push eax");
+        for(int i=star;i<star+rest;i++){ E(f,"mov eax,[ebp%+d]",slot); load_mem(f,lt->elems[i],"eax",tuple_off(lt,i)); conv_num(f,lt->elems[i],el); if(is_ptr(el)) incref(f); list_append_top(f,el); }
+        E(f,"pop eax"); store_target(f,t->items[star],mt,line);
+        for(int i=star+1;i<n;i++){ int k=lt->nelems-(n-i); Ty *et=lt->elems[k]; E(f,"mov eax,[ebp%+d]",slot); load_mem(f,et,"eax",tuple_off(lt,k)); if(is_ptr(et)) incref(f); store_target(f,t->items[i],et,line); }
+        return;
+    }
+    Ty *el= lt->k==TY_STR ? TY_STR_T : lt->elem;
+    if(lt->k==TY_STR){ E(f,"mov eax,[ebp%+d]",slot); CALLRT(f,"rt_str_chars"); hold(f); slot=f->tmp[f->tmp_used-1]; }
+    E(f,"mov eax,[ebp%+d]",slot); E(f,"mov edx,%d",n-1); CALLRT(f,"rt_unpack_atleast");
+    for(int i=0;i<star;i++){ E(f,"mov eax,[ebp%+d]",slot); E(f,"mov eax,[eax+16]"); load_mem(f,el,"eax",esize(el)*i); if(is_ptr(el)) incref(f); store_target(f,t->items[i],el,line); }
+    E(f,"sub esp,24"); E(f,"mov eax,[ebp%+d]",slot); E(f,"mov [esp],eax");          /* the middle: value[star:len-after] */
+    E(f,"mov dword [esp+4],%d",star); E(f,"mov dword [esp+8],%d",-after); E(f,"mov dword [esp+12],0");
+    E(f,"mov dword [esp+16],%d",after?4:6); E(f,"mov dword [esp+20],%s",kd_of(el));
+    CALLRT(f,"rt_list_slice"); E(f,"add esp,24");
+    store_target(f,t->items[star],TY(t->items[star]),line);
+    for(int i=star+1;i<n;i++){ E(f,"mov eax,[ebp%+d]",slot); E(f,"mov ecx,[eax+8]"); E(f,"sub ecx,%d",n-i); E(f,"mov eax,[eax+16]");
+        if(esize(el)==8) E(f,"lea eax,[eax+ecx*8]"); else E(f,"lea eax,[eax+ecx*4]");
+        load_mem(f,el,"eax",0); if(is_ptr(el)) incref(f); store_target(f,t->items[i],el,line); }
+}
+/* obj.name = value on a frozen dataclass: FrozenInstanceError("cannot assign to field 'name'") */
+static void gen_frozen_raise(F *f, Expr *t, const char *what){
+    gen_borrow(f,t->a); attr_check(f,t->name);
+    AClass *cls=NULL; for(int i=0;i<gg->p->nclasses;i++) if(gg->p->classes[i]->builtin && !strcmp(gg->p->classes[i]->name,"FrozenInstanceError")) cls=gg->p->classes[i];
+    char msg[300]; snprintf(msg,sizeof msg,"cannot %s field '%s'",what,t->name);
+    use_class(cls);
+    E(f,"mov eax,S%d",str_lit(msg)); incref(f); E(f,"push eax");
+    E(f,"mov eax,%d",cls->size); E(f,"mov edx,%s",class_label(cls,0)); E(f,"mov ecx,%s",class_label(cls,1)); CALLRT(f,"rt_obj_new");
+    E(f,"pop ecx"); E(f,"mov [eax+12],ecx");
+    seed_fields(f,cls);
+    CALLRT(f,"rt_throw");
+}
 static void store_target(F *f, Expr *t, Ty *vt, int line){
     XInfo *xi=xinfo(t);
     switch(t->kind){
-        case EXPR_NAME:{ AVar *v=xi->kind==X_VAR&&xi->var?xi->var:find_var(f,t->name,line); conv(f,vt,v->ty); store_var(f,v); return; }
+        case EXPR_NAME:{
+            if(xi->name && !strcmp(xi->name,"_discard")){ drop_value(f,vt,1); return; }      /* _ = a value of another type */
+            AVar *v=xi->kind==X_VAR&&xi->var?xi->var:find_var(f,t->name,line); conv(f,vt,v->ty); store_var(f,v); return; }
         case EXPR_ATTRIBUTE:
             if(xi->kind==X_VAR){ conv(f,vt,xi->var->ty); store_var(f,xi->var); return; }
+            if(xi->name && !strcmp(xi->name,"frozen")){ drop_value(f,vt,1); gen_frozen_raise(f,t,"assign to"); return; }
             { AField *fd=xi->field;
               conv(f,vt,fd->ty); push_value(f,fd->ty);
-              gen_borrow(f,t->a); panic_if_null(f); E(f,"mov ecx,eax");
+              gen_borrow(f,t->a); attr_check(f,t->name); E(f,"mov ecx,eax");
+              if(fd->setoff) E(f,"mov dword [ecx+%d],1",fd->setoff);
               pop_value(f,fd->ty); store_mem(f,fd->ty,"ecx",fd->offset); return; }
+        case EXPR_SLICE:{                                     /* xs[a:b:c] = items: the items as a list */
+            Ty *v=ty_find(vt); Expr *parts[3]={t->b,t->c,t->d}; int flags=0;
+            if(v->k==TY_STR) CALLRT(f,"rt_str_chars");
+            else if(v->k==TY_SET){ E(f,"push eax"); E(f,"mov edx,%s",kd_of(v->elem)); CALLRT(f,"rt_set_to_list"); E(f,"xchg eax,[esp]"); CALLRT(f,"rt_decref"); E(f,"pop eax"); }
+            else if(v->k==TY_GEN){ E(f,"mov edx,%s",kd_of(v->elem)); CALLRT(f,"rt_gen_drain"); }
+            hold(f); int vs=f->tmp[f->tmp_used-1];
+            E(f,"sub esp,24"); gen_borrow(f,t->a); check_none(f,TY(t->a),"TypeError","'NoneType' object does not support item assignment"); E(f,"mov [esp],eax");
+            for(int k=0;k<3;k++){
+                if(parts[k] && parts[k]->kind!=EXPR_NONE){ gen(f,parts[k]); to_i32(f,TY(parts[k])); E(f,"mov [esp+%d],eax",4+4*k); }
+                else { flags|=1<<k; E(f,"mov dword [esp+%d],0",4+4*k); } }
+            E(f,"mov dword [esp+16],%d",flags); E(f,"mov eax,[ebp%+d]",vs); E(f,"mov [esp+20],eax");
+            CALLRT(f,"rt_list_set_slice"); E(f,"add esp,24");
+            return; }
         case EXPR_INDEX:{
             Ty *ct=TY(t->a), *el=ct->elem; int dict=ct->k==TY_DICT;
             if(ct->k==TY_OBJ){                                    /* obj[key] = value: obj.__setitem__(key, value) */
@@ -2503,27 +3552,30 @@ static void store_target(F *f, Expr *t, Ty *vt, int line){
                 int total=4+esize(kt)+esize(pv);
                 E(f,"sub esp,%d",total);
                 gen_borrow(f,t->a); E(f,"mov [esp],eax");
-                gen_as(f,t->b,kt,0); if(is_flt(kt)) E(f,"fstp qword [esp+4]"); else E(f,"mov [esp+4],eax");
-                if(is_flt(pv)){ E(f,"fld qword [ebp%+d]",slot); E(f,"fstp qword [esp+%d]",4+esize(kt)); } else { E(f,"mov eax,[ebp%+d]",slot); E(f,"mov [esp+%d],eax",4+esize(kt)); }
+                gen_as(f,t->b,kt,0); put_arg(f,kt,4);
+                load_mem(f,pv,"ebp",slot); put_arg(f,pv,4+esize(kt));
                 call_on_top(f,m); E(f,"add esp,%d",total);
                 drop_value(f,m->ret,1);
                 return;
             }
             conv(f,vt,el); push_value(f,el);
-            gen_borrow(f,t->a); E(f,"push eax");
-            if(dict) gen_borrow(f,t->b); else gen(f,t->b);
-            E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",esize(el));
-            CALLRT(f,dict?"rt_dict_slot":"rt_list_at");
+            gen_borrow(f,t->a); check_none(f,ct,"TypeError","'NoneType' object does not support item assignment"); E(f,"push eax");
+            if(dict){ Ty *kt=ty_dkey(ct); gen_as(f,t->b,kt,0); push_value(f,kt);
+                E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",esize(kt)); CALLRT(f,"rt_dict_slot"); E(f,"add esp,%d",esize(kt)+4); }
+            else { gen(f,t->b); to_i32(f,TY(t->b)); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_set_at"); }
             E(f,"mov ecx,eax"); pop_value(f,el); store_mem(f,el,"ecx",0);
             return; }
         case EXPR_TUPLE: case EXPR_LIST:{                    /* a, b = some_list / some_tuple */
             Ty *lt=ty_find(vt), *el=lt->elem;
+            int star=-1; for(int i=0;i<t->count;i++) if(t->items[i]->akind==1) star=i;
+            if(star>=0){ gen_star_unpack(f,t,lt,star,line); return; }
             hold(f); int slot=f->tmp[f->tmp_used-1];
             if(lt->k==TY_TUPLE){ unpack_tuple_slot(f,slot,lt,t->items,t->count,line); return; }
-            E(f,"mov edx,%d",t->count); CALLRT(f,"rt_unpack_check");
+            if(lt->k==TY_STR){ el=TY_STR_T; CALLRT(f,"rt_str_chars"); hold(f); slot=f->tmp[f->tmp_used-1]; }   /* a, b = "xy" */
+            E(f,"mov eax,[ebp%+d]",slot); E(f,"mov edx,0x%x",t->count|(lt->k==TY_STR?0x80000000u:0)); CALLRT(f,"rt_unpack_check");
             for(int i=0;i<t->count;i++){
                 E(f,"mov eax,[ebp%+d]",slot); E(f,"mov eax,[eax+16]");
-                if(is_flt(el)) E(f,"fld qword [eax+%d]",8*i); else E(f,"mov eax,[eax+%d]",4*i);
+                load_mem(f,el,"eax",esize(el)*i);
                 if(is_ptr(el)) incref(f);
                 store_target(f,t->items[i],el,line);
             }
@@ -2535,11 +3587,11 @@ static void store_target(F *f, Expr *t, Ty *vt, int line){
 static int park_value(F *f, Ty *t, int owned){
     if(is_ptr(t)){ if(!owned) incref(f); hold(f); return f->tmp[f->tmp_used-1]; }
     int slot=frame_slot(f,8);
-    if(is_flt(t)) E(f,"fstp qword [ebp%+d]",slot); else E(f,"mov [ebp%+d],eax",slot);
+    store_new(f,t,"ebp",slot);
     return slot;
 }
 static void load_parked(F *f, Ty *t, int slot){
-    if(is_flt(t)) E(f,"fld qword [ebp%+d]",slot); else E(f,"mov eax,[ebp%+d]",slot);
+    load_mem(f,t,"ebp",slot);
     if(is_ptr(t)) incref(f);
 }
 
@@ -2552,20 +3604,28 @@ static void gen_augassign(F *f, AAssign *a, int line){
         if(t->kind==EXPR_INDEX && TY(t->a)->k==TY_OBJ) cg_fail(line,"augmented assignment to obj[key] is not supported in compiled code");
         E(f,"sub esp,%d",total);
         gen_borrow(f,t); E(f,"mov [esp],eax");
-        gen_as(f,v,pt,0); if(is_flt(pt)) E(f,"fstp qword [esp+4]"); else E(f,"mov [esp+4],eax");
+        gen_as(f,v,pt,0); put_arg(f,pt,4);
         call_on_top(f,m); E(f,"add esp,%d",total);
         store_target(f,t,m->ret,line);
         return;
     }
     if(cur->k==TY_LIST && a->aug==T_PLUS_ASSIGN){            /* list += x extends in place */
-        gen_borrow(f,t); E(f,"push eax"); gen_borrow(f,v);
-        E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",kind_of(cur->elem)); CALLRT(f,"rt_list_extend");
+        gen_borrow(f,t); E(f,"push eax");
+        if(TY(v)->k==TY_LIST) gen_borrow(f,v); else { gen_list_of(f,v,cur->elem); hold(f); }
+        E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_extend");
         return;
     }
+    if(cur->k==TY_SET && TY(v)->k==TY_SET && (a->aug==T_PIPE_ASSIGN||a->aug==T_AMP_ASSIGN||a->aug==T_MINUS_ASSIGN||a->aug==T_CARET_ASSIGN)){
+        gen_borrow(f,t); E(f,"push eax"); gen_borrow(f,v);      /* in place, as CPython's set does */
+        E(f,"mov edx,eax"); E(f,"pop eax");
+        E(f,"mov ecx,%d",a->aug==T_PIPE_ASSIGN?0:a->aug==T_AMP_ASSIGN?1:a->aug==T_MINUS_ASSIGN?2:3); CALLRT(f,"rt_set_iop");
+        return;
+    }
+    const char *mleft=binop_none_msg(a->aug,cur,tv,1), *mright=binop_none_msg(a->aug,cur,tv,0);
     if(t->kind==EXPR_NAME || (t->kind==EXPR_ATTRIBUTE && xi->kind==X_VAR)){
         AVar *var=xi->var?xi->var:find_var(f,t->name,line);
-        load_var(f,var); push_value(f,cur);
-        gen_as(f,v,num?cur:tv,0);
+        load_var(f,var); check_none(f,cur,"TypeError",mleft); push_value(f,cur);
+        gen_as(f,v,num?cur:tv,0); check_none(f,tv,"TypeError",mright);
         int o=apply_binop(f,a->aug,cur,cur,tv,line);
         if(is_ptr(cur) && !o) incref(f);
         store_var(f,var);
@@ -2573,29 +3633,33 @@ static void gen_augassign(F *f, AAssign *a, int line){
     }
     if(t->kind==EXPR_ATTRIBUTE){
         AField *fd=xi->field;
-        gen_borrow(f,t->a); panic_if_null(f); E(f,"push eax");
-        load_mem(f,cur,"eax",fd->offset); push_value(f,cur);
-        gen_as(f,v,num?cur:tv,0);
+        if(xi->name && !strcmp(xi->name,"frozen")){ gen_borrow(f,t->a); attr_check(f,t->name); load_field(f,fd); gen_frozen_raise(f,t,"assign to"); return; }   /* (the value is never computed) */
+        gen_borrow(f,t->a); attr_check(f,t->name); E(f,"push eax");
+        load_field(f,fd); check_none(f,cur,"TypeError",mleft); push_value(f,cur);
+        gen_as(f,v,num?cur:tv,0); check_none(f,tv,"TypeError",mright);
         int o=apply_binop(f,a->aug,cur,cur,tv,line);
         if(is_ptr(cur) && !o) incref(f);
-        E(f,"pop ecx"); store_mem(f,cur,"ecx",fd->offset);
+        E(f,"pop ecx"); if(fd->setoff) E(f,"mov dword [ecx+%d],1",fd->setoff);
+        store_mem(f,cur,"ecx",fd->offset);
         return;
     }
     if(t->kind==EXPR_INDEX){
         Ty *ct=TY(t->a); int es=esize(cur), dict=ct->k==TY_DICT;
+        Ty *kt=dict?ty_dkey(ct):TY_INT_T; int ks=dict?esize(kt):4;
         const char *at=dict?"rt_dict_get":"rt_list_at";
-        gen_borrow(f,t->a); E(f,"push eax");
-        if(dict) gen_borrow(f,t->b); else gen(f,t->b);
-        E(f,"push eax");                                         /* [esp] index, [esp+4] container */
-        E(f,"mov edx,eax"); E(f,"mov eax,[esp+4]"); E(f,"mov ecx,%d",es); CALLRT(f,at);
-        load_mem(f,cur,"eax",0); push_value(f,cur);
-        gen_as(f,v,num?cur:tv,0);
+        gen_borrow(f,t->a); check_none(f,ct,"TypeError","'NoneType' object is not subscriptable"); E(f,"push eax");
+        if(dict){ gen_as(f,t->b,kt,0); push_value(f,kt); } else { gen(f,t->b); to_i32(f,TY(t->b)); E(f,"push eax"); }   /* [esp] key, then the container */
+        if(dict) E(f,"mov edx,esp"); else E(f,"mov edx,[esp]");
+        E(f,"mov eax,[esp+%d]",ks); CALLRT(f,at);
+        load_mem(f,cur,"eax",0); check_none(f,cur,"TypeError",mleft); push_value(f,cur);
+        gen_as(f,v,num?cur:tv,0); check_none(f,tv,"TypeError",mright);
         int o=apply_binop(f,a->aug,cur,cur,tv,line);
         if(is_ptr(cur) && !o) incref(f);
         push_value(f,cur);
-        E(f,"mov eax,[esp+%d]",es+4); E(f,"mov edx,[esp+%d]",es); E(f,"mov ecx,%d",es); CALLRT(f,at);
+        if(dict) E(f,"lea edx,[esp+%d]",es); else E(f,"mov edx,[esp+%d]",es);
+        E(f,"mov eax,[esp+%d]",es+ks); CALLRT(f,at);
         E(f,"mov ecx,eax"); pop_value(f,cur); store_mem(f,cur,"ecx",0);
-        E(f,"add esp,8");
+        E(f,"add esp,%d",ks+4);
         return;
     }
     cg_fail(line,"invalid target of augmented assignment");
@@ -2618,7 +3682,7 @@ static void gen_assign(F *f, Stmt *s, AAssign *a){
     Ty *t=TY(v);
     if(a->ntarget==1){
         Expr *tg=a->target[0];
-        if(v->kind==EXPR_NONE){ Ty *want=TY(tg); if(tg->kind==EXPR_NAME||tg->kind==EXPR_ATTRIBUTE||tg->kind==EXPR_INDEX){ gen_zero(f,want); store_target(f,tg,want,s->line); return; } }
+        if(v->kind==EXPR_NONE){ Ty *want=TY(tg); if(tg->kind==EXPR_NAME||tg->kind==EXPR_ATTRIBUTE||tg->kind==EXPR_INDEX){ gen_none(f,want); store_target(f,tg,want,s->line); return; } }
         gen_owned(f,v); store_target(f,tg,t,s->line); return;
     }
     int o=gen(f,v), slot=park_value(f,t,o);
@@ -2651,13 +3715,10 @@ static void gen_import(F *f, Stmt *s){
     char *dotted=aot_from_import_module(u,s);
     init_prefixes(f,dotted);
     AModule *t=module_named(dotted);
-    int i=s->start; while(i<s->end && u->tv.v[i].kind!=T_IMPORT) i++;
-    for(i++;i<s->end;i++){
-        Tok *k=&u->tv.v[i];
-        if(k->kind==T_AS){ i++; continue; }
-        if(k->kind!=T_NAME) continue;
-        if(t && symtab_find(&t->syms,k->text)) continue;
-        char sub[300]; snprintf(sub,sizeof sub,"%s.%s",dotted,k->text);
+    for(int i=0;i<s->nnames;i++){
+        const char *nm=s->names[i];
+        if(!strcmp(nm,"*") || (t && symtab_find(&t->syms,nm))) continue;
+        char sub[300]; snprintf(sub,sizeof sub,"%s.%s",dotted,nm);
         init_module(f,module_named(sub));
     }
     free(dotted);
@@ -2767,6 +3828,12 @@ static void gen_try(F *f, Stmt *s){
 static int loop_tries(F *f){ int i=f->ntries; while(i>0 && f->tries[i-1].nloops>=f->nloops) i--; return i; }
 
 static void moves_begin(F *f, Stmt *s);
+/* the function of a module-level def statement (decorated: under its hidden name " name") */
+static AFunc *module_def_fn(F *f, Stmt *s){
+    ASym *x=symtab_find(&f->fn->mod->syms,s->name);
+    if(!x || x->kind!=AS_FUNC){ char h[300]; snprintf(h,sizeof h," %s",s->name); x=symtab_find(&f->fn->mod->syms,h); }
+    return x && x->kind==AS_FUNC ? (AFunc*)x->p : NULL;
+}
 static void gen_stmt(F *f, Stmt *s){
     AotUnit *u=f->fn->mod->unit;
     int mark=scope_open(f);
@@ -2808,27 +3875,43 @@ static void gen_stmt(F *f, Stmt *s){
         case STMT_TRY: gen_try(f,s); break;
         case STMT_RETURN:{
             Ty *rt_=ty_find(f->ret);
-            if(s->expr){
+            if(s->expr && f->fn->is_gen){                         /* a generator's return value: kept in it */
+                Ty *gr=gpart(f->fn->ret,1); Expr *e=aot_expr(u,&s->expr);
+                gen_as(f,e,gr,1); E(f,"mov ecx,[rt_cur_gen]"); store_mem(f,gr,"ecx",100); E(f,"mov ecx,[rt_cur_gen]"); E(f,"mov dword [ecx+108],1");
+            } else if(s->expr){
                 Expr *e=aot_expr(u,&s->expr);
                 if(rt_->k==TY_VOID){ int o=gen(f,e); drop_value(f,TY(e),o); }
                 else gen_as(f,e,rt_,1);
             } else if(rt_->k!=TY_VOID){ int o=gen_zero(f,rt_); if(is_ptr(rt_) && !o) incref(f); }
-            if(f->tmp_used>mark){ if(!is_flt(rt_)) E(f,"push eax"); scope_close(f,mark); if(!is_flt(rt_)) E(f,"pop eax"); }
+            if(f->tmp_used>mark){ if(!is_flt(rt_)) push_value(f,rt_); scope_close(f,mark); if(!is_flt(rt_)) pop_value(f,rt_); }
             if(f->ntries){                                    /* finally blocks run first; keep the value meanwhile */
                 int keep=frame_slot(f,8);
-                if(is_flt(rt_)) E(f,"fstp qword [ebp%+d]",keep); else if(rt_->k!=TY_VOID) E(f,"mov [ebp%+d],eax",keep);
+                if(rt_->k!=TY_VOID) store_new(f,rt_,"ebp",keep);
                 leave_tries(f,0);
-                if(is_flt(rt_)) E(f,"fld qword [ebp%+d]",keep); else if(rt_->k!=TY_VOID) E(f,"mov eax,[ebp%+d]",keep);
+                if(rt_->k!=TY_VOID) load_mem(f,rt_,"ebp",keep);
             }
             E(f,"jmp L%d",f->lret);
             break; }
         case STMT_DEL:{
             ADel *d=aot_del(u,s);
-            for(int i=0;i<d->n;i++){ Expr *t=d->t[i]; Ty *ct=TY(t->a), *el=ct->elem; int dict=ct->k==TY_DICT;
-                gen_borrow(f,t->a); E(f,"push eax");
-                if(dict) gen_borrow(f,t->b); else gen(f,t->b);
-                E(f,"mov edx,eax"); E(f,"pop eax"); E(f,"mov ecx,%d",esize(el));
-                CALLRT(f,dict?"rt_dict_del":"rt_list_pop");
+            for(int i=0;i<d->n;i++){ Expr *t=d->t[i];
+                if(t->kind==EXPR_NAME){ AVar *v=xinfo(t)->var; char a[320], b[320];       /* del x */
+                    check_bound(f,v); var_addr(a,sizeof a,v); var_addr(b,sizeof b,v->bound);
+                    E(f,"mov dword %s,0",b);
+                    if(is_ptr(v->ty)){ E(f,"xor eax,eax"); E(f,"xchg eax,%s",a); CALLRT(f,"rt_decref"); }
+                    continue; }
+                if(t->kind==EXPR_SLICE){ Expr *parts[3]={t->b,t->c,t->d}; int flags=0;   /* del xs[a:b:c] */
+                    E(f,"sub esp,20"); gen_borrow(f,t->a); check_none(f,TY(t->a),"TypeError","'NoneType' object does not support item deletion"); E(f,"mov [esp],eax");
+                    for(int k=0;k<3;k++){
+                        if(parts[k] && parts[k]->kind!=EXPR_NONE){ gen(f,parts[k]); to_i32(f,TY(parts[k])); E(f,"mov [esp+%d],eax",4+4*k); }
+                        else { flags|=1<<k; E(f,"mov dword [esp+%d],0",4+4*k); } }
+                    E(f,"mov dword [esp+16],%d",flags); CALLRT(f,"rt_list_del_slice"); E(f,"add esp,20");
+                    continue; }
+                Ty *ct=TY(t->a), *el=ct->elem; int dict=ct->k==TY_DICT;
+                gen_borrow(f,t->a); check_none(f,ct,"TypeError","'NoneType' object does not support item deletion"); E(f,"push eax");
+                if(dict){ Ty *kt=ty_dkey(ct); gen_as(f,t->b,kt,0); push_value(f,kt);
+                    E(f,"mov edx,esp"); E(f,"mov eax,[esp+%d]",esize(kt)); CALLRT(f,"rt_dict_del"); E(f,"add esp,%d",esize(kt)+4); }
+                else { gen(f,t->b); to_i32(f,TY(t->b)); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_list_pop"); }
                 if(is_ptr(el)){ E(f,"mov eax,[eax]"); CALLRT(f,"rt_decref"); }
             }
             break; }
@@ -2846,6 +3929,20 @@ static void gen_stmt(F *f, Stmt *s){
             Expr *e=aot_expr(u,&s->expr);
             if(e->kind==EXPR_NAME && xinfo(e)->kind==X_CTOR) gen_ctor(f,e,xinfo(e));   /* raise ValueError */
             else gen_owned(f,e);
+            AClass *xc=ty_find(TY(e))->cls; AField *fcause=aot_find_field(xc,"__cause__"), *fctx=aot_find_field(xc,"__context__"), *fsup=aot_find_field(xc,"__suppress_context__");
+            if(s->expr2 && fcause){                          /* raise X from Y: X.__cause__ = Y */
+                Expr *y=aot_expr(u,&s->expr2);
+                E(f,"push eax");
+                if(y->kind==EXPR_NONE) E(f,"xor eax,eax");
+                else if(y->kind==EXPR_NAME && xinfo(y)->kind==X_CTOR) gen_ctor(f,y,xinfo(y));
+                else gen_owned(f,y);
+                E(f,"mov ecx,[esp]"); store_mem(f,fcause->ty,"ecx",fcause->offset);
+                E(f,"mov ecx,[esp]"); E(f,"mov dword [ecx+%d],1",fsup->offset);
+                E(f,"pop eax"); }
+            if(f->nexcs>0 && fctx){                          /* raised while handling another: its __context__ */
+                int l=new_label(); E(f,"mov ecx,[ebp%+d]",f->excs[f->nexcs-1]);
+                E(f,"test ecx,ecx"); E(f,"jz L%d",l); E(f,"cmp ecx,eax"); E(f,"je L%d",l); E(f,"cmp dword [eax+%d],0",fctx->offset); E(f,"jne L%d",l);
+                E(f,"inc dword [ecx]"); E(f,"mov [eax+%d],ecx",fctx->offset); LBL(f,l); }
             CALLRT(f,"rt_throw");
             break; }
         case STMT_WITH:{                                      /* with open(...) as f: the file is closed at the end */
@@ -2864,6 +3961,8 @@ static void gen_stmt(F *f, Stmt *s){
             break; }
         case STMT_IMPORT: case STMT_FROM_IMPORT: gen_import(f,s); break;
         case STMT_FUNCTION_DEF:
+            if(!is_fn_body(f->fn)){ AFunc *mf=module_def_fn(f,s);       /* module level: its defaults, evaluated now */
+                if(mf && has_defaults(mf)){ use_fn(mf); gg->fv_used[mf->id]=1; rt("rt_static"); fill_defaults(f,mf,fnl(mf,LB_VALUE)); } }
             if(s->expr2){                                /* decorated: name = d1(d2(function)) */
                 if(is_fn_body(f->fn) && ((AFunc*)s->aux)->unused) break;
                 gen_owned(f,s->expr2); store_var(f,find_var(f,s->name,s->line));
@@ -2875,26 +3974,32 @@ static void gen_stmt(F *f, Stmt *s){
                 store_var(f,v);
             }
             break;
-        case STMT_CLASS_DEF:                             /* decorated methods: Class.name = decorators(method) */
-            for(int i=0;i<f->fn->mod->syms.n;i++){ ASym *x=&f->fn->mod->syms.v[i];
-                if(x->kind!=AS_CLASS || strcmp(x->name,s->name)) continue;
-                AClass *cls=(AClass*)x->p;
-                for(int k=0;k<cls->nmethods;k++){ AFunc *m=cls->methods[k];
-                    if(m->decovar){ gen_owned(f,m->def->expr2); store_var(f,m->decovar); } }
+        case STMT_CLASS_DEF:                             /* attributes; methods' defaults; decorated methods: Class.name = decorators(method) */
+            for(int q=-1;q<((AClass*)s->aux)->ninsts;q++){ AClass *cls=q<0?(AClass*)s->aux:((AClass*)s->aux)->insts[q];   /* (and a generic class's instances) */
+                for(int b=0;b<cls->def->body_count;b++){ Stmt *bs=cls->def->body[b];      /* the body, in order */
+                    if(bs->kind==STMT_ASSIGN){ AAssign *a=aot_assign(u,bs);             /* name = value: the class attribute */
+                        for(int k=0;k<cls->nfields;k++){ AField *fd=cls->fields[k];
+                            if(fd->cvar && fd->init==a->value){ gen_as(f,fd->init,fd->ty,1); store_var(f,fd->cvar); } } }
+                    for(int k=0;k<cls->nmethods;k++){ AFunc *m=cls->methods[k];
+                        if(m->def!=bs) continue;
+                        if(has_defaults(m)){ use_fn(m); gg->fv_used[m->id]=1; rt("rt_static"); fill_defaults(f,m,fnl(m,LB_VALUE)); }   /* its defaults, evaluated now */
+                        if(m->decovar){ gen_owned(f,m->def->expr2); store_var(f,m->decovar); } }
+                    if(bs->kind==STMT_CLASS_DEF) gen_stmt(f,bs); }                 /* a nested class */
             }
             break;
         case STMT_YIELD:{
             Ty *yt=f->fn->yield_ty;
-            if(!s->expr){ int o=gen_zero(f,yt); if(is_ptr(yt)&&!o) incref(f); gen_yield_value(f,yt); break; }
+            if(!s->expr){ int o=gen_zero(f,yt); if(is_ptr(yt)&&!o) incref(f); gen_yield_value(f,yt); drop_sent(f); break; }
             Expr *e=aot_expr(u,&s->expr);
             if(s->block_tag==7){                          /* yield from: each item */
+                if(ty_find(TY(e))->k==TY_GEN){ gen_yield_from(f,e,0); break; }
                 Iter I; iter_begin(f,e,&I);
                 iter_value(f,&I,0); if(is_ptr(I.elem)) incref(f); conv(f,I.elem,yt);
-                gen_yield_value(f,yt);
+                gen_yield_value(f,yt); drop_sent(f);
                 iter_end(f,&I); LBL(f,I.exit); iter_release(f,&I);
                 break;
             }
-            gen_as(f,e,yt,1); gen_yield_value(f,yt);
+            gen_as(f,e,yt,1); gen_yield_value(f,yt); drop_sent(f);
             break; }
         case STMT_NONLOCAL: case STMT_PASS: case STMT_GLOBAL: break;
         default: cg_fail(s->line,"unsupported statement");
@@ -3041,7 +4146,7 @@ static int fresh_expr(Expr *e){
 /* the items of x stay alive for the whole loop, whatever the loop does */
 static int src_safe(Expr *x){
     Ty *t=TY(x);
-    if(t->k==TY_STR||t->k==TY_TUPLE||t->k==TY_FILE) return 1;              /* static 1-char strings; immutable; a fresh list of lines */
+    if(t->k==TY_STR||t->k==TY_BYTES||t->k==TY_TUPLE||t->k==TY_FILE) return 1;              /* static 1-char strings; immutable; a fresh list of lines */
     if(t->k==TY_OBJ) return 0;
     return fresh_expr(x);
 }
@@ -3059,6 +4164,8 @@ static int plan_active(Plan *pl, AVar *v){ for(int i=0;i<pl->nstack;i++) if(pl->
 static void plan_use(Plan *pl, AVar *v){ int i=plan_index(pl,v); if(i>=0 && !plan_active(pl,v)) pl->only[i]=0; }
 static void plan_store(Plan *pl, AVar *v){ int i=plan_index(pl,v); if(i>=0) pl->only[i]=0; }
 static void plan_expr(Plan *pl, Expr *e);
+static void plan_target(Plan *pl, Expr *t);
+static int xi_of_iter(Expr *it);
 /* loop variables vars (n), bound per item; safe: the items stay alive meanwhile; then the body */
 static void plan_bind(Plan *pl, AVar **vars, int n, int safe){
     for(int k=0;k<n;k++){ int i=plan_index(pl,vars[k]); if(i<0) continue;
@@ -3074,7 +4181,9 @@ static void plan_comp(Plan *pl, Expr *e){                                       
         if(!safe){ safe=pure_expr(e->a) && pure_expr(e->b);                    /* the rest of the comprehension runs per item */
             for(int k=i;k<e->nclause && safe;k++){ CompClause *c2=&e->clauses[k];
                 if(!pure_exprs(c2->conds,c2->ncond) || (k>i && (!pure_expr(c2->iter) || iterates_code(TY(c2->iter))))) safe=0; } }
-        plan_bind(pl,&xi->cvars[2*i],cl->nvars,safe);
+        if(cl->nvars==1 && xi_of_iter(cl->iter)) plan_store(pl,xi->cvars[2*i]); else plan_bind(pl,&xi->cvars[2*i],cl->nvars,safe);
+        if(cl->target) plan_target(pl,cl->target);
+        if(cl->target2) plan_target(pl,cl->target2);
         for(int k=0;k<cl->ncond;k++) plan_expr(pl,cl->conds[k]);
     }
     plan_expr(pl,e->a); plan_expr(pl,e->b);
@@ -3086,6 +4195,7 @@ static void plan_expr(Plan *pl, Expr *e){
     switch(e->kind){
         case EXPR_NAME: if(xi && xi->kind==X_VAR) plan_use(pl,xi->var); return;
         case EXPR_LAMBDA: return;                                               /* its own function */
+        case EXPR_WALRUS: plan_expr(pl,e->a); plan_target(pl,e->b); return;
         case EXPR_COMPREHENSION:
             if(e->comp_kind=='G'){ if(xi->key) plan_expr(pl,e->clauses[0].iter); return; }   /* the rest is the generator's function */
             plan_comp(pl,e); return;
@@ -3117,6 +4227,9 @@ static void plan_target(Plan *pl, Expr *t){
     plan_expr(pl,t->a); plan_expr(pl,t->b);
 }
 static void plan_stmts(Plan *pl, F *f, Stmt **b, int n);
+/* 1 when iterating it gives a tuple made per item to a single variable (zip, enumerate, items) */
+static int xi_of_iter(Expr *it){ XInfo *xi=xinfo(it);
+    return (xi->kind==X_BUILTIN && xi->name && (!strcmp(xi->name,"enumerate")||!strcmp(xi->name,"zip"))) || (xi->kind==X_TMETHOD && xi->name && !strcmp(xi->name,"items")); }
 static void plan_stmt(Plan *pl, F *f, Stmt *s){
     AotUnit *u=pl->u;
     switch(s->kind){
@@ -3133,7 +4246,8 @@ static void plan_stmt(Plan *pl, F *f, Stmt *s){
             for(int k=0;k<n;k++) vars[k]=find_var(f,s->params[k],s->line);
             int safe=iter_safe(it) || (pure_stmts(u,s->body,s->body_count) && pure_stmts(u,s->orelse,s->orelse_count));
             int save=pl->nstack;
-            plan_bind(pl,vars,n,safe);
+            if(n==1 && ((xi_of_iter(it)==1))) plan_store(pl,vars[0]);              /* for t in zip(...): a new tuple, owned */
+            else plan_bind(pl,vars,n,safe);
             plan_stmts(pl,f,s->body,s->body_count); plan_stmts(pl,f,s->orelse,s->orelse_count);
             pl->nstack=save; return; }
         case STMT_WITH:{ AWith *w=aot_with(u,s);
@@ -3148,9 +4262,9 @@ static void plan_stmt(Plan *pl, F *f, Stmt *s){
             for(int i=0;i<s->orelse_count;i++){ Stmt *b=s->orelse[i]; if(b->name && b->aux) plan_store(pl,(AVar*)b->aux); plan_stmts(pl,f,b->body,b->body_count); }
             return;
         case STMT_YIELD: case STMT_RETURN: case STMT_RAISE: case STMT_IF: case STMT_WHILE: case STMT_ASSERT: case STMT_DEL: case STMT_BLOCK:
-            if(s->expr && s->expr->kind!=EXPR_TOKEN_RANGE) plan_expr(pl,s->expr);
+            if(s->expr) plan_expr(pl,s->expr);
             if(s->kind==STMT_DEL){ ADel *d=aot_del(u,s); for(int i=0;i<d->n;i++) plan_expr(pl,d->t[i]); }
-            if(s->expr2 && s->expr2->kind!=EXPR_TOKEN_RANGE) plan_expr(pl,s->expr2);
+            if(s->expr2) plan_expr(pl,s->expr2);
             plan_stmts(pl,f,s->body,s->body_count); plan_stmts(pl,f,s->orelse,s->orelse_count); return;
         default: return;
     }
@@ -3162,13 +4276,15 @@ static void plan_borrowed(F *f){
     Plan pl; memset(&pl,0,sizeof pl); pl.fn=fn; pl.u=fn->mod->unit;
     pl.only=(char*)xmalloc((size_t)fn->nvars); pl.ok=(char*)xmalloc((size_t)fn->nvars);
     for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i]; Ty *t=ty_find(v->ty);
-        pl.only[i]=pl.ok[i]=(i>=fn->nparams && is_ptr(t) && t->k!=TY_FUNC && !v->cell && !v->captured); }
+        pl.only[i]=pl.ok[i]=(i>=fn->nparams && is_ptr(t) && t->k!=TY_FUNC && !v->cell && !v->captured && !v->bound); }
     if(fn->lam) plan_expr(&pl,fn->lam->a);
     else if(fn->genexp){                                                         /* its clauses: the body yields (anything may run) */
         Expr *e=fn->genexp; XInfo *xi=xinfo(e); int save=pl.nstack;
         for(int i=0;i<e->nclause;i++){ CompClause *cl=&e->clauses[i];
             Expr *it=(i==0&&xi->key)?xi->key:cl->iter; plan_expr(&pl,it);
-            plan_bind(&pl,&xi->cvars[2*i],cl->nvars,iter_safe(it));
+            if(cl->nvars==1 && xi_of_iter(it)) plan_store(&pl,xi->cvars[2*i]); else plan_bind(&pl,&xi->cvars[2*i],cl->nvars,iter_safe(it));
+            if(e->clauses[i].target) plan_target(&pl,e->clauses[i].target);
+            if(e->clauses[i].target2) plan_target(&pl,e->clauses[i].target2);
             for(int k=0;k<cl->ncond;k++) plan_expr(&pl,cl->conds[k]); }
         plan_expr(&pl,e->a); pl.nstack=save;
     }
@@ -3210,7 +4326,7 @@ static void bs_or(Live *L, unsigned *a, unsigned *b){ for(int i=0;i<L->W;i++) a[
 static int bs_eq(Live *L, unsigned *a, unsigned *b){ return !memcmp(a,b,sizeof(unsigned)*(size_t)L->W); }
 static int live_index(Live *L, AVar *v){ return v && !v->src && !v->global && v->owner==L->fn && v->id>=0 && v->id<L->fn->nvars && L->fn->vars[v->id]==v ? v->id : -1; }
 static void live_uses(Live *L, Expr *e, unsigned *set){
-    if(!e || e->kind==EXPR_TOKEN_RANGE) return;
+    if(!e) return;
     XInfo *xi=(XInfo*)e->ty;
     if(e->kind==EXPR_NAME){ if(xi && xi->kind==X_VAR){ int i=live_index(L,xi->var); if(i>=0) set[i>>5]|=1u<<(i&31); } return; }
     if(e->kind==EXPR_LAMBDA) return;                         /* its own function (captured variables never move) */
@@ -3311,7 +4427,7 @@ static void plan_moves(F *f){
 }
 /* occurrences of the movable variables in a statement's expressions (2: several, or evaluated repeatedly) */
 static void occ_count(F *f, Expr *e, int repeat){
-    if(!e || e->kind==EXPR_TOKEN_RANGE) return;
+    if(!e) return;
     XInfo *xi=(XInfo*)e->ty;
     if(e->kind==EXPR_NAME){ if(xi && xi->kind==X_VAR){ AVar *v=xi->var; if(v->owner==f->fn && !v->src && !v->global && v->id>=0 && v->id<f->fn->nvars && f->fn->vars[v->id]==v){
             int c=f->occ[v->id]+(repeat?2:1); f->occ[v->id]=(unsigned char)(c>2?2:c); } } return; }
@@ -3406,10 +4522,51 @@ static void plan_consumed(AFunc *fn){
 /* yield: the value (owned) into the generator, then back to its consumer */
 static void gen_yield_value(F *f, Ty *yt){
     E(f,"mov ecx,[rt_cur_gen]");
-    if(is_flt(yt)) E(f,"fstp qword [ecx+24]");
-    else if(is_ptr(yt)){ rt("rt_decref"); E(f,"xchg eax,[ecx+24]"); E(f,"call rt_decref"); }
-    else E(f,"mov [ecx+24],eax");
+    store_mem(f,yt,"ecx",24);
     CALLRT(f,"rt_gen_yield");
+}
+/* after a yield statement: a value sent meanwhile is dropped */
+static void drop_sent(F *f){
+    Ty *st=gpart(f->fn->ret,0); int l=new_label();
+    E(f,"mov ecx,[rt_cur_gen]"); E(f,"cmp dword [ecx+96],0"); E(f,"je L%d",l); E(f,"mov dword [ecx+96],0");
+    if(is_ptr(st)){ rt("rt_decref"); E(f,"xor eax,eax"); E(f,"xchg eax,[ecx+88]"); E(f,"call rt_decref"); }
+    LBL(f,l);
+}
+/* eax/st0 = what the yield expression gives: the value sent (owned), None when next() resumed it */
+static int take_sent(F *f, Ty *st){
+    int l=new_label(), end=new_label();
+    E(f,"mov ecx,[rt_cur_gen]"); E(f,"cmp dword [ecx+96],0"); E(f,"je L%d",l);
+    E(f,"mov dword [ecx+96],0"); load_mem(f,st,"ecx",88);
+    if(is_ptr(st)) E(f,"mov dword [ecx+88],0");
+    E(f,"jmp L%d",end);
+    LBL(f,l); gen_none(f,st);
+    LBL(f,end);
+    return is_ptr(st);
+}
+/* yield from a generator: its values; values sent go to it -> (want) what it returns */
+static int gen_yield_from(F *f, Expr *src, int want){
+    Ty *gt=ty_find(TY(src)), *iyt=ty_find(gt->elem), *yt=ty_find(f->fn->yield_ty), *gr=gpart(gt,1);
+    int slot=frame_slot(f,4); add_ref_slot(f,slot);
+    gen_owned(f,src); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
+    int lnext=new_label(), ldone=new_label();
+    LBL(f,lnext); E(f,"mov eax,[ebp%+d]",slot); CALLRT(f,"rt_gen_next"); E(f,"test eax,eax"); E(f,"jz L%d",ldone);
+    E(f,"mov ecx,[ebp%+d]",slot); load_mem(f,iyt,"ecx",24); if(is_ptr(iyt)) incref(f); conv(f,iyt,yt);
+    gen_yield_value(f,yt);
+    E(f,"mov ecx,[rt_cur_gen]"); E(f,"cmp dword [ecx+96],0"); E(f,"je L%d",lnext);     /* a value sent: the inner generator's */
+    E(f,"mov dword [ecx+96],0"); E(f,"mov edx,[ebp%+d]",slot);
+    E(f,"mov eax,[ecx+88]"); E(f,"mov [edx+88],eax"); E(f,"mov eax,[ecx+92]"); E(f,"mov [edx+92],eax");
+    E(f,"mov dword [ecx+88],0"); E(f,"mov dword [ecx+92],0"); E(f,"mov dword [edx+96],1");
+    E(f,"jmp L%d",lnext);
+    LBL(f,ldone);
+    int o=0;
+    if(want && gr->k!=TY_VOID){ int ln=new_label(), le=new_label();
+        E(f,"mov ecx,[ebp%+d]",slot); E(f,"cmp dword [ecx+108],0"); E(f,"je L%d",ln);
+        load_mem(f,gr,"ecx",100); if(is_ptr(gr)) incref(f); E(f,"jmp L%d",le);
+        LBL(f,ln); gen_none(f,gr); LBL(f,le); o=is_ptr(gr);
+        push_value(f,gr); }
+    rt("rt_decref"); E(f,"xor eax,eax"); E(f,"xchg eax,[ebp%+d]",slot); E(f,"call rt_decref");
+    if(want && gr->k!=TY_VOID) pop_value(f,gr);
+    return o;
 }
 static void iter_begin(F *f, Expr *it, Iter *I);
 /* the function of a generator expression: its loops, yielding each element */
@@ -3420,7 +4577,7 @@ static void gen_genexp_body(F *f, AFunc *fn){
     for(int i=0;i<n;i++){
         CompClause *cl=&e->clauses[i];
         iter_begin(f,(i==0&&xi->key)?xi->key:cl->iter,&its[i]);
-        iter_store_vars(f,&its[i],&xi->cvars[2*i],cl->nvars);
+        iter_store_vars(f,&its[i],&xi->cvars[2*i],cl->nvars); comp_unpack(f,e,i);
         for(int k=0;k<cl->ncond;k++) gen_jump(f,cl->conds[k],its[i].cont,0);
     }
     int mark=scope_open(f);
@@ -3435,7 +4592,7 @@ static void emit_function(AFunc *fn){
     int off=8, argpos[16];
     for(int i=0;i<fn->nparams;i++){ fn->params[i]->offset=argpos[i]=off; off+=esize(fn->params[i]->ty); }
     int argbytes=off-8;
-    if(fn->ncaps){ layout_caps(fn); f->env=frame_slot(f,4); }
+    if(fn->ncaps || (fn->outer && dyn_defaults(fn))){ layout_caps(fn); f->env=frame_slot(f,4); }
     if(is_fn_body(fn)){
         if(!getenv("MPY_NO_BORROW")) plan_borrowed(f);
         if(!getenv("MPY_NO_MOVE")) plan_moves(f);
@@ -3448,7 +4605,7 @@ static void emit_function(AFunc *fn){
     if(fn->lam){                                          /* lambda: return its expression */
         Expr *b=fn->lam->a; Ty *r=ty_find(fn->ret); int mark=scope_open(f);
         if(r->k==TY_VOID){ if(b->kind!=EXPR_NONE){ int o=gen(f,b); drop_value(f,TY(b),o); } } else gen_as(f,b,r,1);
-        if(f->tmp_used>mark){ if(!is_flt(r) && r->k!=TY_VOID) E(f,"push eax"); scope_close(f,mark); if(!is_flt(r) && r->k!=TY_VOID) E(f,"pop eax"); }
+        if(f->tmp_used>mark){ if(!is_flt(r) && r->k!=TY_VOID) push_value(f,r); scope_close(f,mark); if(!is_flt(r) && r->k!=TY_VOID) pop_value(f,r); }
     } else if(fn->genexp) gen_genexp_body(f,fn);
     else {
         gen_stmts(f,fn->body,fn->nbody);
@@ -3469,12 +4626,14 @@ static void emit_function(AFunc *fn){
     if(words<=8) for(int i=0;i<words;i++) buf_printf(o,"        push 0\n");
     else buf_printf(o,"        sub esp,%d\n        mov edi,esp\n        mov ecx,%d\n        xor eax,eax\n        rep stosd\n",words*4,words);
     if(f->env) buf_printf(o,"        mov [ebp%+d],edx\n",f->env);
+    for(int i=0;i<fn->nparams;i++) if(fn->params[i]->bound){ char b[320]; var_addr(b,sizeof b,fn->params[i]->bound); buf_printf(o,"        mov dword %s,1\n",b); }
     if(!fn->is_gen) for(int i=0;i<fn->nparams;i++) if(f->param_stored[i] && is_ptr(fn->params[i]->ty) && !fn->params[i]->cell && !fn->params[i]->consumed){ rt("rt_incref"); buf_printf(o,"        mov eax,[ebp%+d]\n        call rt_incref\n",argpos[i]); }
     for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i]; if(!v->cell) continue;   /* cells of the variables closures share */
         rt("rt_cell_new"); rt("rt_incref");
         buf_printf(o,"        mov eax,%d\n        call rt_cell_new\n",is_ptr(v->ty)?1:0);
         if(i<fn->nparams){
             if(is_flt(v->ty)) buf_printf(o,"        fld qword [ebp%+d]\n        fstp qword [eax+8]\n",argpos[i]);
+            else if(is_lng(v->ty)) buf_printf(o,"        mov ecx,[ebp%+d]\n        mov [eax+8],ecx\n        mov ecx,[ebp%+d]\n        mov [eax+12],ecx\n",argpos[i],argpos[i]+4);
             else { buf_printf(o,"        mov ecx,[ebp%+d]\n        mov [eax+8],ecx\n",argpos[i]);
                 if(is_ptr(v->ty)) buf_printf(o,"        push eax\n        mov eax,ecx\n        call rt_incref\n        pop eax\n"); }
         }
@@ -3485,15 +4644,15 @@ static void emit_function(AFunc *fn){
     if(f->nrefs){
         rt("rt_decref");
         int keep=!is_flt(ret) && ret->k!=TY_VOID;
-        if(keep) buf_printf(o,"        push eax\n");
+        if(keep){ if(is_lng(ret)) buf_printf(o,"        push edx\n"); buf_printf(o,"        push eax\n"); }
         for(int i=0;i<f->nrefs;i++) buf_printf(o,"        mov eax,[ebp%+d]\n        call rt_decref\n",f->refs[i]);
-        if(keep) buf_printf(o,"        pop eax\n");
+        if(keep){ buf_printf(o,"        pop eax\n"); if(is_lng(ret)) buf_printf(o,"        pop edx\n"); }
     }
     buf_printf(o,"        lea esp,[ebp-12]\n        pop edi\n        pop esi\n        pop ebx\n        pop ebp\n        ret\n");
     if(fn->is_gen){                                       /* F<id> makes the generator: arguments and closure kept in it */
         Ty *yt=ty_find(fn->yield_ty);
         rt("rt_gen_new"); rt("rt_gen_next"); rt("rt_incref");
-        buf_printf(&gg->data,"align 4\n%s dd %s,%d,%d",fnl(fn,LB_GEN),fnl(fn,LB_BODY),(is_ptr(yt)?1:0)|(is_flt(yt)?2:0),f->nrefs);
+        buf_printf(&gg->data,"align 4\n%s dd %s,%d,%d",fnl(fn,LB_GEN),fnl(fn,LB_BODY),(is_ptr(yt)?1:0)|(esize(yt)==8?2:0)|(is_ptr(gpart(fn->ret,0))?4:0)|(is_ptr(gpart(fn->ret,1))?8:0),f->nrefs);
         for(int i=0;i<f->nrefs;i++) buf_printf(&gg->data,",%d",f->refs[i]);
         buf_printf(&gg->data,"   ; generator %s\n",kind);
         buf_printf(o,"%s:                            ; %s(): a new generator\n",fnl(fn,LB_CODE),kind);
@@ -3506,7 +4665,7 @@ static void emit_function(AFunc *fn){
     free(f->code.s); free(f->tmp); free(f->refs); free(f);
 }
 static int adapter_index(Ty *to, Ty *from){
-    for(int i=0;i<gg->nadapters;i++) if(ty_same(gg->adapters[i].to,to) && ty_same(gg->adapters[i].from,from)) return i;
+    for(int i=0;i<gg->nadapters;i++) if(ty_same_exact(gg->adapters[i].to,to) && ty_same_exact(gg->adapters[i].from,from)) return i;
     if(gg->nadapters==gg->cadapters){ gg->cadapters=gg->cadapters?gg->cadapters*2:4; gg->adapters=xrealloc(gg->adapters,sizeof(*gg->adapters)*(size_t)gg->cadapters); }
     gg->adapters[gg->nadapters].to=to; gg->adapters[gg->nadapters].from=from;
     rt("rt_alloc"); rt("rt_incref"); rt("rt_decref"); rt("rt_free");
@@ -3522,7 +4681,7 @@ static void emit_adapter(int k){
     Ty *sel=from->elems[nreg];
     buf_printf(&f->code,"\nAD%d:                          ; %s as %s\n",k,ty_name(from),ty_name(to));
     E(f,"push ebp"); E(f,"mov ebp,esp"); E(f,"push ebx"); E(f,"push esi"); E(f,"push edi"); E(f,"mov ebx,edx");
-    E(f,"mov eax,%s",list_destroy(sel)); CALLRT(f,"rt_list_new"); E(f,"mov esi,eax");
+    new_list(f,sel); E(f,"mov esi,eax");
     for(int i=nreg;i<to->nelems;i++){ Ty *pt=to->elems[i];
         E(f,"push esi"); load_mem(f,pt,"ebp",toff[i]); if(is_ptr(pt)) incref(f); conv_num(f,pt,sel); list_append_top(f,sel); E(f,"add esp,4"); }
     E(f,"xor edi,edi");
@@ -3533,7 +4692,7 @@ static void emit_adapter(int k){
     if(dstar) E(f,"mov [esp+%d],edi",foff[nreg+1]);
     E(f,"mov edx,[ebx+16]"); E(f,"call dword [edx+8]");
     if(tot) E(f,"add esp,%d",tot);
-    E(f,"push eax"); E(f,"mov eax,esi"); CALLRT(f,"rt_decref"); E(f,"mov eax,edi"); CALLRT(f,"rt_decref"); E(f,"pop eax");
+    E(f,"push edx"); E(f,"push eax"); E(f,"mov eax,esi"); CALLRT(f,"rt_decref"); E(f,"mov eax,edi"); CALLRT(f,"rt_decref"); E(f,"pop eax"); E(f,"pop edx");
     E(f,"pop edi"); E(f,"pop esi"); E(f,"pop ebx"); E(f,"pop ebp"); E(f,"ret");
     buf_cat(&gg->text,&f->code); free(f->code.s);
 }
@@ -3555,6 +4714,10 @@ static void emit_closure_destroy(AFunc *fn){
     for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; if(!root_var(v)->cell && !is_ptr(v->ty)) continue;
         if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
         buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",v->capoff); }
+    layout_defaults(fn);
+    for(int i=0;i<fn->nparams;i++){ if(!fn->defaults[i] || i==fn->star || i==fn->dstar || !is_ptr(fn->params[i]->ty)) continue;
+        if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
+        buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",16+fn->defoff[i]); }
     if(any) buf_printf(o,"        mov eax,ebx\n        pop ebx\n");
     buf_printf(o,"        jmp rt_free\n");
 }
@@ -3562,11 +4725,11 @@ static void emit_closure_destroy(AFunc *fn){
 static void emit_class(AClass *c){
     buf_printf(&gg->data,"align 4\n%s dd S%d,",class_label(c,0),str_lit(c->name));
     if(c->base) buf_printf(&gg->data,"%s",class_label(c->base,0)); else buf_printf(&gg->data,"0");
-    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",%s",fnl(c->vt[i],LB_CODE));
+    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",%s",c->vt[i]->unused?"0":fnl(c->vt[i],LB_CODE));   /* (a mixin's own methods: only its copies run) */
     buf_printf(&gg->data,"   ; class %s\n",c->name);
     Buf *o=&gg->text; int any=0;
     buf_printf(o,"\n%s:                          ; destroy %s\n",class_label(c,1),c->name);
-    for(AClass *k=c;k;k=k->base) for(int i=0;i<k->nfields;i++) if(is_ptr(k->fields[i]->ty)){
+    for(AClass *k=c;k;k=k->base) for(int i=0;i<k->nfields;i++) if(is_ptr(k->fields[i]->ty) && !k->fields[i]->over){
         if(!any){ buf_printf(o,"        push ebx\n        mov ebx,eax\n"); any=1; }
         buf_printf(o,"        mov eax,[ebx+%d]\n        call rt_decref\n",k->fields[i]->offset);
     }
@@ -3580,12 +4743,19 @@ static void emit_lit_pools(void){
     Buf *d=&gg->data;
     for(int i=0;i<gg->ntdescs;i++){ Ty *t=gg->tdescs[i];
         buf_printf(d,"align 4\nTD%d dd %d",i,t->nelems);
-        for(int k=0;k<t->nelems;k++){ Ty *et=ty_find(t->elems[k]); buf_printf(d,",%d",et->k==TY_TUPLE?4:kind_of(et)); }
+        buf_printf(d,",%d",tuple_size(t));
+        for(int k=0;k<t->nelems;k++) buf_printf(d,",%s,%d",kd_of(t->elems[k]),tuple_off(t,k));
         buf_printf(d,"   ; %s\n",ty_name(t)); }
     if(gg->nflts){ buf_printf(d,"align 8\n"); for(int i=0;i<gg->nflts;i++) buf_printf(d,"FC%d dq %s\n",i,gg->flts[i].s); }
     for(int i=0;i<gg->nlits;i++){
         buf_printf(d,"align 4\nS%d dd 0x40000000,rt_static,%d\n        ",i,gg->lits[i].len);
         buf_bytes(d,gg->lits[i].s,gg->lits[i].len,1);
+        buf_printf(d,"        dd %d\n",u8_cplen(gg->lits[i].s,gg->lits[i].len));
+    }
+    for(int i=0;i<gg->nblits;i++){                               /* bytes: one code point per byte */
+        buf_printf(d,"align 4\nB%d dd 0x40000000,rt_static,%d\n        ",i,gg->blits[i].len);
+        buf_bytes(d,gg->blits[i].s,gg->blits[i].len,1);
+        buf_printf(d,"        dd %d\n",gg->blits[i].len);
     }
     for(int i=0;i<gg->nplits;i++){ buf_printf(d,"P%d ",i); Lit *l=&gg->plits[i]; char *t=(char*)xmalloc((size_t)l->len+1); memcpy(t,l->s,(size_t)l->len); t[l->len]='\n'; buf_bytes(d,t,l->len+1,0); free(t); }
     for(int i=0;i<gg->nzlits;i++){ buf_printf(d,"Z%d ",i); buf_bytes(d,gg->zlits[i].s,gg->zlits[i].len,1); }
@@ -3674,19 +4844,35 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     if(g.nadapters || memchr(g.bm_used,1,(size_t)p->nfuncs)) buf_printf(&g.text,"\nADFREE:                        ; destroy an adapter\n        push eax\n        mov eax,[eax+16]\n        call rt_decref\n        pop eax\n        jmp rt_free\n");
     for(int i=0;i<p->nfuncs;i++){
         if(g.cd_used[i]) emit_closure_destroy(p->funcs[i]);
-        if(g.fv_used[i]) buf_printf(&g.data,"align 4\n%s dd 0x40000000,rt_static,%s,S%d   ; %s as a value\n",fnl(p->funcs[i],LB_VALUE),fnl(p->funcs[i],LB_CODE),str_lit(fn_display_name(p->funcs[i])),fn_display_name(p->funcs[i]));
+        if(g.fv_used[i]){ AFunc *fi=p->funcs[i]; layout_defaults(fi);
+            buf_printf(&g.data,"align 4\n%s dd 0x40000000,rt_static,%s,S%d   ; %s as a value\n",fnl(fi,LB_VALUE),fnl(fi,LB_CODE),str_lit(fn_display_name(fi)),fn_display_name(fi));
+            if(fi->defsize){ buf_printf(&g.data,"        dd 0"); for(int k=4;k<fi->defsize;k+=4) buf_printf(&g.data,",0"); buf_printf(&g.data,"   ; its defaults\n"); } }
     }
     if(aot_rt_used(g.rt,"rt_throw")){                   /* run-time errors raise built-in exceptions */
-        static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError","StopIteration","TypeError",NULL};
+        static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError","StopIteration","TypeError","OverflowError","EOFError","LookupError","UnicodeDecodeError","UnicodeEncodeError","UnboundLocalError","NameError","GeneratorExit","RuntimeError",NULL};
         rt("rt_raise_builtin");
+        if(aot_rt_used(g.rt,"rt_gen_new")) rt("rt_gen_close");          /* abandoned generators are closed (their finally blocks run) */
+        for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !p->classes[i]->base && !strcmp(p->classes[i]->name,"BaseException")) buf_printf(&g.data,"RT_EXC_SIZE = %d\n",p->classes[i]->size);
         for(int k=0;rtexc[k];k++) for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !strcmp(p->classes[i]->name,rtexc[k])){
             use_class(p->classes[i]);
             buf_printf(&g.data,"VTX_%s = %s\nDTX_%s = %s\n",rtexc[k],class_label(p->classes[i],0),rtexc[k],class_label(p->classes[i],1));
         }
     }
     for(int i=0;i<p->nclasses;i++) if(g.class_used[i]) emit_class(p->classes[i]);
+    for(int i=0;i<g.nbtypes;i++)                                 /* built-in types as values: name, base */
+        buf_printf(&g.data,"align 4\nTYD_%s dd S%d,%s\n",g.btypes[i],str_lit(g.btypes[i]),!strcmp(g.btypes[i],"bool")?"TYD_int":"0");
+    if(aot_rt_used(g.rt,"rt_sb_type")){                          /* "<class '__main__.C'>": qualified names */
+        buf_printf(&g.data,"align 4\nTYQ");
+        for(int i=0;i<p->nclasses;i++) if(g.class_used[i] && !p->classes[i]->builtin){ AClass *c=p->classes[i]; char q[300];
+            snprintf(q,sizeof q,"%s.%s",c->mod->name,c->qualname); buf_printf(&g.data," dd %s,S%d\n   ",class_label(c,0),str_lit(q)); }
+        buf_printf(&g.data," dd 0\n"); }
+    if(aot_rt_used(g.rt,"rt_type_qualname")){                    /* __qualname__ unlike __name__ */
+        buf_printf(&g.data,"align 4\nTYQN");
+        for(int i=0;i<p->nclasses;i++) if(g.class_used[i] && strcmp(p->classes[i]->qualname,p->classes[i]->name)){ AClass *c=p->classes[i];
+            buf_printf(&g.data," dd %s,S%d\n   ",class_label(c,0),str_lit(c->qualname)); }
+        buf_printf(&g.data," dd 0\n"); }
     emit_lit_pools();
-    for(int i=0;i<p->nglobals;i++){ AVar *v=p->globals[i]; buf_printf(&g.bss,"%s %s 1   ; %s.%s\n",global_label(v),is_flt(v->ty)?"rq":"rd",v->mod->name,v->name); }
+    for(int i=0;i<p->nglobals;i++){ AVar *v=p->globals[i]; buf_printf(&g.bss,"%s rd %d   ; %s.%s\n",global_label(v),esize(v->ty)/4,v->mod->name,v->name); }
     for(int i=1;i<p->nmods;i++) if(p->mods[i]->used) buf_printf(&g.bss,"%s rb 1   ; %s imported\n",module_label(p->mods[i]),p->mods[i]->name);
 
     Buf o; memset(&o,0,sizeof o);
@@ -3701,11 +4887,11 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         buf_printf(&o,"format ELF executable 3\nentry start\n\n");
         if(dyn && g.target==AOT_TARGET_LINUX) emit_dynamic_header(&o,p);
         buf_printf(&o,"segment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
-        buf_printf(&o,"        call %s\n%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),report);
+        buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     } else {
         buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,0,0\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
         if(heap) buf_printf(&o,"        mov eax,68\n        mov ebx,11\n        int 0x40\n");
-        buf_printf(&o,"        call %s\n%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),report);
+        buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     }
     buf_cat(&o,&g.text);
     buf_printf(&o,"\n; ---- runtime\n");

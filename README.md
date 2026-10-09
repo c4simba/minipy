@@ -6,12 +6,18 @@ MiniPy is a compact bytecode compiler and stack-based virtual machine for a Pyth
 
 ```text
 source code
-  → lexer
-  → expression AST + typed statement AST
-  → symbol-table traversal
-  → AST-driven bytecode compiler
-  → stack VM
+  → full Python 3.14 parser            (src/py_lex.c, src/py_parse.c: CPython's grammar, its `ast` tree)
+  → the compilers' frontend tree       (src/py_front.c)
+  → bytecode compiler → stack VM       (src/compiler.c, src/expr_compiler.c, src/vm*.c)
+    or the typed compiler → native executable  (src/aot_*.c, see Compiled mode)
 ```
+
+The parser reads all of Python 3.14 the way CPython does - precedence,
+f-strings (conversions, format specs, `{x=}`), implicit string concatenation,
+`;`, parenthesized imports, keyword-only parameters, decorators, every
+statement - so both modes see a program exactly as CPython would. What a mode
+does not run (`match`, `x = yield`, `:=`, starred assignment, ...) is a
+compile error at its line.
 
 ## Features
 
@@ -59,19 +65,19 @@ make test
 ### Diagnostic flags
 
 ```sh
-./minipy --dump-ast tests/statement_ast_test.mpy
-./minipy --dump-symbols tests/advanced_runtime_test.mpy
+./minipy --dump-ast tests/statement_ast_test.mpy       # the parser's tree, as CPython's ast.dump (also --pyast)
 ./minipy --dump-bytecode tests/statement_ast_test.mpy
 ./minipy --fs-info
 ```
+
+`tests/pyast_check.py` compares `--pyast` with CPython's own `ast` over whole
+files or directories (the standard library, site-packages).
 
 ### Compile to a native executable
 
 See [Compiled mode](#compiled-mode-ahead-of-time-fasm) below: statically
 typed programs become small i386 executables for Linux or KolibriOS, or
-native macOS executables. Real-world Python - any module, the standard
-library, site-packages with their `.so` extensions - compiles to C over the
-CPython API: see [the cpython target](#real-python-the-cpython-target).
+native macOS executables.
 
 ## Compiled mode (ahead-of-time, fasm)
 
@@ -90,7 +96,7 @@ Without `--target` the program is compiled for the system `minipy` runs on
 
 ```text
 app.mpy + every imported module
-  -> lexer / AST (same frontend as the interpreter)
+  -> full Python parser + frontend tree (src/py_parse.c, src/py_front.c; as the interpreter)
   -> type check and inference            (src/aot_types.c)
   -> one fasm listing app.asm, i386      (src/aot_codegen.c)
      + the runtime routines it uses      (src/aot_rtlib.asm)
@@ -555,71 +561,6 @@ write an adapter for it in Python - parameters converted from a dict of
 strings by their annotations, the function called (an async one directly: the
 server runs in a task), the result `json.dumps`ed - so every route has one
 type. In the interpreter `minipy.endpoint(f)` does the same at run time.
-
-## Real Python: the cpython target
-
-```sh
-python3.14 -m venv .venv && .venv/bin/pip install fastapi uvicorn
-./minipy --compile --target cpython --python .venv/bin/python examples/fastapi/main.py   # ./examples/fastapi/main
-./minipy --compile --target cpython --python .venv/bin/python --libs --stdlib app.py    # site-packages and the stdlib too
-```
-
-This target takes Python as it is - the full language of 3.14, any module -
-and compiles it to C over the CPython API, linked with the libpython of the
-given Python (`--python`, default `python3`; it must be 3.14). The program
-imports what is not compiled the usual way through that Python: the standard
-library, the venv's site-packages, extension modules (`.so`). With `--libs`
-the imported site-packages modules are compiled too, with `--stdlib` the
-standard library's: FastAPI's hello world with uvicorn compiles to 600
-modules of C (FastAPI, Starlette, uvicorn, pydantic's Python part, anyio,
-h11, click, asyncio, json, typing, inspect, logging, ...), pydantic_core
-staying its `.so`, and serves the same answers.
-
-```text
-app.py + the modules it imports (wherever the imports are)
-  -> full Python 3.14 parser          (src/py_lex.c, src/py_parse.c; = CPython's ast)
-  -> scopes                           (src/capi_sym.c: locals, cells, free, globals, mangling)
-  -> C over the CPython API           (src/capi_codegen.c), one file per module
-  -> cc + libpython                   (build directory app.build/, make -j)
-```
-
-How it fits into CPython:
-
-- Every function, lambda, class body and module body is a C function. What
-  Python sees is a real function object whose code is a tiny trampoline
-  `def f(a, b=..., *args): return __mpy_env__(a, b, args)` compiled at build
-  time: CPython binds the arguments; `inspect.signature`, `__code__`,
-  `__globals__`, `__defaults__`, `functools.wraps`, pickling by name and
-  `sys._getframe()` (namedtuple, TypeVar, pydantic's namespace lookups, ...)
-  behave as for Python code. With `--fast-calls` a compiled function that
-  only has positional parameters is called straight into its C, without the
-  trampoline's frame: faster, but frame depths then differ from CPython's.
-- Classes are built by `__build_class__` (metaclasses, `__prepare__`,
-  `__init_subclass__`, `__set_name__`, `__classcell__` for `super()`), class
-  bodies run their C with the real namespace.
-- Locals are C variables, variables used by inner functions are cells,
-  temporaries are freed on every path; exceptions follow CPython's rules
-  (chaining, `sys.exception()`, `finally` with return / break / continue,
-  `with` and its `__exit__`); comprehensions are inlined; global names are
-  cached per site while no module dict changes (dict watchers); small ints
-  are added and compared in C.
-- What CPython compiles itself, from the same source (marshalled at build
-  time and given its cells): annotations (PEP 649 `__annotate__`, so
-  `annotationlib` / pydantic / FastAPI see them exactly), generators,
-  coroutines and async generators, `match`, `except*`, t-strings, functions
-  using `locals()` / `eval` / `exec`. `from __future__ import annotations`
-  is supported.
-- Tracebacks show the real functions and lines (the trampolines' frames are
-  left out).
-
-`tests/run_cpython_tests.sh` compares compiled programs with the Python
-running them (`PYTHON=.venv/bin/python sh tests/run_cpython_tests.sh`,
-`FLAGS=--stdlib` to compile the standard library too); `tests/pyast_check.py`
-compares the parser with CPython's `ast` over whole libraries (it agrees on
-the standard library and site-packages except for `\N{...}` escapes,
-non-UTF-8 sources and NFKC-normalized identifiers). Speed: about CPython
-3.14's (calls and small-int arithmetic as fast, attribute-heavy code slower
-for now).
 
 ## KolibriOS API: `examples/kolibri.mpy`
 

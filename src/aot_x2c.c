@@ -856,6 +856,26 @@ static void insn(Item *it){
         else if(op=='-') flags("FK_SUB",s,"x_","y_","r_");
         else flags("FK_LOGIC",s,NULL,NULL,"r_");
     }
+    else if(IS("adc")||IS("sbb")){
+        if(n!=2) xfail("%s needs two operands",m);
+        int s=opsize(o,2), sh=shift_of(s);
+        if(sh) xfail("%s of %d bytes",m,s);
+        xb_printf(&out,"u32 x_=%s, y_=%s, c_=CF_NOW, r_; ",rd(&o[0],s),rd(&o[1],s));
+        if(IS("adc")) xb_printf(&out,"r_=x_+y_+c_; fc=c_?r_<=x_:r_<x_; ");
+        else xb_printf(&out,"r_=x_-y_-c_; fc=c_?x_<=y_:x_<y_; ");
+        wr(&o[0],s,"r_"); flags(IS("adc")?"FK_ADC":"FK_SBB",s,"x_","y_","r_");
+    }
+    else if(IS("shld")||IS("shrd")){
+        if(n!=3) xfail("%s needs three operands",m);
+        if(opsize(o,2)!=4) xfail("%s of a non-dword",m);
+        if(o[2].k==O_IMM) xb_printf(&out,"u32 c_=%uu; ",(u32)o[2].imm&31u);
+        else if(o[2].k==O_REG && o[2].size==1 && o[2].reg==1) xb_printf(&out,"u32 c_=ecx&31u; ");
+        else xfail("shift count must be a number or cl");
+        xb_printf(&out,"if(c_){ u32 x_=%s, y_=%s, r_; ",rd(&o[0],4),rd(&o[1],4));
+        if(IS("shld")) xb_printf(&out,"r_=(x_<<c_)|(y_>>(32-c_)); fc=(x_>>(32-c_))&1u; ");
+        else xb_printf(&out,"r_=(x_>>c_)|(y_<<(32-c_)); fc=(x_>>(c_-1))&1u; ");
+        wr(&o[0],4,"r_"); flags("FK_SHIFT",4,NULL,NULL,"r_"); xb_printf(&out,"} ");
+    }
     else if(IS("inc")||IS("dec")){
         if(n!=1) xfail("%s operands",m);
         int s=opsize(o,1);

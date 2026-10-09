@@ -47,11 +47,11 @@ REASONS = {200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401
 
 def log(text: str, level: str = "INFO:     ") -> None:
     line = level + text + "\n"
-    libc.write(2, line, len(line))
+    libc.write(2, line, len(line.encode()))
 
 def fail(what: str) -> None:
     line = "ERROR:    " + what + ": " + libc.strerror(ctypes.get_errno()) + "\n"
-    libc.write(2, line, len(line))
+    libc.write(2, line, len(line.encode()))
     sys.exit(1)
 
 def ipv4(host: str) -> int:
@@ -99,7 +99,7 @@ def receive(fd: int, chunk: buffer) -> str:
         colon = line.find(":")
         if colon > 0 and line[:colon].strip().lower() == "content-length":
             length = int(line[colon + 1:].strip())
-    while len(data) < head_end + 4 + length:
+    while len(data.encode()) < head_end + 4 + length:      # Content-Length counts bytes
         n = libc.recv(fd, chunk, len(chunk), 0)
         if n <= 0:
             break
@@ -123,7 +123,7 @@ def answer(r: Response, head_only: bool) -> str:
         body = ""
     return ("HTTP/1.1 " + str(r.status_code) + " " + reason + "\r\n" +
             "server: uvicorn\r\n" +
-            "content-length: " + str(len(r.body)) + "\r\n" +
+            "content-length: " + str(len(r.body.encode())) + "\r\n" +
             "content-type: " + r.media_type + "\r\n" +
             "connection: close\r\n\r\n" + body)
 

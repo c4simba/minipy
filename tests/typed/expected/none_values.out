@@ -1,10 +1,39 @@
 banana 6
-[] 0 True True True
-5
-0.0 True
-[] 0 True
+None True True True False
+None True
+6 False
+9
+None True True
+5.0 False
+None True
 [1] False
-{'k': 1}
-[] 0 True
-False 3
+None
+{'k': 1} 1 None 0
+None None True None
+False 3 None
 False True
+nothing number 4 nothing
+[1, None, 3] 1 True False [1, 3]
+{'a': None, 'b': 2} True [None, 2]
+6 2.5 None None
+[True, None, False] [False, True, False]
+[1.5, None] True 2.5
+True True False True
+False None None [None] (None, 1)
+4 None
+False True True True True
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+TypeError: '<' not supported between instances of 'NoneType' and 'int'
+TypeError: bad operand type for unary -: 'NoneType'
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'
+TypeError: can only concatenate str (not "NoneType") to str
+TypeError: object of type 'NoneType' has no len()
+AttributeError: 'NoneType' object has no attribute 'append'
+TypeError: 'NoneType' object is not subscriptable
+TypeError: 'NoneType' object is not iterable
+AttributeError: 'NoneType' object has no attribute 'size'
+AttributeError: 'NoneType' object has no attribute 'upper'
+TypeError: bad operand type for abs(): 'NoneType'
+TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'
+TypeError: argument of type 'NoneType' is not a container or iterable

@@ -1,1 +1,0 @@
-err_infer.mpy:1: error: cannot infer the type of parameter 'v'; add a type annotation

@@ -1,4 +1,4 @@
-/* ========================= Frontend AST + Symbol Table: constructors ========================= */
+/* ========================= Frontend tree: constructors ========================= */
 
 #include "ast.h"
 
@@ -9,13 +9,9 @@ void name_add_unique(char ***arr,int *cnt,int *cap,const char *name){
     (*arr)[(*cnt)++]=xstrdup2(name);
 }
 
-Expr *expr_new_range(int start,int end,int line){
-    Expr *e=(Expr*)xmalloc(sizeof(Expr)); memset(e,0,sizeof(Expr));
-    e->kind=EXPR_TOKEN_RANGE; e->start=start; e->end=end; e->line=line; return e;
-}
-Stmt *stmt_new(StmtKind k,const char *name,int line,int start){
+Stmt *stmt_new(StmtKind k,const char *name,int line){
     Stmt *s=(Stmt*)xmalloc(sizeof(Stmt)); memset(s,0,sizeof(Stmt));
-    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->start=start; s->end=start; s->star_index=-1; s->dstar_index=-1; s->kwonly_index=-1; return s;
+    s->kind=k; s->name=name?xstrdup2(name):NULL; s->line=line; s->star_index=-1; s->dstar_index=-1; s->kwonly_index=-1; return s;
 }
 void stmt_add_body(Stmt *s,Stmt *child){
     if(!child) return;
@@ -26,10 +22,6 @@ void stmt_add_orelse(Stmt *s,Stmt *child){
     if(!child) return;
     if(s->orelse_count==s->orelse_cap){ s->orelse_cap=s->orelse_cap?s->orelse_cap*2:4; s->orelse=(Stmt**)xrealloc(s->orelse,sizeof(Stmt*)*(size_t)s->orelse_cap); }
     s->orelse[s->orelse_count++]=child;
-}
-void stmt_add_default(Stmt *s,Expr *e){
-    if(s->default_count==s->default_cap){ s->default_cap=s->default_cap?s->default_cap*2:4; s->defaults=(Expr**)xrealloc(s->defaults,sizeof(Expr*)*(size_t)s->default_cap); }
-    s->defaults[s->default_count++]=e;
 }
 void stmt_set_annotation(Stmt *s,int param,Expr *e){
     if(param<0) return;
@@ -46,19 +38,6 @@ void stmt_add_decorator(Stmt *s,const char *name,Expr *e){
     s->decorator_exprs[s->decorator_count]=e;
     s->decorators[s->decorator_count++]=xstrdup2(name);
 }
-SymScope *scope_new(SymScopeKind k,const char *name,int line){
-    SymScope *sc=(SymScope*)xmalloc(sizeof(SymScope)); memset(sc,0,sizeof(SymScope));
-    sc->kind=k; sc->name=xstrdup2(name?name:"<scope>"); sc->line=line; return sc;
-}
-void scope_add_child(SymScope *p,SymScope *c){
-    if(!p||!c) return;
-    if(p->child_count==p->child_cap){ p->child_cap=p->child_cap?p->child_cap*2:4; p->children=(SymScope**)xrealloc(p->children,sizeof(SymScope*)*(size_t)p->child_cap); }
-    p->children[p->child_count++]=c;
-}
-void scope_def(SymScope *s,const char *name){ name_add_unique(&s->defs,&s->def_count,&s->def_cap,name); }
-void scope_use(SymScope *s,const char *name){ name_add_unique(&s->uses,&s->use_count,&s->use_cap,name); }
-void scope_global(SymScope *s,const char *name){ name_add_unique(&s->globals,&s->global_count,&s->global_cap,name); }
-void scope_nonlocal(SymScope *s,const char *name){ name_add_unique(&s->nonlocals,&s->nonlocal_count,&s->nonlocal_cap,name); }
 
 const char *stmt_kind_name(StmtKind k){
     switch(k){
@@ -69,10 +48,7 @@ const char *stmt_kind_name(StmtKind k){
         case STMT_WITH: return "WithStmt"; case STMT_BREAK: return "BreakStmt"; case STMT_CONTINUE: return "ContinueStmt";
         case STMT_PASS: return "PassStmt"; case STMT_DEL: return "DelStmt"; case STMT_GLOBAL: return "GlobalStmt";
         case STMT_NONLOCAL: return "NonlocalStmt"; case STMT_EXPR: return "ExprStmt"; case STMT_YIELD: return "YieldStmt";
+        case STMT_MATCH: return "MatchStmt"; case STMT_CASE: return "MatchCase";
         default: return "UnsupportedStmt";
     }
 }
-const char *scope_kind_name(SymScopeKind k){ return k==SYM_MODULE?"module":k==SYM_FUNCTION?"function":"class"; }
-
-int is_expr_name_token(TokKind k){ return k==T_NAME; }
-int is_assign_op(TokKind k){ return k==T_ASSIGN||k==T_PLUS_ASSIGN||k==T_MINUS_ASSIGN||k==T_STAR_ASSIGN||k==T_SLASH_ASSIGN||k==T_PERCENT_ASSIGN||k==T_FLOOR_DIV_ASSIGN||k==T_POWER_ASSIGN||k==T_AMP_ASSIGN||k==T_PIPE_ASSIGN||k==T_CARET_ASSIGN||k==T_SHL_ASSIGN||k==T_SHR_ASSIGN; }

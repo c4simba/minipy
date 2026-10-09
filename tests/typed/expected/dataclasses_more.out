@@ -1,0 +1,7 @@
+Money(amount=5, currency='EUR') True
+error: negative
+FrozenInstanceError cannot assign to field 'amount' True
+Inventory(name='shop', items={'a': 2, 'b': 5}, total=11) 11
+Inventory(name='x', items={}, total=0)
+local_dc.<locals>.Pair(a=3, b=4) 7 local_dc.<locals>.Pair
+one two

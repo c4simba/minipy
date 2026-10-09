@@ -1,0 +1,76 @@
+# What the full Python parser (src/py_parse.c, CPython's grammar) gives the
+# compiled programs and the interpreter alike: Python's precedence, f-string
+# conversions and specs, keyword-only parameters with defaults, `;`,
+# parenthesized imports, implicit string concatenation, yield from, ...
+# (tests/frontend_test.mpy runs this file in the interpreter.)
+import json, sys
+from typing import (
+    Iterator,
+    List,
+)
+
+def precedence(a: int, b: int) -> None:
+    print(-2**2, 2**3**2, -a**b, not a == b, not a != a, -a * -b, ~a & 7)
+    x = 3; y = 4; print(x + y)
+    print(1 < a < 3, a < b > 1, a if a > b else b, (a, b)[a > b])
+
+def kwonly(a: int, b: int = 1, *, c: int, d: int = 2) -> int:
+    return a * 1000 + b * 100 + c * 10 + d
+
+def starred(a: int, *rest: int, scale: int = 10) -> int:
+    total = a
+    for r in rest:
+        total += r * scale
+    return total
+
+class Point:
+    def __init__(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+    def __repr__(self) -> str:
+        return f"Point({self.x!r}, {self.y})"
+    def swap(self) -> None:
+        self.x, self.y = self.y, self.x
+
+def fstrings(n: int, s: str, f: float) -> None:
+    print(f"{n:>5}|{n:<4}|{s!r}|{f:.2f}|{n=}|{s=}")
+    d = {"k": "v"}
+    print(f"{d['k']}" "-tail", "head-" f"{n}", f"{{braces}} {n * 2}")
+    p = Point(1, 2)
+    p.swap()
+    print(f"{p}", repr(p), f"{'nested'}")
+
+def squares(n: int) -> Iterator[int]:
+    for i in range(n):
+        yield i * i
+
+def chained(n: int) -> Iterator[int]:
+    yield -1
+    yield from squares(n)
+    yield -2
+
+def stubbed() -> None:
+    ...
+
+def main() -> None:
+    precedence(2, 3)
+    print(kwonly(1, c=3), kwonly(1, 2, c=3, d=4), kwonly(c=5, a=6))
+    print(starred(1), starred(1, 2, 3), starred(1, 2, scale=100))
+    fstrings(42, "hi", 3.14159)
+    print(list(chained(4)), json.dumps({"a": [1, 2]}), sys.platform != "")
+    stubbed()
+    total = 0
+    for i in range(10):
+        if i % 2 == 0: continue
+        total += i
+    print(total)
+    s = ("multi"
+         "line" \
+         "!")
+    print(s, len(s))
+    xs = [3, 1, 2]
+    print(*xs, sep=", ")
+    a = b = 5
+    print(a, b)
+
+main()

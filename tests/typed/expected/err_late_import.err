@@ -1,1 +1,0 @@
-err_late_import.mpy:2: error: import after other statements; in compiled programs every import must be at the top of the module

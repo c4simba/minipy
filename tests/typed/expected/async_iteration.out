@@ -1,0 +1,8 @@
+tick 0
+tick 10
+tick 20
+open db
+using db
+close db
+[10, 20, 30]
+0 10

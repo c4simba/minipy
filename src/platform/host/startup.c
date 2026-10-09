@@ -8,10 +8,7 @@ void mpy_platform_shutdown(void){}
 
 const char *mpy_platform_default_script(void){ return NULL; }
 
-void mpy_platform_banner(const char *script_path){
-    printf("MiniPy - Mini Python Interpreter\n");
-    printf("Script: %s\n\n", script_path ? script_path : "(default)");
-}
+void mpy_platform_banner(const char *script_path){ (void)script_path; }   /* (as python: the program's output only) */
 
 /* No raw syscalls on a hosted OS: sys.syscall raises "wrong platform". */
 int mpy_platform_has_syscall(void){ return 0; }

@@ -4,12 +4,11 @@
 #include "util.h"
 
 /* ========================= Full Python 3.14 frontend =========================
-   The cpython target compiles real-world Python (the standard library,
-   site-packages) to C over the CPython API, so it needs all of the language:
    py_lex.c / py_parse.c read Python 3.14 source into the tree below - the
    node kinds and fields of CPython's `ast` module, so that `minipy --pyast`
    (py_dump.c) can be compared with CPython's own parser field by field
-   (tests/pyast_check.py). The interpreter keeps its own small frontend. */
+   (tests/pyast_check.py). py_front.c turns it into the tree the compilers
+   work on (ast.h): the interpreter's bytecode compiler and the typed one. */
 
 typedef enum {
     /* mod */
@@ -63,7 +62,6 @@ struct PyNode {
     int paren;                /* parser: the expression was in parentheses */
     int soff, eoff;           /* statements: source extent (decorators included), byte offsets */
     int aux1, aux2;           /* for the compiler */
-    int island;               /* compiler: a statement CPython runs */
 };
 
 typedef struct {

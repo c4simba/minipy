@@ -1,1 +1,0 @@
-err_gen_return.mpy:1: error: numbers(): `return value` in a generator is not supported in compiled code

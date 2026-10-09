@@ -34,7 +34,7 @@ print(f())
 
 print("try")
 try:
-    raise "boom"
+    raise RuntimeError("boom")
 except RuntimeError as e:
     print(e)
 finally:

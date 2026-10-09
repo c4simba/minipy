@@ -1,6 +1,3 @@
-MiniPy - Mini Python Interpreter
-Script: tests/test.mpy
-
 string concat: hello world
 42
 42

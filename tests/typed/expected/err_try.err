@@ -1,1 +1,1 @@
-err_try.mpy:4: error: except needs exception classes
+err_try.mpy:6: error: except needs exception classes

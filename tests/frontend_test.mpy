@@ -1,0 +1,3 @@
+# The full Python parser in the interpreter: the same program as the compiled
+# test tests/typed/frontend.mpy (expected output there, from CPython).
+import typed.frontend

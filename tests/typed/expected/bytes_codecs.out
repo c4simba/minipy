@@ -1,0 +1,30 @@
+4 8 7 3 4 8 3 3
+True True True [b'Hello', b'World'] [b'a', b'b', b'c'] [b'a b', b'c'] [b'Hello,', b'World']
+b'Hello, World  ' b'  Hello, World' b'hi' b'a-b' b'HeLLo, World' b'-a-b-'
+b'HELLO, WORLD' b'hello, world' b'hELLO, wORLD' b'Hello World' b'Hello' (b'Hello', b', ', b'World') (b'Hello, W', b'o', b'rld') b'llo, World' b'Hello, Wor'
+True True True True True True True False [b'a', b'b', b'c'] [b'a\n', b'b']
+72 100 b'ell' b'dlroW ,olleH' [72, 101, 108] True True False 12 b'Hello, World!' b'Hello, WorldHello, World' b'abab' True True True
+b'\x00\x00\x00' b'AB' b'\xc3\xa9' b'AB' 01ab 258 513 b'\x01\x02' b'\xff\xff'
+-2 0 b'\x05' b'\xff\xff\x00' 10 6 0
+b'x' b'x' b'x' b"'" [b'a'] {b'k': 1} [b'a', b'b'] 97 122 3 [97, 98, 99] True
+é b'\xc3\xa9' b'\xe9' é b'a?' a�b ab é
+104 105 
+0 111; 1 107; 
+v True
+2 True
+0 ValueError bytes must be in range(0, 256)
+1 IndexError index out of range
+2 ValueError subsection not found
+3 UnicodeEncodeError 'ascii' codec can't encode characters in position 1-2: ordinal not in range(128)
+4 UnicodeDecodeError 'utf-8' codec can't decode bytes in position 0-1: unexpected end of data
+5 UnicodeDecodeError 'ascii' codec can't decode byte 0x80 in position 0: ordinal not in range(128)
+6 ValueError fromhex() arg must contain an even number of hexadecimal digits
+7 OverflowError int too big to convert
+8 LookupError unknown encoding: koi8
+9 LookupError unknown error handler name 'bogus'
+10 ValueError non-hexadecimal number found in fromhex() arg at position 1
+11 OverflowError can't convert negative int to unsigned
+12 ValueError byteorder must be either 'little' or 'big'
+13 ValueError empty separator
+14 ValueError byte must be in range(0, 256)
+15 UnicodeDecodeError 'utf-8' codec can't decode byte 0xed in position 0: invalid continuation byte

@@ -67,14 +67,14 @@ typedef float f32u __attribute__((aligned(1),may_alias));
 /* Flags are kept lazily: the kind of the last instruction that set them
    (fk; bits 8+: how far 8/16-bit operands are shifted up so that their sign
    is bit 31), its operands fa fb, result fr and a carry fc. */
-enum { FK_ADD, FK_SUB, FK_LOGIC, FK_INC, FK_DEC, FK_SHIFT, FK_MUL, FK_SAHF };
+enum { FK_ADD, FK_SUB, FK_LOGIC, FK_INC, FK_DEC, FK_SHIFT, FK_MUL, FK_SAHF, FK_ADC, FK_SBB };
 enum { CC_O, CC_NO, CC_B, CC_AE, CC_E, CC_NE, CC_BE, CC_A, CC_S, CC_NS, CC_P, CC_NP, CC_L, CC_GE, CC_LE, CC_G };
 #define X2C_INLINE static inline __attribute__((always_inline))
 X2C_INLINE int x2c_cf(u32 k, u32 a, u32 b, u32 r, u32 c){
-    switch(k&15){ case FK_ADD: return r<a; case FK_SUB: return a<b; case FK_LOGIC: return 0; case FK_SAHF: return r&1; default: return c&1; }
+    switch(k&15){ case FK_ADD: return r<a; case FK_SUB: return a<b; case FK_LOGIC: return 0; case FK_SAHF: return r&1; default: return c&1; }   /* adc, sbb: c */
 }
 X2C_INLINE int x2c_of(u32 k, u32 a, u32 b, u32 r, u32 c){
-    switch(k&15){ case FK_ADD: case FK_INC: return (~(a^b)&(a^r))>>31; case FK_SUB: case FK_DEC: return ((a^b)&(a^r))>>31;
+    switch(k&15){ case FK_ADD: case FK_INC: case FK_ADC: return (~(a^b)&(a^r))>>31; case FK_SUB: case FK_DEC: case FK_SBB: return ((a^b)&(a^r))>>31;
                   case FK_MUL: return c&1; default: return 0; }
 }
 X2C_INLINE int x2c_zf(u32 k, u32 r){ return (k&15)==FK_SAHF ? (r>>6)&1 : r==0; }

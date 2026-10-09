@@ -1,0 +1,18 @@
+values: ['v1', 'v2']
+types: ['t1'] many
+handled types
+rest: many ["ValueError('v1')", "ValueError('v2')"]
+ExceptionGroup('g', [ValueError('x')]) ExceptionGroup('g', [KeyError('k')])
+(KeyError('k'),) 2 g (2 sub-exceptions)
+wrapped: ExceptionGroup('', (ValueError('plain'),))
+outer: ExceptionGroup('', [RuntimeError('from handler'), ExceptionGroup('eg', [TypeError(2), KeyError(3)])])
+reraised: ExceptionGroup('eg', [ValueError(1), TypeError(2), KeyError(3)])
+naked passes through: KeyError('solo')
+vt 2
+k (KeyError(3),)
+done
+BaseExceptionGroup b (1 sub-exception)
+Cannot nest BaseExceptions in an ExceptionGroup
+ExceptionGroup('n', [ValueError('a'), ExceptionGroup('inner', [ValueError('c')])]) ExceptionGroup('n', [ExceptionGroup('inner', [TypeError('b')])])
+finally runs
+left: ExceptionGroup('eg', [TypeError(2), KeyError(3)])

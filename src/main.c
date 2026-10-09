@@ -1,13 +1,8 @@
 /* ========================= Entry point ========================= */
 
 #include "platform/platform.h"
-#include "vm.h"
-#include "compiler.h"
-#include "frontparser.h"
-#include "bytecode.h"
-#include "containers.h"
+#include "interp.h"
 #include "fs.h"
-#include "gc.h"
 #include "aot.h"
 #include "py_ast.h"
 
@@ -33,6 +28,17 @@ static int mpy_split_cmdline(const char *cmd,const char *exe,char *buf,int bufle
     return argc;
 }
 
+/* The program's exit status for an exception that ended it (SystemExit: its code). */
+static int exit_status(Value e){
+    if(!mp_isinstance(e,E_SystemExit)){ mp_print_exception(e); return 1; }
+    Value code=mp_getattr_s(e,"code");
+    if(IS_NONE(code)) return 0;
+    if(IS_INTLIKE(code)) return (int)code.u.i;
+    Value s=mp_tostr(code);
+    mp_write_err(mp_cstr(s),AS_STR(s)->len); mp_write_err("\n",1);
+    return 1;
+}
+
 /* All program logic. Every exit path RETURNS a status code so main() can
    guarantee platform teardown (closing the KolibriOS console buffer) on all of
    them -- including -v, usage, and error paths. */
@@ -47,14 +53,14 @@ static int mpy_run(int argc,char **argv){
 
     /* Typed ahead-of-time compilation to a standalone executable (fasm). */
     if(argc>=2 && strcmp(argv[1],"--compile")==0) return aot_main(argc-2,argv+2,program);
-    /* The full Python parser of the cpython target: its tree (tests/pyast_check.py) */
-    if(argc>=2 && strcmp(argv[1],"--pyast")==0) return py_dump_main(argc-2,argv+2);
+    /* The full Python parser: its tree, as CPython's ast (tests/pyast_check.py) */
+    if(argc>=2 && (strcmp(argv[1],"--pyast")==0 || strcmp(argv[1],"--dump-ast")==0)) return py_dump_main(argc-2,argv+2);
 
     if(argc<2){
         script_path = mpy_platform_default_script();
         if(!script_path){
-            fprintf(stderr,"usage: %s [-v|--version] [--dump-ast|--dump-symbols|--dump-bytecode|--fs-info] file.mpy\n",program);
-            fprintf(stderr,"       %s --compile [options] file.mpy   (see --compile --help)\n",program);
+            fprintf(stderr,"usage: %s [-v|--version] [--dump-ast|--dump-bytecode|--fs-info] file.py [args...]\n",program);
+            fprintf(stderr,"       %s --compile [options] file.py   (see --compile --help)\n",program);
             return 2;
         }
     }
@@ -62,104 +68,42 @@ static int mpy_run(int argc,char **argv){
         printf("%s\n",mpy_fs_backend_name());
         return 0;
     }
-    if(!script_path && (strcmp(argv[1],"--dump-ast")==0 || strcmp(argv[1],"--dump-symbols")==0 || strcmp(argv[1],"--dump-bytecode")==0)){
-        if(argc<3){ fprintf(stderr,"usage: %s %s file.mpy\n",program,argv[1]); return 2; }
+    mp_init();
+    if(!script_path && strcmp(argv[1],"--dump-bytecode")==0){
+        if(argc<3){ fprintf(stderr,"usage: %s %s file.py\n",program,argv[1]); return 2; }
         char *src=mpy_fs_read_file(argv[2]);
-        if(strcmp(argv[1],"--dump-ast")==0) dump_ast_for_source(src);
-        else if(strcmp(argv[1],"--dump-symbols")==0) dump_symbols_for_source(src);
-        else {
-            char *dir=mpy_fs_dirname(argv[2]); Dict *globals=dict_new(); Function *mainfn=compile_source(src,"__main__",dir,globals); dump_function_bytecode(mainfn); free(dir);
-        }
+        PyParse pp;
+        if(py_parse(&pp,argv[2],src,strlen(src))){ fprintf(stderr,"%s:%d: SyntaxError: %s\n",argv[2],pp.error_line,pp.error); return 1; }
+        char *err=NULL; int line=0;
+        CodeObj *co=mp_compile(pp.mod,argv[2],"__main__",&err,&line);
+        if(!co){ fprintf(stderr,"%s:%d: SyntaxError: %s\n",argv[2],line,err); return 1; }
+        mp_dump_code(co);
         free(src);
         return 0;
     }
+    int first=1;
     if(!script_path) script_path = argv[1];
-
-    mpy_repr_hook = mpy_instance_repr;
+    else first=0;
     mpy_platform_banner(script_path);
-    /* mpy_main_vm is zero-initialized (static) and cstack_base is already set,
-       so no memset here -- it would wipe the C-stack base the GC needs. */
-    if(setjmp(vm.panic)){ print_traceback(is_obj(vm.pending_exception,O_EXCEPTION)||is_exc_instance(vm.pending_exception)?vm.pending_exception:exceptionv("RuntimeError",vm.error_msg?vm.error_msg:"error",nonev())); return 1; }
-    vm.builtins=dict_new(); vm.modules=dict_new();
-    dict_set(vm.builtins,"len",nativev(&N_LEN)); dict_set(vm.builtins,"range",nativev(&N_RANGE)); dict_set(vm.builtins,"next",nativev(&N_NEXT)); dict_set(vm.builtins,"iter",nativev(&N_ITER)); dict_set(vm.builtins,"input",nativev(&N_INPUT));
-    dict_set(vm.builtins,"str",nativev(&N_STR)); dict_set(vm.builtins,"repr",nativev(&N_REPR)); dict_set(vm.builtins,"int",nativev(&N_INT)); dict_set(vm.builtins,"float",nativev(&N_FLOAT)); dict_set(vm.builtins,"bool",nativev(&N_BOOL));
-    dict_set(vm.builtins,"list",nativev(&N_LIST)); dict_set(vm.builtins,"tuple",nativev(&N_TUPLE)); dict_set(vm.builtins,"set",nativev(&N_SET)); dict_set(vm.builtins,"dict",nativev(&N_DICT));
-    dict_set(vm.builtins,"abs",nativev(&N_ABS)); dict_set(vm.builtins,"min",nativev(&N_MIN)); dict_set(vm.builtins,"max",nativev(&N_MAX)); dict_set(vm.builtins,"sum",nativev(&N_SUM)); dict_set(vm.builtins,"sorted",nativev(&N_SORTED)); dict_set(vm.builtins,"reversed",nativev(&N_REVERSED));
-    dict_set(vm.builtins,"enumerate",nativev(&N_ENUMERATE)); dict_set(vm.builtins,"zip",nativev(&N_ZIP)); dict_set(vm.builtins,"map",nativev(&N_MAP)); dict_set(vm.builtins,"filter",nativev(&N_FILTER));
-    dict_set(vm.builtins,"type",nativev(&N_TYPE)); dict_set(vm.builtins,"isinstance",nativev(&N_ISINSTANCE)); dict_set(vm.builtins,"ord",nativev(&N_ORD)); dict_set(vm.builtins,"chr",nativev(&N_CHR)); dict_set(vm.builtins,"round",nativev(&N_ROUND)); dict_set(vm.builtins,"any",nativev(&N_ANY)); dict_set(vm.builtins,"all",nativev(&N_ALL));
-    dict_set(vm.builtins,"super",nativev(&N_SUPER)); dict_set(vm.builtins,"staticmethod",nativev(&N_STATICMETHOD)); dict_set(vm.builtins,"classmethod",nativev(&N_CLASSMETHOD)); dict_set(vm.builtins,"property",nativev(&N_PROPERTY));
-    {
-        const char *excs[]={"BaseException","Exception","RuntimeError","StopIteration","ValueError","TypeError","KeyError","IndexError","ZeroDivisionError","NameError","AttributeError","AssertionError","ImportError","ModuleNotFoundError","OSError",NULL};
-        for(int i=0;excs[i];i++){ Obj *ec=new_obj(O_CLASS); ec->as.klass.name=xstrdup2(excs[i]); ec->as.klass.methods=dict_new(); dict_set(vm.builtins,excs[i],objv(ec)); }
-    }
-    /* Built-in `sys` module: the raw syscall gateway + platform tag. Preloaded
-       into the module cache so `import sys` resolves without touching the FS. */
-    {
-        Dict *sysd=dict_new();
-        dict_set(sysd,"__name__",stringv("sys"));
-        dict_set(sysd,"syscall",nativev(&N_SYSCALL));
-#if defined(__APPLE__)
-        const char *os="darwin";
-#elif defined(__linux__)
-        const char *os="linux";
-#elif defined(_WIN32)
-        const char *os="win32";
-#else
-        const char *os="host";
-#endif
-        dict_set(sysd,"platform",stringv(mpy_platform_has_syscall()?"kolibrios":os));
-        dict_set(sysd,"buffer",nativev(&N_BUFFER));       /* raw struct build/parse */
-        dict_set(sysd,"poke",nativev(&N_POKE));
-        dict_set(sysd,"peek",nativev(&N_PEEK));
-        dict_set(sysd,"poke_str",nativev(&N_POKE_STR));
-        dict_set(sysd,"peek_str",nativev(&N_PEEK_STR));
-        dict_set(sysd,"addr",nativev(&N_ADDR));
-        dict_set(sysd,"peek_at",nativev(&N_PEEK_AT));     /* raw memory at an address */
-        dict_set(sysd,"poke_at",nativev(&N_POKE_AT));
-        dict_set(sysd,"peek_str_at",nativev(&N_PEEK_STR_AT));
-        dict_set(sysd,"poke_str_at",nativev(&N_POKE_STR_AT));
-        dict_set(sysd,"cstr_at",nativev(&N_CSTR_AT));
-        dict_set(vm.modules,"sys",objv(new_module("sys",sysd)));
-        mpy_stdlib_register(sysd);                         /* sys.exit, asyncio, json, minipy, _ctypes */
-    }
-    /* Built-in `thread` module: OS threads under a GIL (see vm_thread.c). */
-    {
-        Dict *thd=dict_new();
-        dict_set(thd,"__name__",stringv("thread"));
-        dict_set(thd,"start",nativev(&N_THREAD_START));
-        dict_set(thd,"join",nativev(&N_THREAD_JOIN));
-        dict_set(thd,"sleep",nativev(&N_THREAD_SLEEP));
-        dict_set(thd,"lock",nativev(&N_THREAD_LOCK));
-        dict_set(thd,"acquire",nativev(&N_THREAD_ACQUIRE));
-        dict_set(thd,"release",nativev(&N_THREAD_RELEASE));
-        dict_set(vm.modules,"thread",objv(new_module("thread",thd)));
-    }
-    /* Built-in `typing` module: the names exist so annotated code imports
-       them; annotations themselves are not evaluated. */
-    {
-        Dict *tyd=dict_new();
-        const char *names[]={"Callable","Any","Optional","Union","List","Dict","Tuple","Set","Iterable","Iterator","Generator",NULL};
-        dict_set(tyd,"__name__",stringv("typing"));
-        for(int i=0;names[i];i++){ char full[64]; snprintf(full,sizeof full,"typing.%s",names[i]); dict_set(tyd,names[i],stringv(full)); }
-        dict_set(vm.modules,"typing",objv(new_module("typing",tyd)));
-    }
-    char *src=mpy_fs_read_file(script_path);
-    if(!src) return 1;
-    char *dir=mpy_fs_dirname(script_path);
-    Dict *globals=dict_new();
-    Function *mainfn=compile_source(src,"__main__",dir,globals);
-    run_function(mainfn,0,NULL);
-    free(src); free(dir);
-    return 0;
+    mp_set_argv(argc-first,argv+first);
+    { char *dir=mpy_fs_dirname(script_path); mp_main_dir=dir; }
+    int rc=0;
+    Catch c;
+    if(!CATCH_BEGIN(c)){ mp_run_main(script_path); CATCH_END(c); }
+    else rc=exit_status(mp_catch_exc(&c));
+    mp_flush_stdout();
+    return rc;
 }
 
 int main(int argc,char **argv){
-    gc_set_stack_base(&argc);
     mpy_platform_init();
-    atexit(mpy_platform_shutdown);   /* closes the console on exit() paths (lexer/parser/die) */
-    mpy_lock_init(&mpy_gil);
-    mpy_vm_thread_register(mpy_cur_vm);   /* main thread's VM is a GC root */
-    mpy_lock_acquire(&mpy_gil);           /* main holds the GIL while it runs */
+    atexit(mpy_platform_shutdown);   /* closes the console on exit() paths */
+    static Thread main_thread;
+    mpy_lock_init(&mp_gil);
+    mpy_lock_acquire(&mp_gil);           /* main holds the GIL while it runs */
+    mp_ts=&main_thread;
+    mp_thread_add(&main_thread);
+    main_thread.cstack_base=&argc;
 
     /* KolibriOS delivers the launch arguments as one header string, not argv;
        rebuild argc/argv from it so all the option handling just works. */

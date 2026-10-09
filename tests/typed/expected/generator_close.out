@@ -1,0 +1,17 @@
+numbers cleanup
+after loop
+numbers cleanup
+10
+10.0 15.0 30.0
+waiting
+caught bad
+recovered
+waiting
+RuntimeError: generator ignored GeneratorExit
+ready
+echo got hello
+ready
+echo got world
+ready
+TypeError: can't send non-None value to a just-started generator
+[]

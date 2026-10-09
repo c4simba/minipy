@@ -22,6 +22,7 @@
 */
 
 char       *mpy_fs_read_file(const char *path);
+extern size_t mpy_fs_last_len;   /* the byte length of the last file read (it may hold NUL bytes) */
 char       *mpy_fs_try_read_file(const char *path, char **error_message);
 char       *mpy_fs_dirname(const char *path);
 char       *mpy_fs_module_path(const char *importer_dir, const char *module_name);

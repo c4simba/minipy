@@ -1,0 +1,8 @@
+0
+5 12
+stop: done 12
+inner returned 10
+[1, 2, 11]
+0 1
+closed
+after close

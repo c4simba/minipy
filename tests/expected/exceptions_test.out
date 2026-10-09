@@ -1,6 +1,3 @@
-MiniPy - Mini Python Interpreter
-Script: tests/exceptions_test.mpy
-
 exceptions
 boom
 finally explicit

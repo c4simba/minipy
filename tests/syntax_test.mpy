@@ -35,7 +35,13 @@ print([1, 2, 3, 4][1:3])
 print({1, 1, 2})
 print(t(6))
 
-with "resource" as r:
+class Resource:
+    def __enter__(self):
+        return "resource"
+    def __exit__(self, *exc):
+        return False
+
+with Resource() as r:
     print(r)
 
 del r

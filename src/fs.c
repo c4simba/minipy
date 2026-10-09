@@ -146,6 +146,7 @@ static char *mpy_fs_format_error(const char *prefix,const char *path){
     return msg;
 }
 
+size_t mpy_fs_last_len;
 char *mpy_fs_read_file_stdio_path(const char *path,char **error_message){
     errno=0;
     FILE *f=fopen(path,"rb");
@@ -175,6 +176,7 @@ char *mpy_fs_read_file_stdio_path(const char *path,char **error_message){
     }
     fclose(f);
     buf[len]=0;
+    mpy_fs_last_len=len;
     return buf;
 }
 

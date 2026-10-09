@@ -1,0 +1,10 @@
+Template(strings=('Hello ', '! pi=', ' r=', ''), interpolations=(Interpolation('World', 'name', None, ''), Interpolation(3.14159, 'n', None, '.2f'), Interpolation('World', 'name', 'r', '')))
+('Hello ', '! pi=', ' r=', '') ('World', 3.14159, 'World')
+['Hello ', Interpolation('World', 'name', None, ''), '! pi=', Interpolation(3.14159, 'n', None, '.2f'), ' r=', Interpolation('World', 'name', 'r', '')]
+Template(strings=('',), interpolations=()) Template(strings=('', ''), interpolations=(Interpolation('World', 'name', None, ''),)) Template(strings=('a', ''), interpolations=(Interpolation(3.14159, 'n', None, ''),))
+Template Interpolation name .2f r
+Interpolation(5, 'x', None, '') Template(strings=('a', 'b'), interpolations=(Interpolation(5, 'x', None, ''),))
+can only concatenate str (not "string.templatelib.Template") to str
+World name
+Hello World! pi=3.14 r='World'
+Template(strings=('', ''), interpolations=(Interpolation('World', 'name', None, '>8'),)) abcde Hello Big World 32

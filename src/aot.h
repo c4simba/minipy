@@ -6,7 +6,7 @@
 /* ========================= Typed ahead-of-time compiler =========================
    minipy --compile [options] file.mpy
 
-   source --(lexer, frontparser)--> AST of the entry module and, transitively,
+   source --(py_parse, py_front)--> AST of the entry module and, transitively,
    of every module it imports --(aot_types.c)--> every name, parameter, return
    value, field and element gets one static type (annotated or inferred) --
    (aot_codegen.c)--> one fasm listing for i386 --(fasm)--> a standalone
@@ -34,7 +34,6 @@ typedef struct AotUnit {
     char *name;      /* dotted module name; "__main__" for the entry script */
     char *path;      /* source file; NULL for an implicit namespace package */
     char *src;
-    TokVec tv;
     Ast *ast;
 } AotUnit;
 

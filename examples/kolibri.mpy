@@ -66,7 +66,7 @@ def _ascii(s: str) -> bool:
 
 def _cbuf(s: str) -> buffer:
     """A buffer holding s and a 0 byte: an ASCIIZ string to point at."""
-    b = sys.buffer(len(s) + 1)
+    b = sys.buffer(len(s.encode()) + 1)
     sys.poke_str(b, 0, s)
     return b
 
@@ -247,7 +247,7 @@ def invert_pixel(x: int, y: int) -> None:
 
 def draw_text(x: int, y: int, text: str, color: int) -> None:
     """fn 4: ebx = x<<16|y, ecx = colour, edx = string, esi = length (6x9 cp866 font)."""
-    sys.syscall(4, _pk(x, y), color & 0xFFFFFF, text, len(text))
+    sys.syscall(4, _pk(x, y), color & 0xFFFFFF, text, len(text.encode()))
 
 FONT_6X9 = 0           # cp866
 FONT_8X16 = 1          # cp866
@@ -1183,7 +1183,7 @@ def clipboard_get_text(slot: int = -1) -> str:
 
 def clipboard_put_text(text: str, encoding: int = 0) -> bool:
     """fn 54.2: a new slot with a text container (encoding CLIP_UTF8/CP866/CP1251)."""
-    size = 12 + len(text)
+    size = 12 + len(text.encode())
     b = sys.buffer(size + 1)
     sys.poke(b, 0, size, 4)
     sys.poke(b, 4, CLIP_TEXT, 4)
@@ -1215,7 +1215,7 @@ def set_ipc_area(area: buffer) -> None:
 
 def ipc_send(pid: int, message: str) -> int:
     """fn 60.2: 0 sent, 1 no area, 2 area locked, 3 area full, 4 no such process."""
-    return _s32(sys.syscall(60, 2, pid, message, len(message))[0])
+    return _s32(sys.syscall(60, 2, pid, message, len(message.encode()))[0])
 
 def ipc_receive(area: buffer) -> list[tuple[int, str]]:
     """The messages in the area as (sender pid, data), and the area emptied."""
@@ -1374,7 +1374,7 @@ def _fs(sub: int, a4: int, a8: int, size: int, ptr: int, path: str) -> list[int]
     """The information block of fn 70 (path inside it, at +20) or fn 80
     (UTF-8 path pointed to from +24) -> the registers."""
     if _ascii(path):
-        info = sys.buffer(21 + len(path) + 1)
+        info = sys.buffer(21 + len(path.encode()) + 1)
         sys.poke(info, 0, sub, 4)
         sys.poke(info, 4, a4, 4)
         sys.poke(info, 8, a8, 4)
@@ -1461,7 +1461,7 @@ def read_into(path: str, offset: int, out: buffer, size: int) -> tuple[int, int]
 def write_file(path: str, text: str) -> int:
     """fn 70.2: create or rewrite the file; the status."""
     data = _cbuf(text)
-    return _s32(_fs(2, 0, 0, len(text), sys.addr(data), path)[0])
+    return _s32(_fs(2, 0, 0, len(text.encode()), sys.addr(data), path)[0])
 
 def write_buffer(path: str, data: buffer, size: int) -> int:
     return _s32(_fs(2, 0, 0, size, sys.addr(data), path)[0])
@@ -1469,7 +1469,7 @@ def write_buffer(path: str, data: buffer, size: int) -> int:
 def write_at(path: str, offset: int, text: str) -> int:
     """fn 70.3: write into an existing file at offset; the status."""
     data = _cbuf(text)
-    return _s32(_fs(3, offset, 0, len(text), sys.addr(data), path)[0])
+    return _s32(_fs(3, offset, 0, len(text.encode()), sys.addr(data), path)[0])
 
 def append_file(path: str, text: str) -> int:
     n = file_size(path)
@@ -1764,7 +1764,7 @@ def socket_accept(sock: int, addr: buffer) -> tuple[int, int]:
     return _sock(sys.syscall(75, 5, sock, addr, 16))
 
 def socket_send(sock: int, data: str, flags: int = 0) -> tuple[int, int]:
-    return _sock(sys.syscall(75, 6, sock, data, len(data), flags))   # fn 75.6: bytes sent
+    return _sock(sys.syscall(75, 6, sock, data, len(data.encode()), flags))   # fn 75.6: bytes sent
 
 def socket_send_buffer(sock: int, data: buffer, size: int, flags: int = 0) -> tuple[int, int]:
     return _sock(sys.syscall(75, 6, sock, data, size, flags))
@@ -1837,4 +1837,4 @@ def pipe_read_str(handle: int, size: int) -> str:
     return sys.peek_str(b, 0, n)
 
 def pipe_write(handle: int, data: str) -> int:
-    return _s32(sys.syscall(77, 11, handle, data, len(data))[0])   # fn 77.11
+    return _s32(sys.syscall(77, 11, handle, data, len(data.encode()))[0])   # fn 77.11

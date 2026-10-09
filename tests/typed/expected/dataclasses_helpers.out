@@ -1,0 +1,7 @@
+{'id': 7, 'items': [{'name': 'a', 'qty': 2}, {'name': 'b', 'qty': 1}], 'note': None, 'meta': {'x': 1}, 'best': {'name': 'a', 'qty': 2}}
+(7, [('a', 2), ('b', 1)], None, {'x': 1}, ('a', 2))
+{'name': 'z', 'qty': 1} ('z', 3)
+8 n True False
+Item(name='m', qty=9) True False True
+{"name": "j", "qty": 4}
+7 2

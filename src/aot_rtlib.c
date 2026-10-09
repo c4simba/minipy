@@ -10,7 +10,7 @@ static const char rtlib_text[] =
 ;
 
 typedef enum { RB_CODE, RB_DATA, RB_BSS } RtKind;
-typedef struct { RtKind kind; char name[48]; int target; /* -1 any */ char deps[8][48]; int ndeps; const char *text; size_t len; } RtBlock;
+typedef struct { RtKind kind; char name[48]; int target; /* -1 any */ char deps[16][48]; int ndeps; const char *text; size_t len; } RtBlock;
 
 struct AotRt {
     AotTarget target;
@@ -38,7 +38,7 @@ static void rt_parse(AotRt *rt){
                 char *w=q; while(*q && *q!=' ' && *q!='\t' && *q!='\r') q++;
                 if(*q) *q++=0;
                 if(!strcmp(w,":")){ deps=1; continue; }
-                if(deps){ if(cur->ndeps<8) snprintf(cur->deps[cur->ndeps++],48,"%s",w); continue; }
+                if(deps){ if(cur->ndeps<16) snprintf(cur->deps[cur->ndeps++],48,"%s",w); continue; }
                 if(field==0) cur->kind=!strcmp(w,"data")?RB_DATA:!strcmp(w,"bss")?RB_BSS:RB_CODE;
                 else if(field==1) snprintf(cur->name,48,"%s",w);
                 else if(parse_target(w)>=-1) cur->target=parse_target(w);

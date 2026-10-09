@@ -1,0 +1,4 @@
+square(shape) with area 9.0 7
+Can't instantiate abstract class Shape without an implementation for abstract methods 'area', 'name'
+Can't instantiate abstract class Half without an implementation for abstract method 'name'
+5.0 True

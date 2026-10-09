@@ -56,6 +56,14 @@ try:
 except Exception:
     print("a deleted")
 
-# --- multiple with-items (this runtime binds the expression directly) ---
-with 100 as a, 200 as b, 300 as c:
+# --- multiple with-items ---
+class Val:
+    def __init__(self, v):
+        self.v = v
+    def __enter__(self):
+        return self.v
+    def __exit__(self, *exc):
+        return False
+
+with Val(100) as a, Val(200) as b, Val(300) as c:
     print(a + b + c)
