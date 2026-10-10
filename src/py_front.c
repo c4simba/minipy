@@ -21,6 +21,13 @@ MPY_NORETURN static void fail(Cv *c, int line, const char *fmt, ...){
     longjmp(c->jb,1);
 }
 
+/* sys._compiled (1), not sys._compiled (-1), else 0 */
+static int compiled_test(PyNode *t){
+    int neg=0;
+    if(t->kind==PK_UnaryOp && t->op==OP_Not){ neg=1; t=t->n[0]; }
+    if(t->kind==PK_Attribute && !strcmp(t->id[0],"_compiled") && t->n[0]->kind==PK_Name && !strcmp(t->n[0]->id[0],"sys")) return neg?-1:1;
+    return 0;
+}
 static Expr *enew(ExprKind k, int line){ Expr *e=MPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
 static void push(Expr ***arr, int *cnt, int *cap, Expr *v){
     if(*cnt==*cap){ *cap=*cap?*cap*2:4; *arr=(Expr**)xrealloc(*arr,sizeof(Expr*)*(size_t)*cap); }
@@ -132,7 +139,7 @@ static Expr *fstring(Cv *c, PyNode *n){
         if(!emitted || lit.n>0) FLUSH();
         Expr *x=ex(c,v->n[0]);
         int conv=v->op;                                     /* -1, 's', 'r', 'a' */
-        if(conv=='r' || conv=='a') x=call1("repr",x,line);
+        if(conv=='r' || conv=='a') x=call1(conv=='r' ? "\001repr" : "\001ascii",x,line);  /* (\001: the builtin, whatever the module calls repr / str) */
         if(v->n[1]){                                        /* a format spec */
             Buf sp={0}; bput(&sp,"",0); Expr *nested[2]; int nn=0;
             for(int j=0;j<v->n[1]->L[0].n;j++){ PyNode *q=v->n[1]->L[0].v[j];
@@ -155,7 +162,7 @@ static Expr *fstring(Cv *c, PyNode *n){
             for(int k=0;k<nn;k++) item(f,nested[k]);            /* the {w} / {p} of the spec, in order */
             Expr *m=enew(EXPR_BINARY,line); m->op=T_PERCENT; m->a=f; m->b=x;
             ADD(m);
-        } else ADD(conv=='r'||conv=='a' ? x : call1("str",x,line));
+        } else ADD(conv=='r'||conv=='a' ? x : call1("\001str",x,line));
         emitted=1;
     }
     if(!emitted || lit.n>0) FLUSH();
@@ -233,8 +240,7 @@ static Expr *ex(Cv *c, PyNode *n){
             if(!op) fail(c,line,"the @ operator is not supported in compiled code");
             Expr *e=enew(EXPR_BINARY,line); e->op=(TokKind)op; e->a=ex(c,n->n[0]); e->b=ex(c,n->n[1]); return e; }
         case PK_UnaryOp:{
-            if(n->op==OP_UAdd) return ex(c,n->n[0]);
-            Expr *e=enew(EXPR_UNARY,line); e->op= n->op==OP_USub?T_MINUS : n->op==OP_Invert?T_TILDE : T_NOT; e->a=ex(c,n->n[0]); return e; }
+            Expr *e=enew(EXPR_UNARY,line); e->op= n->op==OP_UAdd?T_PLUS : n->op==OP_USub?T_MINUS : n->op==OP_Invert?T_TILDE : T_NOT; e->a=ex(c,n->n[0]); return e; }
         case PK_BoolOp:{
             Expr *a=ex(c,n->L[0].v[0]);
             for(int i=1;i<n->L[0].n;i++){ Expr *e=enew(EXPR_BOOL,line); e->op= n->op==OP_And?T_AND:T_OR; e->a=a; e->b=ex(c,n->L[0].v[i]); a=e; }
@@ -381,7 +387,13 @@ static Stmt *klass(Cv *c, PyNode *n){
         if(b->kind==PK_Name && (!strcmp(b->id[0],"Generic")||!strcmp(b->id[0],"Protocol")||!strcmp(b->id[0],"object"))) continue;
         char *bn;
         if(b->kind==PK_Name) bn=xstrdup2(b->id[0]);
-        else if(b->kind==PK_Attribute && b->n[0]->kind==PK_Name){ size_t l=strlen(b->n[0]->id[0])+strlen(b->id[0])+2; bn=(char*)xmalloc(l); snprintf(bn,l,"%s.%s",b->n[0]->id[0],b->id[0]); }   /* module.Base */
+        else if(b->kind==PK_Attribute){                                  /* module.Base, package.module.Base */
+            char buf[512]; buf[0]=0; PyNode *x=b; const char *parts[16]; int np=0;
+            while(x->kind==PK_Attribute && np<16){ parts[np++]=x->id[0]; x=x->n[0]; }
+            if(x->kind!=PK_Name || np==16) fail(c,b->line,"the base class must be a name in compiled code");
+            snprintf(buf,sizeof buf,"%s",x->id[0]);
+            for(int k=np-1;k>=0;k--){ size_t l=strlen(buf); snprintf(buf+l,sizeof buf-l,".%s",parts[k]); }
+            bn=xstrdup2(buf); }
         else fail(c,b->line,"the base class must be a name in compiled code");
         if(!nb++) s->name2=bn;
         name_add_unique(&s->params,&s->param_count,&s->param_cap,bn); }   /* (all of them: several bases) */
@@ -458,7 +470,11 @@ static void stmt(Cv *c, PyNode *n, Stmt *into, int orelse){
             block(c,&n->L[0],s,0); block(c,&n->L[1],s,1);
             OUT(s); return; }
         case PK_While:{ Stmt *s=snew(STMT_WHILE,NULL,n); s->expr=ex(c,n->n[0]); block(c,&n->L[0],s,0); block(c,&n->L[1],s,1); OUT(s); return; }
-        case PK_If:{ Stmt *s=snew(STMT_IF,NULL,n); s->expr=ex(c,n->n[0]); block(c,&n->L[0],s,0); block(c,&n->L[1],s,1); OUT(s); return; }
+        case PK_If:{ Stmt *s=snew(STMT_IF,NULL,n); s->expr=ex(c,n->n[0]);
+            int ct=compiled_test(n->n[0]);                  /* if not sys._compiled: the interpreter's part (not made: may hold what compiled code has not) */
+            if(ct>=0) block(c,&n->L[0],s,0);
+            if(ct<=0) block(c,&n->L[1],s,1);
+            OUT(s); return; }
         case PK_With: case PK_AsyncWith:{
             Stmt *s=snew(STMT_WITH,NULL,n); s->is_async=n->kind==PK_AsyncWith;
             s->withas=MPY_NEW_ARR(char*,n->L[3].n>0?n->L[3].n:1); s->withtgt=MPY_NEW_ARR(Expr*,n->L[3].n>0?n->L[3].n:1);
@@ -560,9 +576,9 @@ Expr *py_front_expr(const char *path, const char *text, int line){
     PyParse pp;
     (void)line;
     if(py_parse(&pp,path,src,n+3) || pp.mod->L[0].n!=1 || pp.mod->L[0].v[0]->kind!=PK_Expr){ free(src); return NULL; }
-    free(src);
-    if(setjmp(c.jb)) return NULL;
+    if(setjmp(c.jb)){ free(src); return NULL; }
     Expr *e=ann(&c,pp.mod->L[0].v[0]->n[0]);
+    (void)src;                                   /* (kept: the tree's text points into it) */
     return e;
 }
 Stmt *py_front_stmts(const char *path, const char *src, int line){

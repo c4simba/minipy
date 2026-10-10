@@ -1,0 +1,20 @@
+UserWarning plain stdlib_warnings.mpy 21 None
+UserWarning plain stdlib_warnings.mpy 22 None
+UserWarning in a loop stdlib_warnings.mpy 24 None
+AppWarning custom stdlib_warnings.mpy 25 None
+AppWarning an instance stdlib_warnings.mpy 26 None
+RuntimeWarning runtime stdlib_warnings.mpy 27 None
+DeprecationWarning old_api is deprecated stdlib_warnings.mpy 17 None
+UserWarning always shown stdlib_warnings.mpy 34 None
+UserWarning always shown stdlib_warnings.mpy 34 None
+UserWarning not ignored stdlib_warnings.mpy 37 None
+UserWarning quiet one stdlib_warnings.mpy 44 None
+RuntimeWarning once stdlib_warnings.mpy 46 None
+raised AppWarning now an error
+raised UserWarning('strict')
+ValueError: invalid action: 'bogus'
+f.py:3: UserWarning: text
+  x = 1
+f.py:3: DeprecationWarning: text
+True
+fake.py:7: UserWarning: to stderr

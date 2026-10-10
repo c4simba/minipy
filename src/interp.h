@@ -39,7 +39,8 @@ struct Obj { Type *type; Obj *gcnext; uint32_t size; uint16_t mark, flags; };
 typedef enum {
     LY_OBJECT, LY_INSTANCE, LY_EXC, LY_TYPE, LY_STR, LY_BYTES, LY_TUPLE, LY_LIST, LY_DICT, LY_SET, LY_RANGE, LY_SLICE,
     LY_FUNC, LY_NATIVE, LY_METHOD, LY_MODULE, LY_CODE, LY_CELL, LY_GEN, LY_PROPERTY, LY_STATICMETHOD, LY_CLASSMETHOD,
-    LY_SUPER, LY_ITER, LY_FILE, LY_BUFFER, LY_COMPLEX, LY_BOX
+    LY_SUPER, LY_ITER, LY_FILE, LY_BUFFER, LY_COMPLEX, LY_BOX, LY_BYTEARRAY,
+    LY_NUM                  /* an instance of a subclass of int or float: NumObj */
 } Layout;
 
 typedef struct StrObj { Obj h; int64_t len, cplen; uint64_t hash; int hashed, ascii; char s[]; } StrObj;   /* UTF-8, NUL-terminated */
@@ -55,12 +56,15 @@ typedef struct RangeObj { Obj h; int64_t start, stop, step; } RangeObj;
 typedef struct SliceObj { Obj h; Value start, stop, step; } SliceObj;
 typedef struct CellObj { Obj h; Value v; } CellObj;
 typedef struct ComplexObj { Obj h; double re, im; } ComplexObj;
-typedef struct BoxObj { Obj h; Value v; } BoxObj;            /* property / staticmethod / classmethod: v; also small wrappers */
+typedef struct BoxObj { Obj h; Value v; } BoxObj;
+typedef struct NumObj { Obj h; Value v; } NumObj;             /* LY_NUM: the int or float value */            /* property / staticmethod / classmethod: v; also small wrappers */
 typedef struct PropertyObj { Obj h; Value get, set, del, doc; } PropertyObj;
 typedef struct InstObj { Obj h; DictObj *dict; } InstObj;
-typedef struct ExcObj { Obj h; DictObj *dict; Value args, cause, context, tb, notes; int suppress; void *tb_frame; } ExcObj;   /* tb: a list of (file, line, name) */
+typedef struct ExcObj { Obj h; DictObj *dict; Value args, cause, context, tb, notes; int suppress; void *tb_frame;
+    Value hint; int show_private; } ExcObj;   /* hint: NameError's "Did you mean" (found where raised); show_private: raised on self */   /* tb: a list of (file, line, name) */
 typedef struct ModuleObj { Obj h; DictObj *dict; StrObj *name; } ModuleObj;
 typedef struct BufferObj { Obj h; unsigned char *data; int64_t len; } BufferObj;
+typedef struct ByteArrayObj { Obj h; unsigned char *data; int64_t len, cap; } ByteArrayObj;
 typedef struct FileObj { Obj h; Value name; char *buf; int64_t len, pos, cap; int mode /* 'r' 'w' 'a' */, closed, binary; } FileObj;
 
 struct Type {
@@ -75,8 +79,11 @@ struct Type {
     int flags;
     /* built-in behaviour: construction (args as a call), iteration */
     Value (*make)(Type *t, int argc, Value *argv, TupleObj *kwnames);
+    Value subs;            /* the classes made with it as a base (a list; __subclasses__()) */
 };
-enum { TF_BUILTIN=1, TF_BASETYPE=2, TF_HEAP=4, TF_DUNDERS=8 /* a class: look its dunders up */, TF_ABSTRACT_DONE=16 };
+enum { TF_BUILTIN=1, TF_BASETYPE=2, TF_HEAP=4, TF_DUNDERS=8 /* a class: look its dunders up */, TF_ABSTRACT_DONE=16,
+       TF_SUBVAL=32 /* a subclass of str, bytes, tuple, list, dict, set, frozenset, int or float: its objects have the
+                       built-in's layout (LY_NUM for the numbers) and an instance dict in their last pointer slot */ };
 
 /* ---------------------------------------------------------------- code, functions */
 enum { CO_VARARGS=1, CO_VARKW=2, CO_GEN=4, CO_CORO=8, CO_ASYNCGEN=16, CO_CLASS=32, CO_MODULE=64, CO_NESTED=128, CO_COMP=256 };
@@ -86,6 +93,8 @@ typedef struct CodeObj {
     const char *file;
     int firstline;
     uint32_t *code; int *lines; int ncode;       /* instruction: opcode | arg<<8 */
+    int *pos;                                    /* per instruction: end line, column, end column (bytes; -1: unknown) */
+    int *anc; int nanc;                          /* traceback carets: (instruction, kind 1 binop / 2 subscript / 3 call, line, col, line2, col2, special col) */
     Value *consts; int nconsts;
     StrObj **names; int nnames;                  /* globals, attributes */
     StrObj **varnames; int nlocals;              /* the parameters first */
@@ -108,6 +117,7 @@ typedef struct FuncObj {
     StrObj *name, *qualname;
     Value doc, module;
     DictObj *dict;                               /* __dict__ (__wrapped__, ...) */
+    int builtin;                                 /* a stdlib function standing for a C one: not bound as a method (time.localtime) */
 } FuncObj;
 typedef Value (*NFn)(int argc, Value *argv, TupleObj *kw);   /* keyword values follow the positional ones; kw: their names */
 typedef struct NativeObj { Obj h; const char *name; NFn fn; Value self; int is_method; } NativeObj;   /* self: bound receiver (V_UNDEF: none) */
@@ -137,7 +147,7 @@ typedef struct GenObj { Obj h; Frame *f; int kind, running; StrObj *name, *qualn
 
 /* ---------------------------------------------------------------- iterators */
 typedef struct IterObj { Obj h; int kind; Value src, aux, aux2; int64_t i, n; } IterObj;
-enum { IT_SEQ, IT_STR, IT_BYTES, IT_RANGE, IT_DICTK, IT_DICTV, IT_DICTI, IT_SET, IT_ENUM, IT_ZIP, IT_MAP, IT_FILTER,
+enum { IT_SEQ, IT_STR, IT_BYTES, IT_BYTEARRAY, IT_RANGE, IT_DICTK, IT_DICTV, IT_DICTI, IT_SET, IT_ENUM, IT_ZIP, IT_MAP, IT_FILTER,
        IT_REVLIST, IT_CALL /* iter(f, sentinel) */, IT_GETITEM /* __getitem__ protocol */, IT_FILE, IT_NATIVE };
 
 /* ---------------------------------------------------------------- per-thread state */
@@ -191,6 +201,13 @@ static inline Type *TYPE(Value v){
     switch(v.k){ case V_OBJ: return v.u.o->type; case V_INT: return T_int; case V_FLOAT: return T_float; case V_BOOL: return T_bool; default: return T_none; }
 }
 static inline int IS(Value v, Type *t){ return v.k==V_OBJ && v.u.o->type==t; }
+static inline int IS_TYPE(Value v){ return v.k==V_OBJ && v.u.o->type->layout==LY_TYPE; }   /* a class (its metaclass type or another) */
+static inline Value mp_unbox(Value v){ return v.k==V_OBJ && v.u.o->type->layout==LY_NUM ? ((NumObj*)v.u.o)->v : v; }   /* an int/float subclass's value */
+static inline int IS_SUBVAL(Value v){ return v.k==V_OBJ && (v.u.o->type->flags&TF_SUBVAL); }
+#define IS_LIST(v)  ((v).k==V_OBJ && (v).u.o->type->layout==LY_LIST)
+#define IS_TUPLE(v) ((v).k==V_OBJ && (v).u.o->type->layout==LY_TUPLE)
+#define IS_DICT(v)  ((v).k==V_OBJ && (v).u.o->type->layout==LY_DICT)
+#define IS_BYTES(v) ((v).k==V_OBJ && (v).u.o->type->layout==LY_BYTES)
 #define AS_STR(v)   ((StrObj*)(v).u.o)
 #define AS_BYTES(v) ((BytesObj*)(v).u.o)
 #define AS_TUPLE(v) ((TupleObj*)(v).u.o)
@@ -292,6 +309,39 @@ Value   mp_native(const char *name, NFn fn);     /* a built-in function */
 Value   mp_new_type(const char *name, Type *base, Layout layout, int flags);
 void    mp_type_add(Type *t, const char *name, NFn fn);       /* a method of a built-in type */
 Value   mp_make_class(Value name, Value bases, DictObj *ns);
+Value   mp_sub_value(Type *t, Value plain);      /* plain (a str, list, int ...) as an object of subclass t */
+DictObj **mp_sub_slot(Obj *o);                   /* the instance dict slot of a TF_SUBVAL object */
+Type   *mp_value_base(Type *t);                  /* the built-in value type (str, list, int ...) t derives from, or NULL */
+Value   mp_builtin_new(int argc, Value *argv, TupleObj *kw);   /* str.__new__(cls, ...) and the others */
+Value   mp_type_lookup_user(Type *t, const char *name);   /* a special method to call (not a built-in type's own) */
+Value mp_reversed_builtin(Value x);               /* (i_builtins.c) reversed() of a built-in sequence */
+int mp_builtin_eq(Value a, Value b);
+Value mp_getattr_generic(Value o, Value name);
+Value mp_exc_suggestion(Value e, int with_frames);  /* (i_eval.c) ". Did you mean: 'x'?" for the exception's last line */
+MPY_NORETURN void mp_raise_attr(Value obj, Value name, const char *fmt, ...);   /* AttributeError with name and obj */    /* (i_eval.c) object.__getattribute__ */
+Value mp_format_exception(Value e);                /* (i_eval.c) a traceback's text */
+Value mp_stack_list(void);
+Value mp_frame_source(const char *file, int line, Value code, int ip);   /* (i_eval.c) a traceback entry's source lines, with carets */
+Value mp_frame_locals(Frame *f);                  /* (i_builtins.c) locals() of a frame */
+Value mp_source_getline(const char *file, int line);   /* (i_eval.c) a line of a file it ran */                        /* (i_eval.c) the running frames, outermost first */
+/* (i_bytearray.c) bytearray */
+extern Type *T_bytearray;
+#define IS_BA(v) ((v).k==V_OBJ && (v).u.o->type->layout==LY_BYTEARRAY)
+int64_t mp_slice_indices(Value sl, int64_t n, int64_t *start, int64_t *stop, int64_t *step);   /* (i_ops.c) */
+Value mp_bytearray(const void *s, int64_t n);
+int   mp_byteslike(Value v, const unsigned char **s, int64_t *n);   /* bytes, bytearray, buffer */
+Value mp_ba_getitem(Value o, Value key);
+void  mp_ba_setitem(Value o, Value key, Value val);
+void  mp_ba_delitem(Value o, Value key);
+int   mp_ba_contains(Value c, Value x);
+Value mp_ba_concat(Value a, Value b);
+Value mp_ba_repeat(Value a, int64_t n);
+void  mp_ba_extend_bytes(Value a, Value b);
+void  mp_ba_repeat_inplace(Value a, int64_t n);
+void  mp_bytearray_init(void);            /* (i_ops.c) == of built-in values, their classes' __eq__ not asked */
+extern Obj *mp_raw_obj;                          /* (i_ops.c) the object a built-in's own dunder works on */
+Value   mp_type_new_m(int argc, Value *argv, TupleObj *kw); Value mp_type_init_m(int argc, Value *argv, TupleObj *kw); Value mp_type_call_m(int argc, Value *argv, TupleObj *kw);
+Value   mp_make_class_kw(Type *meta, Value name, Value bases, DictObj *ns, int nkw, Value *kwv, TupleObj *kwn);   /* with a metaclass; class keywords for __init_subclass__ */
 Value   mp_instance(Type *t);
 Value   mp_gen_send(Value gen, Value v, int *done);      /* done: it returned (value: the return value) */
 Value   mp_gen_throw(Value gen, Value exc, int *done);
@@ -335,7 +385,6 @@ void   mp_flush_stdout(void);
 void   mp_write_out(const char *s, int64_t n);  /* stdout (buffered) */
 void   mp_write_err(const char *s, int64_t n);
 extern const char *mp_main_dir;
-int64_t mp_rand_bits(void);                      /* xorshift32, as compiled programs */
 
 /* builtins (i_builtins.c) */
 void   mp_builtins_init(void);

@@ -1,0 +1,23 @@
+NameError: name 'pritn' is not defined. Did you mean: 'print'?
+NameError: name 'pritn' is not defined
+NameError: name 'countr' is not defined. Did you mean: 'counter'?
+NameError: name 'countr' is not defined
+NameError: name 'local_vlue' is not defined. Did you mean: 'local_value'?
+NameError: name 'local_vlue' is not defined
+NameError: name 'amount' is not defined. Did you mean: 'self.amount'?
+NameError: name 'amount' is not defined
+AttributeError: 'K' object has no attribute '_secrt'. Did you mean: '_secret'?
+AttributeError: 'K' object has no attribute '_secrt'. Did you mean: '_secret'?
+AttributeError: module 'math' has no attribute 'sqroot'. Did you mean: 'sqrt'?
+AttributeError: module 'math' has no attribute 'sqroot'. Did you mean: 'sqrt'?
+NameError: name 'sys' is not defined. Did you forget to import 'sys'?
+NameError: name 'sys' is not defined. Did you forget to import 'sys'?
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+NameError: name 'os' is not defined. Did you forget to import 'os'?
+ImportError: cannot import name 'sqroot' from 'math' True
+'undefined_x'
+'zz' True
+'os' 'nothing_here' cannot import name 'nothing_here' from 'os'
+ModuleNotFoundError 'no_such_mod'
+n 5 ('m',)
+nm

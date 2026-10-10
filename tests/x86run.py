@@ -20,7 +20,27 @@ With tests/run_typed_tests.sh:
     FASM="python3 tests/x86run.py /path/to/linux/fasm" RUN="python3 tests/x86run.py" \\
         sh tests/run_typed_tests.sh                 # TARGET=kolibri for the other target
 """
-import errno, os, struct, sys, time
+import errno, os, select, signal, socket, struct, sys, time
+
+# Linux's error numbers (the emulated program is a Linux one; the host's may differ)
+LINUX_ERRNO = dict(EPERM=1, ENOENT=2, ESRCH=3, EINTR=4, EIO=5, ENXIO=6, E2BIG=7, ENOEXEC=8, EBADF=9, ECHILD=10, EAGAIN=11,
+    ENOMEM=12, EACCES=13, EFAULT=14, ENOTBLK=15, EBUSY=16, EEXIST=17, EXDEV=18, ENODEV=19, ENOTDIR=20, EISDIR=21, EINVAL=22,
+    ENFILE=23, EMFILE=24, ENOTTY=25, ETXTBSY=26, EFBIG=27, ENOSPC=28, ESPIPE=29, EROFS=30, EMLINK=31, EPIPE=32, EDOM=33,
+    ERANGE=34, EDEADLK=35, ENAMETOOLONG=36, ENOLCK=37, ENOSYS=38, ENOTEMPTY=39, ELOOP=40, ENOMSG=42, EOVERFLOW=75, EILSEQ=84,
+    ENOTSOCK=88, EDESTADDRREQ=89, EMSGSIZE=90, EPROTOTYPE=91, ENOPROTOOPT=92, EPROTONOSUPPORT=93, EOPNOTSUPP=95, ENOTSUP=95,
+    EAFNOSUPPORT=97, EADDRINUSE=98, EADDRNOTAVAIL=99, ENETDOWN=100, ENETUNREACH=101, ENETRESET=102, ECONNABORTED=103,
+    ECONNRESET=104, ENOBUFS=105, EISCONN=106, ENOTCONN=107, ESHUTDOWN=108, ETIMEDOUT=110, ECONNREFUSED=111, EHOSTDOWN=112,
+    EHOSTUNREACH=113, EALREADY=114, EINPROGRESS=115, EDQUOT=122, ECANCELED=125)
+def linux_errno(e):
+    return LINUX_ERRNO.get(errno.errorcode.get(e or errno.EIO, 'EIO'), 5)
+
+# Linux's socket constants -> the host's
+LX_SOCKOPT = {(1, 2): (socket.SOL_SOCKET, socket.SO_REUSEADDR), (1, 3): (socket.SOL_SOCKET, socket.SO_TYPE),
+              (1, 4): (socket.SOL_SOCKET, socket.SO_ERROR), (1, 6): (socket.SOL_SOCKET, socket.SO_BROADCAST),
+              (1, 7): (socket.SOL_SOCKET, socket.SO_SNDBUF), (1, 8): (socket.SOL_SOCKET, socket.SO_RCVBUF),
+              (1, 9): (socket.SOL_SOCKET, socket.SO_KEEPALIVE), (1, 13): (socket.SOL_SOCKET, socket.SO_LINGER),
+              (6, 1): (socket.IPPROTO_TCP, socket.TCP_NODELAY), (0, 2): (socket.IPPROTO_IP, socket.IP_TTL)}
+if hasattr(socket, 'SO_REUSEPORT'): LX_SOCKOPT[(1, 15)] = (socket.SOL_SOCKET, socket.SO_REUSEPORT)
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32, UC_HOOK_INTR, UC_PROT_ALL
 from unicorn.x86_const import (UC_X86_REG_FPCW, UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX,
                                UC_X86_REG_ESI, UC_X86_REG_EDI, UC_X86_REG_EBP, UC_X86_REG_ESP, UC_X86_REG_EIP)
@@ -68,15 +88,19 @@ class Emu:
         if dynamic is not None: self.link_dynamic(dynamic)
         self.brk = self.brk_min = top
         self.mmap_next = 0x40000000
+        self.fdpath, self.dirents = {}, {}
         stack_top, stack_size = 0xC0000000, 0x800000
         self.map(stack_top - stack_size, stack_top)
-        sp = stack_top - 0x100                               # argv strings, then argc/argv/envp/auxv
-        ptrs = []
+        sp = stack_top - 0x100                               # argv and environment strings, then argc/argv/envp/auxv
+        ptrs, envs = [], []
         for a in argv:
             b = a.encode() + b'\0'
             sp -= len(b); uc.mem_write(sp, b); ptrs.append(sp)
+        for k, v in sorted(os.environ.items()):
+            b = (k + '=' + v).encode() + b'\0'
+            sp -= len(b); uc.mem_write(sp, b); envs.append(sp)
         sp &= ~15
-        words = [len(argv)] + ptrs + [0, 0, 0, 0]          # argv NULL, envp NULL, AT_NULL
+        words = [len(argv)] + ptrs + [0] + envs + [0, 0, 0]  # argv NULL, envp NULL, AT_NULL
         sp -= 4 * len(words)
         uc.mem_write(sp, struct.pack('<%dI' % len(words), *words))
         uc.reg_write(UC_X86_REG_ESP, sp)
@@ -137,7 +161,7 @@ class Emu:
         except Exit as e:
             self.code = e.code; uc.emu_stop(); return
         except OSError as e:
-            ret = -(e.errno or errno.EIO)
+            ret = -linux_errno(e.errno)
         if self.trace: sys.stderr.write('[sys %d %x %x %x -> %d]\n' % (r[0], r[1], r[2], r[3], ret if ret < 2**31 else ret - 2**32))
         uc.reg_write(UC_X86_REG_EAX, ret & 0xFFFFFFFF)
 
@@ -267,10 +291,16 @@ class Emu:
         if n == 5:                                           # open
             host = {0: os.O_RDONLY, 1: os.O_WRONLY, 2: os.O_RDWR}[c & 3]
             if c & 0o100: host |= os.O_CREAT
+            if c & 0o200: host |= os.O_EXCL
             if c & 0o1000: host |= os.O_TRUNC
             if c & 0o2000: host |= os.O_APPEND
-            return os.open(self.cstr(b), host, d & 0o777)
-        if n == 6: os.close(b); return 0
+            if c & 0o4000: host |= os.O_NONBLOCK
+            if c & 0o200000: host |= os.O_DIRECTORY
+            path = self.cstr(b)
+            fd = os.open(path, host, d & 0o777)
+            self.fdpath[fd] = path; self.dirents.pop(fd, None)
+            return fd
+        if n == 6: os.close(b); self.fdpath.pop(b, None); self.dirents.pop(b, None); return 0
         if n == 10: os.unlink(self.cstr(b)); return 0
         if n == 13:                                          # time
             t = int(time.time())
@@ -303,8 +333,223 @@ class Emu:
             sec, nsec = struct.unpack('<II', bytes(uc.mem_read(b, 8)))
             time.sleep(sec + nsec / 1e9); return 0
         if n in (174, 175): return 0                         # rt_sigaction, rt_sigprocmask
+        r = self.syscall_fs_net(n, b, c, d, si, di, bp)
+        if r is not None: return r
         sys.stderr.write('x86run: unsupported syscall %d\n' % n)
-        return -errno.ENOSYS
+        return -38
+
+    # ---- the calls of the standard library (os, io, socket): on the host's files and sockets
+    def stat64(self, st):
+        return struct.pack('<Q4xIIIII Q4xqIQIIIIIIQ', st.st_dev & (2**64 - 1), st.st_ino & 0xFFFFFFFF, st.st_mode, st.st_nlink,
+                           st.st_uid, st.st_gid, st.st_rdev & (2**64 - 1), st.st_size, st.st_blksize, st.st_blocks,
+                           int(st.st_atime), st.st_atime_ns % 10**9, int(st.st_mtime), st.st_mtime_ns % 10**9,
+                           int(st.st_ctime), st.st_ctime_ns % 10**9, st.st_ino)
+
+    def lx_addr(self, p, n):
+        """A Linux sockaddr in memory -> (family, address) for Python's socket module."""
+        data = self.rd(p, n)
+        fam = struct.unpack_from('<H', data)[0]
+        if fam == 2: return socket.AF_INET, (socket.inet_ntoa(data[4:8]), struct.unpack_from('>H', data, 2)[0])
+        if fam == 1: return socket.AF_UNIX, data[2:].split(b'\0')[0].decode()
+        if fam == 10: return socket.AF_INET6, (socket.inet_ntop(socket.AF_INET6, data[8:24]), struct.unpack_from('>H', data, 2)[0])
+        raise OSError(errno.EAFNOSUPPORT, 'family')
+
+    def put_addr(self, fam, addr, p, lenp):
+        if not p: return
+        if fam == socket.AF_INET: data = struct.pack('<H', 2) + struct.pack('>H', addr[1]) + socket.inet_aton(addr[0]) + bytes(8)
+        elif fam == socket.AF_INET6: data = struct.pack('<H', 10) + struct.pack('>H', addr[1]) + bytes(4) + socket.inet_pton(socket.AF_INET6, addr[0]) + bytes(4)
+        else: data = struct.pack('<H', 1) + (addr.encode() if isinstance(addr, str) else b'') + b'\0'
+        cap = self.rd32(lenp)
+        self.wr(p, data[:cap]); self.wr32(lenp, len(data))
+
+    def sock(self, fd):
+        return socket.socket(fileno=fd)
+
+    def syscall_fs_net(self, n, b, c, d, si, di, bp):
+        s32 = lambda x: x - 2**32 if x >= 2**31 else x
+        if n == 9: os.link(self.cstr(b), self.cstr(c)); return 0
+        if n == 12: os.chdir(self.cstr(b)); return 0
+        if n == 15: os.chmod(self.cstr(b), c); return 0
+        if n == 33: return 0 if os.access(self.cstr(b), c) else -13
+        if n == 38: os.rename(self.cstr(b), self.cstr(c)); return 0
+        if n == 39: os.mkdir(self.cstr(b), c); return 0
+        if n == 40: os.rmdir(self.cstr(b)); return 0
+        if n == 41: return os.dup(b)
+        if n == 42: r, w = os.pipe(); os.set_inheritable(r, True); os.set_inheritable(w, True); self.wr32(b, r, w); return 0
+        if n == 331:                                                 # pipe2
+            r, w = os.pipe()
+            for fd in (r, w):
+                os.set_inheritable(fd, not (c & 0x80000))
+                if c & 0x800: os.set_blocking(fd, False)
+            self.wr32(b, r, w); return 0
+        if n in (2, 190):                                            # fork, vfork: the emulator's process
+            sys.stdout.flush(); sys.stderr.flush()
+            return os.fork()
+        if n == 11:                                                  # execve: the host's program
+            def strings(addr):
+                out = []
+                while addr:
+                    p = struct.unpack('<I', bytes(self.uc.mem_read(addr, 4)))[0]
+                    if not p: break
+                    out.append(self.cstr(p)); addr += 4
+                return out
+            env = dict(e.split('=', 1) for e in strings(d) if '=' in e)
+            try: os.execve(self.cstr(b), strings(c), env)
+            except OSError as e: return -e.errno
+        if n in (7, 114):                                            # waitpid, wait4
+            try: pid, st = os.waitpid(b - 2**32 if b >= 2**31 else b, os.WNOHANG if d & 1 else 0)
+            except ChildProcessError: return -errno.ECHILD
+            if pid and c:
+                if os.WIFEXITED(st): ls = os.WEXITSTATUS(st) << 8
+                elif os.WIFSIGNALED(st): ls = {signal.SIGKILL: 9, signal.SIGTERM: 15, signal.SIGINT: 2}.get(os.WTERMSIG(st), os.WTERMSIG(st))
+                else: ls = st
+                self.uc.mem_write(c, struct.pack('<I', ls))
+            return pid
+        if n == 37:                                                  # kill
+            try: os.kill(b - 2**32 if b >= 2**31 else b, {9: signal.SIGKILL, 15: signal.SIGTERM, 2: signal.SIGINT}.get(c, c)); return 0
+            except OSError as e: return -e.errno
+        if n == 54:
+            if c == 0x5401: return 0 if os.isatty(b) else -25        # TCGETS
+            if c == 0x5413:                                          # TIOCGWINSZ
+                cols, lines = os.get_terminal_size(b); self.wr(d, struct.pack('<HHHH', lines, cols, 0, 0)); return 0
+            return -25
+        if n == 63: return os.dup2(b, c)
+        if n == 64: return 4241
+        if n == 83: os.symlink(self.cstr(b), self.cstr(c)); return 0
+        if n == 60: return os.umask(b & 0o777)
+        if n == 271:                                                 # utimes
+            if not c: os.utime(self.cstr(b)); return 0
+            a_s, a_us, m_s, m_us = struct.unpack('<iiii', self.rd(c, 16))
+            os.utime(self.cstr(b), ns=(a_s * 10**9 + a_us * 1000, m_s * 10**9 + m_us * 1000)); return 0
+        if n == 320:                                                 # utimensat (from the current folder)
+            path = self.cstr(c)
+            if not d: os.utime(path, follow_symlinks=not (si & 0x100)); return 0
+            a_s, a_ns, m_s, m_ns = struct.unpack('<iiii', self.rd(d, 16))
+            st = os.stat(path, follow_symlinks=not (si & 0x100)); now = time.time_ns()
+            pick = lambda s_, ns_, old: now if ns_ == 0x3FFFFFFF else old if ns_ == 0x3FFFFFFE else s_ * 10**9 + ns_
+            os.utime(path, ns=(pick(a_s, a_ns, st.st_atime_ns), pick(m_s, m_ns, st.st_mtime_ns)), follow_symlinks=not (si & 0x100)); return 0
+        if n == 85:
+            data = os.readlink(self.cstr(b)).encode()[:d]; self.wr(c, data); return len(data)
+        if n == 92: os.truncate(self.cstr(b), s32(c)); return 0
+        if n == 93: os.ftruncate(b, s32(c)); return 0
+        if n == 94: os.fchmod(b, c); return 0
+        if n in (118, 148): os.fsync(b); return 0
+        if n == 122:
+            u = os.uname()
+            self.wr(b, b''.join(x.encode()[:64].ljust(65, b'\0') for x in (u.sysname, u.nodename, u.release, u.version, u.machine)) + bytes(65)); return 0
+        if n == 140:                                                 # _llseek
+            off = os.lseek(b, (c << 32) | d if c < 2**31 else ((c - 2**32) << 32) | d, di)
+            self.wr(si, struct.pack('<q', off)); return 0
+        if n == 168:                                                 # poll
+            fds = [struct.unpack_from('<ihh', self.rd(b + 8 * i, 8)) for i in range(c)]
+            p = select.poll()
+            for fd, ev, _ in fds:
+                if fd >= 0: p.register(fd, ev)
+            got = dict(p.poll(None if s32(d) < 0 else s32(d)))
+            for i, (fd, ev, _) in enumerate(fds): self.wr(b + 8 * i, struct.pack('<ihh', fd, ev, got.get(fd, 0)))
+            return len(got)
+        if n == 183:
+            cwd = os.getcwd().encode() + b'\0'
+            if len(cwd) > c: return -34
+            self.wr(b, cwd); return len(cwd)
+        if n == 193: os.truncate(self.cstr(b), c | (d << 32)); return 0
+        if n == 194: os.ftruncate(b, c | (d << 32)); return 0
+        if n in (195, 196, 197):                                     # stat64, lstat64, fstat64
+            st = os.stat(self.cstr(b)) if n == 195 else os.lstat(self.cstr(b)) if n == 196 else os.fstat(b)
+            self.wr(c, self.stat64(st)); return 0
+        if n in (199, 200, 201, 202): return 1000
+        if n == 220:                                                 # getdents64
+            if b not in self.dirents:
+                self.dirents[b] = ['.', '..'] + sorted(os.listdir(self.fdpath[b]))
+            names = self.dirents[b]
+            out = b''
+            while names:
+                name = names[0].encode()
+                reclen = (19 + len(name) + 1 + 7) & ~7
+                if len(out) + reclen > d: break
+                full = os.path.join(self.fdpath[b], names[0])
+                kind = 4 if os.path.isdir(full) and not os.path.islink(full) else 10 if os.path.islink(full) else 8
+                out += struct.pack('<QqHB', 0, len(out) + reclen, reclen, kind) + name + bytes(reclen - 19 - len(name))
+                names.pop(0)
+            if names and not out: return -22
+            self.wr(c, out); return len(out)
+        if n == 221:                                                 # fcntl64
+            import fcntl
+            if c == 3: fl = fcntl.fcntl(b, fcntl.F_GETFL); return (fl & 3) | (0x400 if fl & os.O_APPEND else 0) | (0x800 if fl & os.O_NONBLOCK else 0)
+            if c == 4:
+                fl = fcntl.fcntl(b, fcntl.F_GETFL) & ~(os.O_APPEND | os.O_NONBLOCK)
+                fcntl.fcntl(b, fcntl.F_SETFL, fl | (os.O_APPEND if d & 0x400 else 0) | (os.O_NONBLOCK if d & 0x800 else 0)); return 0
+            if c in (1, 2): return 0
+            return -22
+        if n == 265:                                                 # clock_gettime
+            t = time.monotonic() if b == 1 else time.time()
+            self.wr(c, struct.pack('<II', int(t), int((t % 1) * 1e9))); return 0
+        if n == 355: self.wr(b, os.urandom(c)); return c            # getrandom
+        # sockets: real ones of the host, by their descriptors
+        if n == 360:                                                 # socketpair
+            fam = {2: socket.AF_INET, 1: socket.AF_UNIX}.get(b)
+            if fam is None: return -97
+            x, y = socket.socketpair(fam, c & 0xF, d)
+            self.wr(si, struct.pack('<ii', x.detach(), y.detach())); return 0
+        if n == 359:
+            fam = {2: socket.AF_INET, 10: socket.AF_INET6, 1: socket.AF_UNIX}.get(b)
+            if fam is None: return -97
+            s = socket.socket(fam, c & 0xF, d)
+            if c & 0x800: s.setblocking(False)
+            return s.detach()
+        if n in (361, 362):
+            fam, addr = self.lx_addr(c, d); s = self.sock(b)
+            try:
+                if n == 361: s.bind(addr)
+                else: s.connect(addr)
+            except BlockingIOError: return -115
+            finally: s.detach()
+            return 0
+        if n == 363: s = self.sock(b); s.listen(c); s.detach(); return 0
+        if n == 364:
+            s = self.sock(b)
+            try: conn, addr = s.accept()
+            finally: s.detach()
+            if si & 0x800: conn.setblocking(False)
+            self.put_addr(conn.family, addr, c, d)
+            return conn.detach()
+        if n in (365, 366):
+            lvl, opt = LX_SOCKOPT.get((c, d), (None, None))
+            if lvl is None: return -92
+            s = self.sock(b)
+            try:
+                if n == 366:
+                    if (c, d) == (1, 13): s.setsockopt(lvl, opt, struct.pack('ii', *struct.unpack('<ii', self.rd(si, 8))))
+                    else: s.setsockopt(lvl, opt, struct.unpack('<i', self.rd(si, 4))[0])
+                    return 0
+                v = s.getsockopt(lvl, opt)
+                if (c, d) == (1, 4) and v: v = linux_errno(v)
+                if (c, d) == (1, 3): v = {socket.SOCK_STREAM: 1, socket.SOCK_DGRAM: 2}.get(v, v)
+                self.wr(si, struct.pack('<i', v)); self.wr32(di, 4); return 0
+            finally: s.detach()
+        if n in (367, 368):
+            s = self.sock(b)
+            try: addr = s.getsockname() if n == 367 else s.getpeername()
+            finally: s.detach()
+            self.put_addr(s.family, addr, c, d); return 0
+        if n == 369:                                                 # sendto
+            s = self.sock(b); data = self.rd(c, d)
+            fl = (socket.MSG_DONTWAIT if si & 0x40 else 0) | (socket.MSG_PEEK if si & 2 else 0)
+            try:
+                if di: return s.sendto(data, fl, self.lx_addr(di, bp)[1])
+                return s.send(data, fl)
+            finally: s.detach()
+        if n == 371:                                                 # recvfrom
+            s = self.sock(b)
+            fl = (socket.MSG_DONTWAIT if si & 0x40 else 0) | (socket.MSG_PEEK if si & 2 else 0) | (socket.MSG_WAITALL if si & 0x100 else 0)
+            try: data, addr = s.recvfrom(d, fl)
+            finally: s.detach()
+            self.wr(c, data)
+            if di and addr: self.put_addr(s.family, addr, di, bp)
+            elif bp: self.wr32(bp, 0)
+            return len(data)
+        if n == 373: s = self.sock(b); s.shutdown(c); s.detach(); return 0
+        return None
 
     # ---- KolibriOS (int 0x40): the functions the runtime uses, the shell console,
     # and a small deterministic KolibriOS behind examples/kolibri.mpy (written from
@@ -347,6 +592,7 @@ class Emu:
         self.futexes = {}
         self.pipe = b''
         self.sockets = 2
+        self.ksocks = {}                                     # socket number -> [pending log line, type, real host socket or None]
         self.tmp0 = None
 
     def rd(self, addr, n): return bytes(self.uc.mem_read(addr, n)) if n else b''
@@ -387,7 +633,10 @@ class Emu:
                     if data is None: os.makedirs(p, exist_ok=True)
                     else:
                         with open(p, 'wb') as fh: fh.write(data)
-            return self.tmp0 + path[len(self.TMP0):]
+            rest = path[len(self.TMP0):]
+            if rest.lower() == '/build' or rest.lower().startswith('/build/'):     # the typed tests' relative build/...: made when used
+                os.makedirs(self.tmp0 + '/build', exist_ok=True)
+            return self.tmp0 + rest
         return path
 
     def kalloc(self, size, data=None):
@@ -711,7 +960,18 @@ class Emu:
         if a == 75:
             sub = b & 255
             sa = lambda p: '%d.%d.%d.%d:%d' % (tuple(self.rd(p + 4, 4)) + (struct.unpack('>H', self.rd(p + 2, 2))[0],))
-            if sub == 0: self.sockets += 1; log('socket %d: domain %d type %d protocol %d' % (self.sockets, c, d, si)); return self.regs(self.sockets, ebx=0)
+            if sub == 0:                                     # (logged when it turns out to be a pretend one)
+                self.sockets += 1; self.ksocks[self.sockets] = ['socket %d: domain %d type %d protocol %d' % (self.sockets, c, d, si), d, None]
+                return self.regs(self.sockets, ebx=0)
+            k = self.ksocks.get(c)
+            if k is not None and k[2] is None and sub in (2, 4):     # bound / connected to this machine: a real socket of the host
+                ip = bytes(self.rd(d + 4, 4))
+                if ip[0] == 127 or (sub == 2 and ip == bytes(4)):
+                    k[2] = socket.socket(socket.AF_INET, socket.SOCK_STREAM if k[1] == 1 else socket.SOCK_DGRAM)
+                    k[2].setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if k is not None and k[2] is not None: return self.ksock_real(sub, k, c, d, si, di)
+            if k is not None and k[0] and sub in (8, 9): return self.regs(0, ebx=0)    # (not known yet what it is for)
+            if k is not None and k[0]: log(k[0]); k[0] = None
             if sub == 1: log('socket %d closed' % c); return self.regs(0, ebx=0)
             if sub in (2, 4): log('socket %d %s %s' % (c, 'bound to' if sub == 2 else 'connected to', sa(d))); return self.regs(0, ebx=0)
             if sub == 3: log('socket %d listens, backlog %d' % (c, d)); return self.regs(0, ebx=0)
@@ -759,6 +1019,34 @@ class Emu:
                 data, self.pipe = self.pipe[:si], self.pipe[si:]; self.wr(d, data); return len(data)
         return False
 
+    KSOCK_ERR = {errno.ECONNREFUSED: 61, errno.ECONNRESET: 52, errno.ETIMEDOUT: 60, errno.EADDRINUSE: 20, errno.EAGAIN: 6,
+                 errno.ENOTCONN: 9, errno.EINPROGRESS: 2, errno.EALREADY: 10, errno.EISCONN: 56, errno.ECONNABORTED: 53,
+                 errno.EMSGSIZE: 12, errno.ENOBUFS: 1, errno.ENOMEM: 18, errno.EPIPE: 52}
+
+    def ksock_real(self, sub, k, c, d, si, di):
+        """fn 75 on a real socket of the host (its error codes: KolibriOS's)."""
+        s = k[2]
+        addr = lambda p: (socket.inet_ntoa(self.rd(p + 4, 4)), struct.unpack('>H', self.rd(p + 2, 2))[0])
+        try:
+            if sub == 1: s.close(); del self.ksocks[c]; return self.regs(0, ebx=0)
+            if sub == 2: s.bind(addr(d)); return self.regs(0, ebx=0)
+            if sub == 3: s.listen(d); return self.regs(0, ebx=0)
+            if sub == 4: s.connect(addr(d)); return self.regs(0, ebx=0)
+            if sub == 5:
+                conn, peer = s.accept()
+                self.wr(d, struct.pack('<H', 2) + struct.pack('>H', peer[1]) + socket.inet_aton(peer[0]) + bytes(8))
+                self.sockets += 1; self.ksocks[self.sockets] = [None, k[1], conn]
+                return self.regs(self.sockets, ebx=0)
+            if sub == 6: return self.regs(s.send(self.rd(d, si)), ebx=0)
+            if sub == 7:
+                flags = socket.MSG_DONTWAIT if di & 0x40 else 0
+                if di & 2: flags |= socket.MSG_PEEK
+                data = s.recv(si, flags); self.wr(d, data); return self.regs(len(data), ebx=0)
+            if sub in (8, 9): return self.regs(0, ebx=0)
+        except OSError as e:
+            return self.regs(0xFFFFFFFF, ebx=self.KSOCK_ERR.get(e.errno, 11))
+        return self.regs(0xFFFFFFFF, ebx=11)
+
     def f70(self, info, enc80=False):
         """File system functions 70 and 80 on host files (see host_path)."""
         uc = self.uc
@@ -766,6 +1054,7 @@ class Emu:
         if enc80: path = self.kstr(self.rd32(info + 24), self.rd32(info + 20))
         elif self.rd(info + 20, 1) == b'\0': path = self.kstr(self.rd32(info + 21))
         else: path = self.kstr(info + 20)
+        if not path.startswith('/'): path = self.cwd.rstrip('/') + '/' + path      # relative: from the current folder (fn 30)
         host = self.host_path(path)
         def stamp(t):
             y, mo, dd, h, mi, sec = t

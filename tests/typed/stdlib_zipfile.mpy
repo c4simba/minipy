@@ -1,0 +1,48 @@
+import io
+import os
+import tempfile
+import zipfile
+path = os.path.join(tempfile.gettempdir(), "minipy_zip_test.zip")
+with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+    z.writestr("a.txt", "hello zip " * 20)
+    z.writestr("dir/b.bin", b"\x00\x01\x02" * 10, compress_type=zipfile.ZIP_STORED)
+    z.mkdir("empty")
+    with z.open("c.txt", "w") as w:
+        w.write(b"written through open\n")
+print(zipfile.is_zipfile(path), zipfile.is_zipfile(path + "nope"), __file__.endswith(".mpy"))
+with zipfile.ZipFile(path) as z:
+    print(z.namelist())
+    print(z.read("a.txt")[:20], len(z.read("dir/b.bin")), z.read("c.txt"))
+    info = z.getinfo("dir/b.bin")
+    print(info.filename, info.file_size, info.compress_type, info.CRC, info.is_dir(), z.getinfo("empty/").is_dir())
+    print(repr(info))
+    with z.open("c.txt") as f:
+        print(f.readline(), f.read())
+    print(z.testzip())
+    try:
+        z.getinfo("nope")
+    except KeyError as e:
+        print("KeyError:", e)
+    out = os.path.join(tempfile.gettempdir(), "minipy_zip_out")
+    z.extractall(out)
+    print(sorted(os.listdir(out)), os.path.isdir(os.path.join(out, "empty")))
+    with open(os.path.join(out, "dir", "b.bin"), "rb") as fb:
+        print(fb.read()[:6])
+with zipfile.ZipFile(path, "a") as z:
+    z.writestr("d.txt", "appended")
+with zipfile.ZipFile(path) as z:
+    print(z.namelist(), z.read("d.txt"))
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("mem.txt", "in memory")
+buf.seek(0)
+with zipfile.ZipFile(buf) as z:
+    print(z.namelist(), z.read("mem.txt"))
+cp = bytes.fromhex("504b03041400000008000000210000000000000000000000000000000000050000006869")
+try:
+    zipfile.ZipFile(io.BytesIO(b"not a zip"))
+except zipfile.BadZipFile as e:
+    print("BadZipFile:", e)
+os.remove(path)
+import shutil
+shutil.rmtree(os.path.join(tempfile.gettempdir(), "minipy_zip_out"))

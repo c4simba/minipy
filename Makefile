@@ -17,7 +17,7 @@ HOST_TARGET ?= minipy
 # their .c; all includes resolve through -Isrc.
 # ---------------------------------------------------------------------------
 
-CORE_SRC = util fs ast i_obj i_ops i_compile i_eval i_format i_methods i_builtins i_modules \
+CORE_SRC = util fs pystdlib ast i_obj i_ops i_compile i_eval i_format i_methods i_bytearray i_builtins i_modules \
            aot_driver aot_types aot_codegen aot_rtlib aot_x2c py_lex py_parse py_dump py_front main
 HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
 KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread
@@ -30,6 +30,9 @@ INCLUDES = -Isrc -I$(BUILD_DIR)/gen
 RTLIB_INC = $(BUILD_DIR)/gen/aot_rtlib.inc
 # ... and the start of the C programs of the macos target (src/aot_x2c.c)
 X2C_INC = $(BUILD_DIR)/gen/aot_x2c_rt.inc
+# ... and the standard library modules written in Python (src/pystdlib.c)
+STDLIB_PY  = $(shell find src/stdlib -name '*.py')
+STDLIB_INC = $(BUILD_DIR)/gen/stdlib.inc
 
 .PHONY: all test test-update test-typed clean kolibrios kolibrios-debug clean-kolibri debug
 
@@ -39,9 +42,14 @@ $(RTLIB_INC): src/aot_rtlib.asm
 	@mkdir -p $(dir $@)
 	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
 
-$(X2C_INC): src/aot_x2c_rt.c
+$(X2C_INC): src/aot_x2c_rt.c src/lx_emul.c
 	@mkdir -p $(dir $@)
-	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' $< > $@
+	awk '/^#include "lx_emul.c"/{ while((getline l < "src/lx_emul.c")>0) print l; next } { print }' src/aot_x2c_rt.c | \
+	sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
+
+$(STDLIB_INC): $(STDLIB_PY) tools/embed_stdlib.sh
+	@mkdir -p $(dir $@)
+	sh tools/embed_stdlib.sh src/stdlib > $@
 
 # Verbose host build (same logging switches as kolibrios-debug), handy for
 # reproducing debug output on the development machine.
@@ -54,8 +62,9 @@ HOST_OBJ = $(addprefix $(BUILD_DIR)/host/,$(addsuffix .o,$(CORE_SRC) $(HOST_PLAT
 
 $(BUILD_DIR)/host/aot_rtlib.o: $(RTLIB_INC)
 $(BUILD_DIR)/host/aot_x2c.o: $(X2C_INC)
+$(BUILD_DIR)/host/pystdlib.o: $(STDLIB_INC)
 
-$(BUILD_DIR)/host/%.o: src/%.c $(HEADERS)
+$(BUILD_DIR)/host/%.o: src/%.c $(HEADERS) src/lx_emul.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -pthread $(INCLUDES) -c $< -o $@
 
@@ -108,6 +117,7 @@ KOS_OBJ = $(addprefix $(KOS_BUILD_DIR)/,$(addsuffix .o,$(CORE_SRC) $(KOLIBRI_PLA
 
 $(KOS_BUILD_DIR)/aot_rtlib.o: $(RTLIB_INC)
 $(KOS_BUILD_DIR)/aot_x2c.o: $(X2C_INC)
+$(KOS_BUILD_DIR)/pystdlib.o: $(STDLIB_INC)
 
 $(KOS_BUILD_DIR)/%.o: src/%.c $(HEADERS)
 	@mkdir -p $(dir $@)

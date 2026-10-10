@@ -1,0 +1,4 @@
+frozenset({1, 2, 3}) frozenset() 4 True True frozenset True False False
+[1, 2, 3] [frozenset({1, 2, 3}), frozenset({5})] frozenset({1, 2, 3, 9}) frozenset({1})
+{1, 2} set
+none str x nothing str y 5

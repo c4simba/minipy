@@ -1,0 +1,11 @@
+b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9 9dd4e461268c8034f5c8564e155c67a6
+b'aGVsbG8gd29ybGQ=' b'hi' b'68656c6c6f20776f726c64' 222957957
+bytearray(b'\x01\x00\x00\x00\x02\x00\x00\x00') (1, 2) (2,) 8
+b'hello world!'
+b'abc\n' b'def\n'
+3 bytearray(b'xyz\x00')
+HELLO WORLD hello world b'hello'
+b'\x00\x01\x02'
+2 bytearray(b'\x00\x01')
+1 True
+True [b'a', b'b'] bytearray(b'%s %d') b'\x00\x01\x02\x03\x04'

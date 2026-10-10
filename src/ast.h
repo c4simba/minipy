@@ -58,6 +58,7 @@ struct Expr {
     int comp_kind;                   /* comprehension accumulator kind */
     CompClause *clauses; int nclause, ccap;
     void *ty;                        /* static type, filled in by the compiler (aot_types.c) */
+    int cm_done;                     /* a call of a @contextmanager function already wrapped (aot_types.c) */
 };
 
 typedef enum {
@@ -121,6 +122,8 @@ struct Stmt {
     char **names, **asnames; int nnames;   /* from-import: the names ("*") and their aliases (NULL: none) */
     Expr **pdefaults;              /* def: per parameter, its default value or NULL */
     void *py;                      /* the PyNode it was made from (copies are made again from it) */
+    void *src_mod;                 /* (aot_types.c) a mixin's member copied into a class of another module: the mixin's */
+    int packargs;                  /* (aot_types.c) index + 1 of a *args: sys._PackArgs made a plain parameter */
     char **tparams; int ntparams;  /* def / class / type alias: its type parameters ([T, U]) */
     int is_alias;                  /* `type name = ann` (an STMT_PASS): a type alias */
     int yield_expr;                /* def: a yield in an expression (x = yield v): a generator */

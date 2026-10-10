@@ -35,6 +35,9 @@ static void fail_at(P *p, PyTok *t, const char *msg){
 }
 static void fail(P *p, const char *msg){ fail_at(p,cur(p),msg); }
 static PyNode *nd(P *p, PyKind k){ PyTok *t=cur(p); return py_node(k,t->line,t->col); }
+/* the node ends where the last token taken ends (fin_if: unless it has its end already) */
+static PyNode *fin(P *p, PyNode *n){ if(n && p->i>0){ PyTok *t=&p->t[p->i-1]; n->end_line=t->end_line; n->end_col=t->end_col; } return n; }
+static PyNode *fin_if(P *p, PyNode *n){ if(n && !n->end_line) fin(p,n); return n; }
 static PyNode *nd_at(PyKind k, PyNode *from){ return py_node(k,from->line,from->col); }
 static int is_op(P *p, int op){ return cur(p)->kind==PT_OP && cur(p)->op==op; }
 static int is_op_at(P *p, int k, int op){ PyTok *t=peek(p,k); return t->kind==PT_OP && t->op==op; }
@@ -389,7 +392,7 @@ static PyNode *lambdef(P *p){
     n->n[0]=parameters(p,1,O_COLON);
     expect_op(p,O_COLON,":");
     n->n[1]=expression(p);
-    return n;
+    return fin(p,n);
 }
 
 /* for_if_clauses of a comprehension */
@@ -403,12 +406,14 @@ static void comp_for(P *p, PyList *gens){
         expect_kw(p,KW_in,"in");
         c->n[1]=disjunction(p);
         while(is_kw(p,KW_if)){ p->i++; py_list_add(&c->L[0],disjunction(p)); }
-        py_list_add(gens,c);
+        fin(p,c); py_list_add(gens,c);
     }
 }
 static int at_comp_for(P *p){ return is_kw(p,KW_for) || (is_kw(p,KW_async) && peek(p,1)->kind==PT_NAME && peek(p,1)->op==KW_for); }
 
-static PyNode *atom(P *p){
+static PyNode *atom_(P *p);
+static PyNode *atom(P *p){ PyNode *n=atom_(p); return fin_if(p,n); }
+static PyNode *atom_(P *p){
     PyTok *t=cur(p);
     if(t->kind==PT_NAME){
         switch(t->op){
@@ -502,7 +507,7 @@ static PyNode *atom(P *p){
 /* subscript: slices */
 static PyNode *slice_item(P *p){
     PyTok *t=cur(p);
-    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return s; }
+    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return fin(p,s); }
     PyNode *lo=NULL;
     if(!is_op(p,O_COLON)){
         lo=named_expression(p);
@@ -512,7 +517,7 @@ static PyNode *slice_item(P *p){
     expect_op(p,O_COLON,":");
     if(!is_op(p,O_COLON) && !is_op(p,O_RSQB) && !is_op(p,O_COMMA)) s->n[1]=expression(p);
     if(accept_op(p,O_COLON)){ if(!is_op(p,O_RSQB) && !is_op(p,O_COMMA)) s->n[2]=expression(p); }
-    return s;
+    return fin(p,s);
 }
 static PyNode *slices(P *p){
     PyTok *t=cur(p);
@@ -520,54 +525,56 @@ static PyNode *slices(P *p){
     if(!is_op(p,O_COMMA) && first->kind!=PK_Starred) return first;
     PyNode *tp=py_node(PK_Tuple,t->line,t->col); tp->op=CTX_Load; py_list_add(&tp->L[0],first);
     while(accept_op(p,O_COMMA)){ if(is_op(p,O_RSQB)) break; py_list_add(&tp->L[0],slice_item(p)); }
-    return tp;
+    return fin(p,tp);
 }
 
 /* call arguments up to close_op (consumed): positional, *x, name=x, **x, or one generator expression */
 static void call_args(P *p, PyList *args, PyList *kws, int close_op){
     PyTok *open=&p->t[p->i-1];                     /* f(x for x in y): the genexp is at the '(' */
+    PyNode *gx=NULL;
     while(!is_op(p,close_op)){
-        if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=expression(p); s->op=CTX_Load; py_list_add(args,s); }
-        else if(is_op(p,O_DOUBLESTAR)){ PyNode *k=nd(p,PK_keyword); p->i++; k->n[0]=expression(p); py_list_add(kws,k); }
-        else if(is_name(p) && is_op_at(p,1,O_EQUAL)){ PyNode *k=nd(p,PK_keyword); k->id[0]=expect_name(p); p->i++; k->n[0]=expression(p); py_list_add(kws,k); }
+        if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=expression(p); s->op=CTX_Load; py_list_add(args,fin(p,s)); }
+        else if(is_op(p,O_DOUBLESTAR)){ PyNode *k=nd(p,PK_keyword); p->i++; k->n[0]=expression(p); py_list_add(kws,fin(p,k)); }
+        else if(is_name(p) && is_op_at(p,1,O_EQUAL)){ PyNode *k=nd(p,PK_keyword); k->id[0]=expect_name(p); p->i++; k->n[0]=expression(p); py_list_add(kws,fin(p,k)); }
         else {
             PyNode *e=named_expression(p);
             if(at_comp_for(p)){
                 PyNode *g=py_node(PK_GeneratorExp,open->line,open->col); g->n[0]=e; comp_for(p,&g->L[0]);
-                e=g;
+                e=g; gx=g;
             }
             py_list_add(args,e);
         }
         if(!accept_op(p,O_COMMA)) break;
     }
     expect_op(p,close_op,close_op==O_RPAR?")":"]");
+    if(gx) fin(p,gx);                               /* (its parentheses: the call's) */
 }
 
 static PyNode *primary(P *p){
     PyNode *e=atom(p);
     for(;;){
         PyTok *t=cur(p);
-        if(accept_op(p,O_DOT)){ PyNode *a=nd_at(PK_Attribute,e); a->n[0]=e; a->id[0]=expect_name_any(p); a->op=CTX_Load; e=a; }
-        else if(accept_op(p,O_LPAR)){ PyNode *c=nd_at(PK_Call,e); c->n[0]=e; call_args(p,&c->L[0],&c->L[1],O_RPAR); e=c; }
-        else if(accept_op(p,O_LSQB)){ PyNode *s=nd_at(PK_Subscript,e); s->n[0]=e; s->n[1]=slices(p); s->op=CTX_Load; expect_op(p,O_RSQB,"]"); e=s; }
+        if(accept_op(p,O_DOT)){ PyNode *a=nd_at(PK_Attribute,e); a->n[0]=e; a->id[0]=expect_name_any(p); a->op=CTX_Load; e=fin(p,a); }
+        else if(accept_op(p,O_LPAR)){ PyNode *c=nd_at(PK_Call,e); c->n[0]=e; call_args(p,&c->L[0],&c->L[1],O_RPAR); e=fin(p,c); }
+        else if(accept_op(p,O_LSQB)){ PyNode *s=nd_at(PK_Subscript,e); s->n[0]=e; s->n[1]=slices(p); s->op=CTX_Load; expect_op(p,O_RSQB,"]"); e=fin(p,s); }
         else break;
         (void)t;
     }
     return e;
 }
 static PyNode *await_primary(P *p){
-    if(is_kw(p,KW_await)){ PyNode *a=nd(p,PK_Await); p->i++; a->n[0]=primary(p); return a; }
+    if(is_kw(p,KW_await)){ PyNode *a=nd(p,PK_Await); p->i++; a->n[0]=primary(p); return fin(p,a); }
     return primary(p);
 }
 static PyNode *factor(P *p);
 static PyNode *power(P *p){
     PyNode *e=await_primary(p);
-    if(is_op(p,O_DOUBLESTAR)){ PyNode *b=nd_at(PK_BinOp,e); p->i++; b->n[0]=e; b->op=OP_Pow; b->n[1]=factor(p); return b; }
+    if(is_op(p,O_DOUBLESTAR)){ PyNode *b=nd_at(PK_BinOp,e); p->i++; b->n[0]=e; b->op=OP_Pow; b->n[1]=factor(p); return fin(p,b); }
     return e;
 }
 static PyNode *factor(P *p){
     int op= is_op(p,O_PLUS)?OP_UAdd : is_op(p,O_MINUS)?OP_USub : is_op(p,O_TILDE)?OP_Invert : 0;
-    if(op){ PyNode *u=nd(p,PK_UnaryOp); p->i++; u->op=op; u->n[0]=factor(p); return u; }
+    if(op){ PyNode *u=nd(p,PK_UnaryOp); p->i++; u->op=op; u->n[0]=factor(p); return fin(p,u); }
     return power(p);
 }
 static PyNode *binary_level(P *p, int level);
@@ -589,7 +596,7 @@ static PyNode *binary_level(P *p, int level){
     PyNode *e=binary_level(p,level+1);
     int op;
     while((op=binop_at(p,level))){
-        PyNode *b=nd_at(PK_BinOp,e); p->i++; b->n[0]=e; b->op=op; b->n[1]=binary_level(p,level+1); e=b;
+        PyNode *b=nd_at(PK_BinOp,e); p->i++; b->n[0]=e; b->op=op; b->n[1]=binary_level(p,level+1); e=fin(p,b);
     }
     return e;
 }
@@ -615,10 +622,10 @@ static PyNode *comparison(P *p){
         PyNode *o=nd(p,PK_ident); o->op=op; p->i+=len;
         py_list_add(&c->L[0],o); py_list_add(&c->L[1],bitwise_or(p));
     }
-    return c;
+    return fin(p,c);
 }
 static PyNode *inversion(P *p){
-    if(is_kw(p,KW_not)){ PyNode *u=nd(p,PK_UnaryOp); p->i++; u->op=OP_Not; u->n[0]=inversion(p); return u; }
+    if(is_kw(p,KW_not)){ PyNode *u=nd(p,PK_UnaryOp); p->i++; u->op=OP_Not; u->n[0]=inversion(p); return fin(p,u); }
     return comparison(p);
 }
 static PyNode *boolop(P *p, int kw, int op, PyNode *(*sub)(P*)){
@@ -626,7 +633,7 @@ static PyNode *boolop(P *p, int kw, int op, PyNode *(*sub)(P*)){
     if(!is_kw(p,kw)) return e;
     PyNode *b=nd_at(PK_BoolOp,e); b->op=op; py_list_add(&b->L[0],e);
     while(accept_kw(p,kw)) py_list_add(&b->L[0],sub(p));
-    return b;
+    return fin(p,b);
 }
 static PyNode *conjunction(P *p){ return boolop(p,KW_and,OP_And,inversion); }
 static PyNode *disjunction(P *p){ return boolop(p,KW_or,OP_Or,conjunction); }
@@ -638,23 +645,23 @@ static PyNode *expression(P *p){
         c->n[1]=e; c->n[0]=disjunction(p);
         expect_kw(p,KW_else,"else");
         c->n[2]=expression(p);
-        return c;
+        return fin(p,c);
     }
     return e;
 }
 static PyNode *named_expression(P *p){
     if(is_name(p) && is_op_at(p,1,O_COLONEQUAL)){
-        PyNode *n=nd(p,PK_NamedExpr); PyNode *t=nd(p,PK_Name); t->id[0]=expect_name(p); t->op=CTX_Store;
-        p->i++; n->n[0]=t; n->n[1]=expression(p); return n;
+        PyNode *n=nd(p,PK_NamedExpr); PyNode *t=nd(p,PK_Name); t->id[0]=expect_name(p); t->op=CTX_Store; fin(p,t);
+        p->i++; n->n[0]=t; n->n[1]=expression(p); return fin(p,n);
     }
     return expression(p);
 }
 static PyNode *star_named_expression(P *p){
-    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return s; }
+    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return fin(p,s); }
     return named_expression(p);
 }
 static PyNode *star_expression(P *p){
-    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return s; }
+    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=bitwise_or(p); s->op=CTX_Load; return fin(p,s); }
     return expression(p);
 }
 /* can an expression start here (for optional parts: return, yield, ...) */
@@ -670,18 +677,18 @@ static PyNode *star_expressions(P *p){
     if(!is_op(p,O_COMMA)) return first;
     PyNode *tp=nd_at(PK_Tuple,first); tp->op=CTX_Load; py_list_add(&tp->L[0],first);
     while(accept_op(p,O_COMMA)){ if(!expr_start(p)) break; py_list_add(&tp->L[0],star_expression(p)); }
-    return tp;
+    return fin(p,tp);
 }
 static PyNode *yield_expr(P *p){
     PyTok *t=cur(p); expect_kw(p,KW_yield,"yield");
-    if(accept_kw(p,KW_from)){ PyNode *y=py_node(PK_YieldFrom,t->line,t->col); y->n[0]=expression(p); return y; }
+    if(accept_kw(p,KW_from)){ PyNode *y=py_node(PK_YieldFrom,t->line,t->col); y->n[0]=expression(p); return fin(p,y); }
     PyNode *y=py_node(PK_Yield,t->line,t->col);
     if(expr_start(p)) y->n[0]=star_expressions(p);
-    return y;
+    return fin(p,y);
 }
 /* targets of for / comprehensions: no comparisons (the `in` follows) */
 static PyNode *star_target(P *p){
-    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=star_target(p); s->op=CTX_Store; return s; }
+    if(is_op(p,O_STAR)){ PyNode *s=nd(p,PK_Starred); p->i++; s->n[0]=star_target(p); s->op=CTX_Store; return fin(p,s); }
     PyNode *e=bitwise_or(p);
     set_ctx(p,e,CTX_Store);
     return e;
@@ -691,7 +698,7 @@ static PyNode *star_targets(P *p){
     if(!is_op(p,O_COMMA)) return first;
     PyNode *tp=nd_at(PK_Tuple,first); tp->op=CTX_Store; py_list_add(&tp->L[0],first);
     while(accept_op(p,O_COMMA)){ if(is_kw(p,KW_in) || is_op(p,O_EQUAL)) break; py_list_add(&tp->L[0],star_target(p)); }
-    return tp;
+    return fin(p,tp);
 }
 
 /* ---------------------------------------------------------------- statements */
@@ -1056,6 +1063,7 @@ static void simple_stmts(P *p, PyList *out){
         int soff=cur(p)->start;
         PyNode *st=simple_stmt(p);
         st->soff=soff; st->eoff=p->t[p->i-1].end;
+        fin(p,st);
         py_list_add(out,st);
         if(!accept_op(p,O_SEMI)) break;
         if(cur(p)->kind==PT_NEWLINE) break;
@@ -1131,6 +1139,15 @@ static void block(P *p, PyList *body){
 }
 static PyNode *statement_list(P *p, PyList *out){ while(cur(p)->kind!=PT_END) statement(p,out); return NULL; }
 
+/* the nodes whose end the parser did not set (compound statements, handlers ...): where their last part ends */
+static void node_ends(PyNode *n){
+    if(!n) return;
+    int el=0, ec=0;
+    for(int i=0;i<4;i++) if(n->n[i]){ node_ends(n->n[i]); if(n->n[i]->end_line>el || (n->n[i]->end_line==el && n->n[i]->end_col>ec)){ el=n->n[i]->end_line; ec=n->n[i]->end_col; } }
+    for(int j=0;j<5;j++) for(int k=0;k<n->L[j].n;k++){ PyNode *c=n->L[j].v[k]; if(!c) continue; node_ends(c);
+        if(c->end_line>el || (c->end_line==el && c->end_col>ec)){ el=c->end_line; ec=c->end_col; } }
+    if(!n->end_line){ n->end_line= el ? el : n->line; n->end_col= el ? ec : n->col; }
+}
 int py_parse(PyParse *pp, const char *path, const char *src, size_t len){
     memset(pp,0,sizeof *pp); pp->path=path; pp->src=src; pp->len=len;
     PyLexer *lx=(PyLexer*)xmalloc(sizeof(PyLexer)); memset(lx,0,sizeof *lx);
@@ -1145,6 +1162,7 @@ int py_parse(PyParse *pp, const char *path, const char *src, size_t len){
     }
     PyNode *m=py_node(PK_Module,1,0);
     statement_list(&p,&m->L[0]);
+    node_ends(m);
     pp->mod=m;
     return 0;
 }

@@ -1,0 +1,23 @@
+5 Traceback (most recent call last):
+ ZeroDivisionError: division by zero
+[('<module>', 11, 'outer(0)'), ('outer', 8, 'return inner(x)'), ('inner', 5, 'return 1 / x')] 3
+['ZeroDivisionError: division by zero\n'] ['line 5, in inner', '    return 1 / x']
+ZeroDivisionError: division by zero 3
+1 inner
+True
+division by zero ZeroDivisionError True ['ZeroDivisionError: division by zero\n']
+True 2 ValueError: bad
+1
+True
+['ValueError: noted\n', 'a note\n'] ["KeyError: 'k'\n"] ['ValueError\n']
+ ['NoneType: None\n']
+['<module>', 'where'] return traceback.extract_stack()
+<module>
+    print(traceback.format_stack(limit=1)[0].split("
+
+ '' True
+['MyErr: x\n']
+MyErr: deep
+<FrameSummary file f.py, line 3 in fn> x = 1 ('f.py', 3, 'fn', 'x = 1') True
+['  File "a.py", line 1, in f\n    pass\n', '  File "b.py", line 2, in g\n']
+6 [Previous line repeated 7 more times]

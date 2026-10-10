@@ -1,0 +1,142 @@
+float True int True
+True True True True
+ValueError sleep length must be non-negative
+time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0
+1970-01-01 00:00:00 Thu Thursday Jan January 001 00 00 4 4 1970-W01 70 70 19  1 12 AM 01/01/70 00:00:00 00:00 1970-01-01 Jan %
+Thu Jan  1 00:00:00 1970 True
+time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0
+2023-11-14 22:13:20 Tue Tuesday Nov November 318 46 46 2 2 2023-W46 23 23 20 14 10 PM 11/14/23 22:13:20 22:13 2023-11-14 Nov %
+Tue Nov 14 22:13:20 2023 True
+time.struct_time(tm_year=1969, tm_mon=12, tm_mday=31, tm_hour=23, tm_min=59, tm_sec=59, tm_wday=2, tm_yday=365, tm_isdst=0) UTC 0
+1969-12-31 23:59:59 Wed Wednesday Dec December 365 52 52 3 3 1970-W01 70 69 19 31 11 PM 12/31/69 23:59:59 23:59 1969-12-31 Dec %
+Wed Dec 31 23:59:59 1969 True
+time.struct_time(tm_year=2000, tm_mon=2, tm_mday=29, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=60, tm_isdst=0) UTC 0
+2000-02-29 00:00:00 Tue Tuesday Feb February 060 09 09 2 2 2000-W09 00 00 20 29 12 AM 02/29/00 00:00:00 00:00 2000-02-29 Feb %
+Tue Feb 29 00:00:00 2000 True
+time.struct_time(tm_year=2100, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=4, tm_yday=1, tm_isdst=0) UTC 0
+2100-01-01 00:00:00 Fri Friday Jan January 001 00 00 5 5 2099-W53 99 00 21  1 12 AM 01/01/00 00:00:00 00:00 2100-01-01 Jan %
+Fri Jan  1 00:00:00 2100 True
+time.struct_time(tm_year=1906, tm_mon=8, tm_mday=16, tm_hour=20, tm_min=26, tm_sec=40, tm_wday=3, tm_yday=228, tm_isdst=0) UTC 0
+1906-08-16 20:26:40 Thu Thursday Aug August 228 32 33 4 4 1906-W33 06 06 19 16 08 PM 08/16/06 20:26:40 20:26 1906-08-16 Aug %
+Thu Aug 16 20:26:40 1906 True
+time.struct_time(tm_year=2009, tm_mon=2, tm_mday=13, tm_hour=23, tm_min=31, tm_sec=30, tm_wday=4, tm_yday=44, tm_isdst=0) UTC 0
+2009-02-13 23:31:30 Fri Friday Feb February 044 06 06 5 5 2009-W07 09 09 20 13 11 PM 02/13/09 23:31:30 23:31 2009-02-13 Feb %
+Fri Feb 13 23:31:30 2009 True
+time.struct_time(tm_year=2001, tm_mon=9, tm_mday=9, tm_hour=1, tm_min=46, tm_sec=40, tm_wday=6, tm_yday=252, tm_isdst=0) 58
+ValueError Invalid value NaN (not a number)
+time.struct_time(tm_year=2024, tm_mon=2, tm_mday=29, tm_hour=13, tm_min=5, tm_sec=9, tm_wday=3, tm_yday=60, tm_isdst=0) 2024 0 9 29 None None
+True True
+[2024, 2, 29, 13, 5, 9, 3, 60, 0] True
+Thu Feb 29 13:05:09 2024|02/29/24|13:05:09|01:05:09 PM Thu Feb 29 13:05:09 2024
+2024 01 01 001
+ValueError month out of range
+ValueError day of month out of range
+ValueError hour out of range
+ValueError day of week out of range
+'2024-03-05' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=5, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=65, tm_isdst=-1) None None
+'  tuesday   MARCH 5 2024 10:00:00 pm +05:30 UTC' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=5, tm_hour=22, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=65, tm_isdst=0) UTC 19800
+'2024 10 3' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=6, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=2, tm_yday=66, tm_isdst=-1) None None
+'2024 01 1' time.struct_time(tm_year=2024, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None None
+'2023 52 0' time.struct_time(tm_year=2023, tm_mon=12, tm_mday=24, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=358, tm_isdst=-1) None None
+'1112 2024' time.struct_time(tm_year=2024, tm_mon=12, tm_mday=11, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=2, tm_yday=346, tm_isdst=-1) None None
+'123456' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=12, tm_min=34, tm_sec=56, tm_wday=0, tm_yday=1, tm_isdst=-1) None None
+'Tue Mar  5 10:00:00 2024' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=5, tm_hour=10, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=65, tm_isdst=-1) None None
+'5.123' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=5, tm_wday=0, tm_yday=1, tm_isdst=-1) None None
+'2024-366' time.struct_time(tm_year=2024, tm_mon=12, tm_mday=31, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=366, tm_isdst=-1) None None
+'+0530' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None 19800
+'-05:30:15.25' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None -19815
+'Z' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None 0
+'99 12 31' time.struct_time(tm_year=1999, tm_mon=12, tm_mday=31, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=4, tm_yday=365, tm_isdst=-1) None None
+'03/05/24' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=5, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=65, tm_isdst=-1) None None
+'Tue Mar  5 10:00:00 2024' time.struct_time(tm_year=2024, tm_mon=3, tm_mday=5, tm_hour=10, tm_min=0, tm_sec=0, tm_wday=1, tm_yday=65, tm_isdst=-1) None None
+'12 AM' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None None
+'12 pm' time.struct_time(tm_year=1900, tm_mon=1, tm_mday=1, tm_hour=12, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=-1) None None
+ValueError day 30 must be in range 1..28 for month 2 in year 1900
+ValueError time data '2024-13-01' does not match format '%Y-%m-%d'
+ValueError 'Q' is a bad directive in format '%Y %Q'
+ValueError stray % in format '%Y %'
+ValueError unconverted data remains: x
+ValueError ISO year directive '%G' must be used with the ISO week directive '%V' and a weekday directive ('%A', '%a', '%w', or '%u').
+ValueError ISO week directive '%V' is incompatible with the year directive '%Y'. Use the ISO year '%G' instead.
+UTC ('UTC', 'UTC') 0 0 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0 True 2023-11-14 22:13:20 UTC Tue Nov 14 22:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=9, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) UTC 0 True 2024-07-03 09:46:40 UTC Wed Jul  3 09:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 00:59:59 UTC Sun Mar 31 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 01:00:00 UTC Sun Mar 31 01:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 00:59:59 UTC Sun Oct 27 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 01:00:00 UTC Sun Oct 27 01:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0 True 1970-01-01 00:00:00 UTC Thu Jan  1 00:00:00 1970
+  1705320000.0 1721044800.0 1738720921.0
+Europe/Berlin ('UTC', 'UTC') 0 0 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0 True 2023-11-14 22:13:20 UTC Tue Nov 14 22:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=9, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) UTC 0 True 2024-07-03 09:46:40 UTC Wed Jul  3 09:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 00:59:59 UTC Sun Mar 31 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 01:00:00 UTC Sun Mar 31 01:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 00:59:59 UTC Sun Oct 27 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 01:00:00 UTC Sun Oct 27 01:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0 True 1970-01-01 00:00:00 UTC Thu Jan  1 00:00:00 1970
+  1705320000.0 1721044800.0 1738720921.0
+America/New_York ('UTC', 'UTC') 0 0 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0 True 2023-11-14 22:13:20 UTC Tue Nov 14 22:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=9, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) UTC 0 True 2024-07-03 09:46:40 UTC Wed Jul  3 09:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 00:59:59 UTC Sun Mar 31 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 01:00:00 UTC Sun Mar 31 01:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 00:59:59 UTC Sun Oct 27 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 01:00:00 UTC Sun Oct 27 01:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0 True 1970-01-01 00:00:00 UTC Thu Jan  1 00:00:00 1970
+  1705320000.0 1721044800.0 1738720921.0
+Australia/Sydney ('UTC', 'UTC') 0 0 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0 True 2023-11-14 22:13:20 UTC Tue Nov 14 22:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=9, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) UTC 0 True 2024-07-03 09:46:40 UTC Wed Jul  3 09:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 00:59:59 UTC Sun Mar 31 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 01:00:00 UTC Sun Mar 31 01:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 00:59:59 UTC Sun Oct 27 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 01:00:00 UTC Sun Oct 27 01:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0 True 1970-01-01 00:00:00 UTC Thu Jan  1 00:00:00 1970
+  1705320000.0 1721044800.0 1738720921.0
+Asia/Kolkata ('UTC', 'UTC') 0 0 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=22, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) UTC 0 True 2023-11-14 22:13:20 UTC Tue Nov 14 22:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=9, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) UTC 0 True 2024-07-03 09:46:40 UTC Wed Jul  3 09:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 00:59:59 UTC Sun Mar 31 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) UTC 0 True 2024-03-31 01:00:00 UTC Sun Mar 31 01:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=0, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 00:59:59 UTC Sun Oct 27 00:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) UTC 0 True 2024-10-27 01:00:00 UTC Sun Oct 27 01:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=0, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) UTC 0 True 1970-01-01 00:00:00 UTC Thu Jan  1 00:00:00 1970
+  1705320000.0 1721044800.0 1738720921.0
+EST5EDT,M3.2.0,M11.1.0 ('EST', 'EDT') 18000 14400 1
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=17, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) EST -18000 True 2023-11-14 17:13:20 EST Tue Nov 14 17:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=5, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=1) EDT -14400 True 2024-07-03 05:46:40 EDT Wed Jul  3 05:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=30, tm_hour=20, tm_min=59, tm_sec=59, tm_wday=5, tm_yday=90, tm_isdst=1) EDT -14400 True 2024-03-30 20:59:59 EDT Sat Mar 30 20:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=30, tm_hour=21, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=90, tm_isdst=1) EDT -14400 True 2024-03-30 21:00:00 EDT Sat Mar 30 21:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=26, tm_hour=20, tm_min=59, tm_sec=59, tm_wday=5, tm_yday=300, tm_isdst=1) EDT -14400 True 2024-10-26 20:59:59 EDT Sat Oct 26 20:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=26, tm_hour=21, tm_min=0, tm_sec=0, tm_wday=5, tm_yday=300, tm_isdst=1) EDT -14400 True 2024-10-26 21:00:00 EDT Sat Oct 26 21:00:00 2024
+  time.struct_time(tm_year=1969, tm_mon=12, tm_mday=31, tm_hour=19, tm_min=0, tm_sec=0, tm_wday=2, tm_yday=365, tm_isdst=0) EST -18000 True 1969-12-31 19:00:00 EST Wed Dec 31 19:00:00 1969
+  1705338000.0 1721059200.0 1738738921.0
+<+0330>-3:30 ('+0330', '+0330') -12600 -12600 0
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=15, tm_hour=1, tm_min=43, tm_sec=20, tm_wday=2, tm_yday=319, tm_isdst=0) +0330 12600 True 2023-11-15 01:43:20 +0330 Wed Nov 15 01:43:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=13, tm_min=16, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) +0330 12600 True 2024-07-03 13:16:40 +0330 Wed Jul  3 13:16:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=4, tm_min=29, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) +0330 12600 True 2024-03-31 04:29:59 +0330 Sun Mar 31 04:29:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=4, tm_min=30, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=0) +0330 12600 True 2024-03-31 04:30:00 +0330 Sun Mar 31 04:30:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=4, tm_min=29, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=0) +0330 12600 True 2024-10-27 04:29:59 +0330 Sun Oct 27 04:29:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=4, tm_min=30, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) +0330 12600 True 2024-10-27 04:30:00 +0330 Sun Oct 27 04:30:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=3, tm_min=30, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) +0330 12600 True 1970-01-01 03:30:00 +0330 Thu Jan  1 03:30:00 1970
+  1705307400.0 1721032200.0 1738708321.0
+CET-1CEST,M3.5.0,M10.5.0/3 ('CET', 'CEST') -3600 -7200 1
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=14, tm_hour=23, tm_min=13, tm_sec=20, tm_wday=1, tm_yday=318, tm_isdst=0) CET 3600 True 2023-11-14 23:13:20 CET Tue Nov 14 23:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=11, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=1) CEST 7200 True 2024-07-03 11:46:40 CEST Wed Jul  3 11:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=1, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=0) CET 3600 True 2024-03-31 01:59:59 CET Sun Mar 31 01:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=3, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=1) CEST 7200 True 2024-03-31 03:00:00 CEST Sun Mar 31 03:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=2, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=1) CEST 7200 True 2024-10-27 02:59:59 CEST Sun Oct 27 02:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=2, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=0) CET 3600 True 2024-10-27 02:00:00 CET Sun Oct 27 02:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=1, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) CET 3600 True 1970-01-01 01:00:00 CET Thu Jan  1 01:00:00 1970
+  1705316400.0 1721037600.0 1738717321.0
+NZST-12NZDT,M9.5.0,M4.1.0/3 ('NZST', 'NZDT') -43200 -46800 1
+  time.struct_time(tm_year=2023, tm_mon=11, tm_mday=15, tm_hour=11, tm_min=13, tm_sec=20, tm_wday=2, tm_yday=319, tm_isdst=1) NZDT 46800 True 2023-11-15 11:13:20 NZDT Wed Nov 15 11:13:20 2023
+  time.struct_time(tm_year=2024, tm_mon=7, tm_mday=3, tm_hour=21, tm_min=46, tm_sec=40, tm_wday=2, tm_yday=185, tm_isdst=0) NZST 43200 True 2024-07-03 21:46:40 NZST Wed Jul  3 21:46:40 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=13, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=91, tm_isdst=1) NZDT 46800 True 2024-03-31 13:59:59 NZDT Sun Mar 31 13:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=3, tm_mday=31, tm_hour=14, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=91, tm_isdst=1) NZDT 46800 True 2024-03-31 14:00:00 NZDT Sun Mar 31 14:00:00 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=13, tm_min=59, tm_sec=59, tm_wday=6, tm_yday=301, tm_isdst=1) NZDT 46800 True 2024-10-27 13:59:59 NZDT Sun Oct 27 13:59:59 2024
+  time.struct_time(tm_year=2024, tm_mon=10, tm_mday=27, tm_hour=14, tm_min=0, tm_sec=0, tm_wday=6, tm_yday=301, tm_isdst=1) NZDT 46800 True 2024-10-27 14:00:00 NZDT Sun Oct 27 14:00:00 2024
+  time.struct_time(tm_year=1970, tm_mon=1, tm_mday=1, tm_hour=12, tm_min=0, tm_sec=0, tm_wday=3, tm_yday=1, tm_isdst=0) NZST 43200 True 1970-01-01 12:00:00 NZST Thu Jan  1 12:00:00 1970
+  1705273200.0 1721001600.0 1738674121.0
+('+0330', '+0330') -12600 3

@@ -1,0 +1,33 @@
+{'title': 'TOML "Example" é\t!'}
+{'count': 1000, 'hexv': 255, 'octv': 15, 'binv': 5, 'neg': -17, 'pos': 5}
+{'words': ['a', 'b\\c', 'multi\nline', 'raw\ntext']}
+{'owner': {'name': 'Tom'}}
+{'database': {'ports': [8000, 8001]}}
+{'servers': {'alpha': {'ip': '10.0.0.1'}, 'beta': {'ip': '10.0.0.2', 'role': 'frontend'}}}
+{'products': [{'tags': []}, {'tags': ['small', 'metal']}]}
+{'a': 1, 'b': 2, 'c d': 3}
+{'x': {'y': [1, 2], 'z': []}, 'w': {}}
+{'a': {'b': {'c': 'x', 'd': 'y'}}, 'q': {'r': {'s': 'z', 't': 'w'}}}
+{'i': inf, 'n': -inf, 'f': 1000.0, 'g': 0.035}
+{}
+TOMLDecodeError: Invalid value (at end of document) | 'Invalid value' 1 5 4
+TOMLDecodeError: Cannot overwrite a value (at end of document) | 'Cannot overwrite a value' 2 6 11
+TOMLDecodeError: Cannot declare ('t',) twice (at line 2, column 3) | "Cannot declare ('t',) twice" 2 3 6
+TOMLDecodeError: Expected "'" (at end of document) | 'Expected "\'"' 1 18 17
+TOMLDecodeError: Expected newline or end of document after a statement (at line 1, column 7) | 'Expected newline or end of document after a statement' 1 7 6
+TOMLDecodeError: Invalid statement (at line 1, column 1) | 'Invalid statement' 1 1 0
+TOMLDecodeError: Unclosed array (at end of document) | 'Unclosed array' 1 10 9
+TOMLDecodeError: Unclosed inline table (at end of document) | 'Unclosed inline table' 1 11 10
+TOMLDecodeError: Cannot overwrite a value (at line 3, column 5) | 'Cannot overwrite a value' 3 5 14
+TOMLDecodeError: Unescaped '\' in a string (at line 1, column 8) | "Unescaped '\\' in a string" 1 8 7
+TOMLDecodeError: Invalid hex value (at line 1, column 8) | 'Invalid hex value' 1 8 7
+TOMLDecodeError: Cannot declare ('a',) twice (at line 2, column 3) | "Cannot declare ('a',) twice" 2 3 16
+TOMLDecodeError: Cannot declare ('t',) twice (at line 2, column 3) | "Cannot declare ('t',) twice" 2 3 8
+TOMLDecodeError: Cannot declare ('a', 'b') twice (at line 3, column 5) | "Cannot declare ('a', 'b') twice" 3 5 16
+TOMLDecodeError: Cannot declare ('a',) twice (at line 2, column 3) | "Cannot declare ('a',) twice" 2 3 10
+TOMLDecodeError: Cannot mutate immutable namespace ('a',) (at line 2, column 4) | "Cannot mutate immutable namespace ('a',)" 2 4 11
+TOMLDecodeError: Cannot mutate immutable namespace ('a',) (at end of document) | "Cannot mutate immutable namespace ('a',)" 2 8 14
+TOMLDecodeError: Cannot overwrite a value (at line 3, column 7) | 'Cannot overwrite a value' 3 7 16
+TOMLDecodeError: Cannot overwrite a value (at line 2, column 4) | 'Cannot overwrite a value' 2 4 9
+TOMLDecodeError: Cannot overwrite a value (at line 4, column 7) | 'Cannot overwrite a value' 4 7 24
+{'name': 'file', 'sku': '5'}

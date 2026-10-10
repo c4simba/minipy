@@ -87,27 +87,80 @@ static Value make_object(Type *t, int argc, Value *argv, TupleObj *kw){
     if(argc) mp_raise_t(E_TypeError,"object() takes no arguments");
     Obj *o=(Obj*)mp_alloc(T_object,sizeof(Obj)); return v_obj(o);
 }
-static Value make_type(Type *t, int argc, Value *argv, TupleObj *kw){
-    (void)t; no_kw("type",kw);
-    if(argc==1) return v_obj(TYPE(argv[0]));
-    if(argc!=3) mp_raise_t(E_TypeError,"type() takes 1 or 3 arguments");
-    if(!IS_STR(argv[0]) || !IS(argv[1],T_tuple) || !IS(argv[2],T_dict)) mp_raise_t(E_TypeError,"type() argument types: str, tuple, dict");
+/* type.__new__(meta, name, bases, ns, **kw): the class (of metaclass meta) */
+static Value type_new(Type *meta, int argc, Value *argv, TupleObj *kw){
+    int np=argc-(kw?(int)kw->len:0);
+    if(np!=3) mp_raise_t(E_TypeError,"type.__new__() takes exactly 3 arguments (%d given)",np);
+    if(!IS_STR(argv[0]) || !IS_TUPLE(argv[1]) || argv[2].k!=V_OBJ || argv[2].u.o->type->layout!=LY_DICT) mp_raise_t(E_TypeError,"type() argument types: str, tuple, dict");
     Value ns=mp_dict(); mp_dict_update_from(AS_DICT(ns),argv[2]);
-    if(!mp_dict_get_s(AS_DICT(ns),"__module__",NULL)) mp_dict_set_s(AS_DICT(ns),"__module__",mp_str("__main__"));
-    return mp_make_class(argv[0],argv[1],AS_DICT(ns));
+    if(!mp_dict_get_s(AS_DICT(ns),"__module__",NULL)){
+        Value m=mp_str("__main__"); Frame *fr=mp_ts?mp_ts->frame:NULL; Value gm;
+        if(fr && fr->globals && mp_dict_get_s(fr->globals,"__name__",&gm)) m=gm;
+        mp_dict_set_s(AS_DICT(ns),"__module__",m); }
+    return mp_make_class_kw(meta,argv[0],argv[1],AS_DICT(ns),argc-np,argv+np,kw);
+}
+/* an int/float subclass whose class defines __int__ / __float__ (that converts it then) */
+static int user_int(Value x){ Value m=mp_type_lookup_s(TYPE(x),"__int__"); return m.k!=V_UNDEF && !IS(m,T_native); }
+static int user_float(Value x){ Value m=mp_type_lookup_s(TYPE(x),"__float__"); return m.k!=V_UNDEF && !IS(m,T_native); }
+static Value make_type(Type *t, int argc, Value *argv, TupleObj *kw){
+    if(t==T_type && argc==1 && !kw) return v_obj(TYPE(argv[0]));
+    int np=argc-(kw?(int)kw->len:0);
+    if(np!=3) mp_raise_t(E_TypeError,"type() takes 1 or 3 arguments");
+    if(t==T_type) return type_new(T_type,argc,argv,kw);
+    /* a metaclass called: its __new__, then its __init__ */
+    Value nw=mp_type_lookup_s(t,"__new__"), cls;
+    if(nw.k!=V_UNDEF && !IS(nw,T_native)){
+        Value keep=mp_tuple(argc+1,NULL); AS_TUPLE(keep)->items[0]=v_obj(t); memcpy(AS_TUPLE(keep)->items+1,argv,sizeof(Value)*(size_t)argc);
+        Value fn= IS(nw,T_staticmethod) ? ((BoxObj*)nw.u.o)->v : nw;
+        cls=mp_call(fn,argc+1,AS_TUPLE(keep)->items,kw);
+    } else cls=type_new(t,argc,argv,kw);
+    if(mp_isinstance(cls,t)){
+        Value init=mp_type_lookup_user(t,"__init__");
+        if(init.k!=V_UNDEF){
+            Value keep=mp_tuple(argc+1,NULL); AS_TUPLE(keep)->items[0]=cls; memcpy(AS_TUPLE(keep)->items+1,argv,sizeof(Value)*(size_t)argc);
+            mp_call(init,argc+1,AS_TUPLE(keep)->items,kw); } }
+    return cls;
+}
+/* type's methods a metaclass reaches through super() */
+Value mp_type_new_m(int argc, Value *argv, TupleObj *kw){
+    if(argc<1 || !IS_TYPE(argv[0])) mp_raise_t(E_TypeError,"type.__new__(X): X is not a type object");
+    return type_new(AS_TYPE(argv[0]),argc-1,argv+1,kw);
+}
+Value mp_type_init_m(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_none(); }
+Value mp_type_call_m(int argc, Value *argv, TupleObj *kw){
+    if(argc<1 || !IS_TYPE(argv[0])) mp_raise_t(E_TypeError,"descriptor '__call__' requires a type");
+    Type *c=AS_TYPE(argv[0]);
+    if(c->make) return c->make(c,argc-1,argv+1,kw);
+    return mp_instance_call(c,argc-1,argv+1,kw);
+}
+/* a str's text for int() / float(): its Unicode decimal digits as ASCII ones, its Unicode spaces as ' ', other
+   non-ASCII characters as '?' (CPython's _PyUnicode_TransformDecimalAndSpaceToASCII); ASCII text: itself */
+int mp_cp_isspace(uint32_t c);
+int mp_cp_isdecimal(uint32_t c);
+static const char *ascii_number_text(const char *s, int64_t n, int64_t *outn){
+    int64_t i=0; while(i<n && !(s[i]&0x80)) i++;
+    *outn=n; if(i==n) return s;
+    SBuf b={0}; int64_t pos=0;
+    while(pos<n){ uint32_t c=(uint32_t)mp_utf8_decode(s,n,&pos);
+        if(c<128) sb_putc(&b,(char)c);
+        else if(mp_cp_isdecimal(c)){ uint32_t z=c; while(z>0 && mp_cp_isdecimal(z-1)) z--; sb_putc(&b,(char)('0'+(c-z)%10)); }   /* (Nd: runs of 0..9) */
+        else if(mp_cp_isspace(c)) sb_putc(&b,' ');
+        else sb_putc(&b,'?'); }
+    Value v=sb_value(&b); *outn=AS_STR(v)->len; return AS_STR(v)->s;   /* (a new str: no allocation until it is parsed) */
 }
 static Value make_int(Type *t, int argc, Value *argv, TupleObj *kw){
     (void)t;
     int np=npos(argc,kw);
     Value x= np>0 ? argv[0] : v_undef();
+    if(x.k==V_OBJ && x.u.o->type->layout==LY_NUM && !user_int(x)) x=mp_unbox(x);       /* int(an int/float subclass's object) */
     Value basev= np>1 ? argv[1] : kwarg(argc,argv,kw,"base",v_undef());
     if(x.k==V_UNDEF){ if(basev.k!=V_UNDEF) mp_raise_t(E_TypeError,"int() missing string argument"); return v_int(0); }
-    if(basev.k!=V_UNDEF || IS_STR(x) || IS(x,T_bytes)){
+    if(basev.k!=V_UNDEF || IS_STR(x) || IS_BYTES(x)){
         int64_t base= basev.k==V_UNDEF ? 10 : mp_index(basev,"base");
         if(base!=0 && (base<2 || base>36)) mp_raise_t(E_ValueError,"int() base must be >= 2 and <= 36, or 0");
         const char *s; int64_t n;
-        if(IS_STR(x)){ s=AS_STR(x)->s; n=AS_STR(x)->len; }
-        else if(IS(x,T_bytes)){ s=(const char*)AS_BYTES(x)->s; n=AS_BYTES(x)->len; }
+        if(IS_STR(x)){ s=ascii_number_text(AS_STR(x)->s,AS_STR(x)->len,&n); }
+        else if(IS_BYTES(x)){ s=(const char*)AS_BYTES(x)->s; n=AS_BYTES(x)->len; }
         else mp_raise_t(E_TypeError,"int() can't convert non-string with explicit base");
         int64_t v; int r=mp_parse_int(s,n,(int)base,&v);
         if(r<0) mp_raise_t(E_OverflowError,"int too large (ints are 64-bit)");
@@ -136,9 +189,11 @@ static Value make_float(Type *t, int argc, Value *argv, TupleObj *kw){
     (void)t; no_kw("float",kw); nargs("float",argc,0,1);
     if(!argc) return v_float(0);
     Value x=argv[0];
+    if(x.k==V_OBJ && x.u.o->type->layout==LY_NUM && !user_float(x)) x=mp_unbox(x);   /* float(an int/float subclass's object) */
     if(x.k==V_FLOAT) return x;
     if(IS_INTLIKE(x)) return v_float((double)x.u.i);
-    if(IS_STR(x)){ double d; if(!mp_parse_float(AS_STR(x)->s,AS_STR(x)->len,&d)){ Value r=mp_repr(x); mp_raise_t(E_ValueError,"could not convert string to float: %s",mp_cstr(r)); } return v_float(d); }
+    if(IS_STR(x)){ double d; int64_t tn; const char *ts=ascii_number_text(AS_STR(x)->s,AS_STR(x)->len,&tn); if(!mp_parse_float(ts,tn,&d)){ Value r=mp_repr(x); mp_raise_t(E_ValueError,"could not convert string to float: %s",mp_cstr(r)); } return v_float(d); }
+    if(IS_BYTES(x)){ double d; if(!mp_parse_float((const char*)AS_BYTES(x)->s,AS_BYTES(x)->len,&d)){ Value r=mp_repr(x); mp_raise_t(E_ValueError,"could not convert string to float: %s",mp_cstr(r)); } return v_float(d); }   /* float(b"1.5") */
     if(TYPE(x)->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(x),"__float__"); if(m.k!=V_UNDEF) return mp_call1(m,x);
         m=mp_type_lookup_s(TYPE(x),"__index__"); if(m.k!=V_UNDEF) return v_float((double)mp_index(x,"float")); }
     mp_raise_t(E_TypeError,"float() argument must be a string or a real number, not '%s'",mp_type_name(x));
@@ -200,7 +255,7 @@ static Value make_str(Type *t, int argc, Value *argv, TupleObj *kw){
     Value enc= np>1 ? argv[1] : kwarg(argc,argv,kw,"encoding",v_undef());
     Value r;
     if(x.k==V_UNDEF) r=mp_str("");
-    else if(enc.k!=V_UNDEF || (IS(x,T_bytes) && kwarg(argc,argv,kw,"errors",v_undef()).k!=V_UNDEF)){
+    else if(enc.k!=V_UNDEF || (IS_BYTES(x) && kwarg(argc,argv,kw,"errors",v_undef()).k!=V_UNDEF)){
         Value a[3]={x, enc.k==V_UNDEF?mp_str("utf-8"):enc, np>2?argv[2]:kwarg(argc,argv,kw,"errors",mp_str("strict"))};
         r=mp_callmethod(x,"decode",2,a+1);
     } else r=mp_tostr(x);
@@ -219,7 +274,9 @@ static Value make_bytes(Type *t, int argc, Value *argv, TupleObj *kw){
     }
     if(IS_INTLIKE(x)){ if(x.u.i<0) mp_raise_t(E_ValueError,"negative count"); char *z=(char*)xmalloc((size_t)x.u.i+1); memset(z,0,(size_t)x.u.i); Value r=mp_bytes(z,x.u.i); free(z); return r; }
     if(IS(x,T_bytes)) return x;
+    if(IS_BYTES(x)) return mp_bytes(AS_BYTES(x)->s,AS_BYTES(x)->len);
     if(IS(x,T_buffer)) return mp_bytes(((BufferObj*)x.u.o)->data,((BufferObj*)x.u.o)->len);
+    if(IS_BA(x)) return mp_bytes(((ByteArrayObj*)x.u.o)->data,((ByteArrayObj*)x.u.o)->len);
     Value l=mp_list_of(x); SBuf b={0};
     for(int64_t i=0;i<AS_LIST(l)->len;i++){ int64_t v=mp_index(AS_LIST(l)->items[i],"bytes"); if(v<0||v>255) mp_raise_t(E_ValueError,"bytes must be in range(0, 256)"); sb_putc(&b,(char)v); }
     Value r=mp_bytes(b.s?b.s:"",b.n); free(b.s); return r;
@@ -268,10 +325,14 @@ static Value make_property(Type *t, int argc, Value *argv, TupleObj *kw){
     p->set= np>1 ? argv[1] : kwarg(argc,argv,kw,"fset",v_none());
     p->del= np>2 ? argv[2] : kwarg(argc,argv,kw,"fdel",v_none());
     p->doc= np>3 ? argv[3] : kwarg(argc,argv,kw,"doc",v_none());
+    if(IS_NONE(p->doc) && !IS_NONE(p->get)){ Value d; Catch c;                /* (the getter's docstring) */
+        if(!CATCH_BEGIN(c)){ if(mp_getattr_opt(p->get,mp_intern("__doc__"),&d)) p->doc=d; CATCH_END(c); } else mp_catch_exc(&c); }
     return v_obj(p);
 }
 static Value make_box(Type *t, int argc, Value *argv, TupleObj *kw){
-    no_kw(t->name->s,kw); nargs(t->name->s,argc,1,1);
+    no_kw(t->name->s,kw);
+    if(!argc){ BoxObj *b=(BoxObj*)mp_alloc(t,sizeof(BoxObj)); b->v=v_none(); return v_obj(b); }   /* (a subclass's, its __init__ fills it) */
+    nargs(t->name->s,argc,1,1);
     BoxObj *b=(BoxObj*)mp_alloc(t,sizeof(BoxObj)); b->v=argv[0]; return v_obj(b);
 }
 static Value make_super(Type *t, int argc, Value *argv, TupleObj *kw){
@@ -288,12 +349,12 @@ static Value make_super(Type *t, int argc, Value *argv, TupleObj *kw){
         if(obj.k==V_UNDEF) mp_raise_t(E_RuntimeError,"super(): arg[0] deleted");
         start=AS_TYPE(cls);
     } else {
-        if(!IS(argv[0],T_type)) mp_raise_t(E_TypeError,"super() argument 1 must be a type, not %s",mp_type_name(argv[0]));
+        if(!IS_TYPE(argv[0])) mp_raise_t(E_TypeError,"super() argument 1 must be a type, not %s",mp_type_name(argv[0]));
         start=AS_TYPE(argv[0]); obj= argc>1 ? argv[1] : v_none();
     }
     SuperObj *s=(SuperObj*)mp_alloc(T_super,sizeof(SuperObj));
     s->start=start; s->obj=obj;
-    s->objtype= IS(obj,T_type) && mp_is_subtype(AS_TYPE(obj),start) ? AS_TYPE(obj) : TYPE(obj);
+    s->objtype= IS_TYPE(obj) && mp_is_subtype(AS_TYPE(obj),start) ? AS_TYPE(obj) : TYPE(obj);
     if(!mp_is_subtype(s->objtype,start)) mp_raise_t(E_TypeError,"super(type, obj): obj must be an instance or subtype of type");
     return v_obj(s);
 }
@@ -412,13 +473,16 @@ BI(map){ no_kw("map",kw); if(argc<2) mp_raise_t(E_TypeError,"map() must have at 
     return mp_iter_kind(IT_MAP,argv[0],its,v_undef()); }
 BI(filter){ no_kw("filter",kw); nargs("filter",argc,2,2); return mp_iter_kind(IT_FILTER,argv[0],mp_iter(argv[1]),v_undef()); }
 BI(reversed){ no_kw("reversed",kw); nargs("reversed",argc,1,1); Value x=argv[0];
-    Value m=mp_type_lookup_s(TYPE(x),"__reversed__");
-    if(m.k!=V_UNDEF && !IS(m,T_native)) return mp_call1(m,x);
+    Value m=mp_type_lookup_user(TYPE(x),"__reversed__");
+    if(m.k!=V_UNDEF) return mp_call1(m,x);
+    return mp_reversed_builtin(x); }
+/* reversed() of a built-in sequence (list.__reversed__ ...): its subclass's methods not asked */
+Value mp_reversed_builtin(Value x){
     if(IS(x,T_range)){ RangeObj *r=(RangeObj*)x.u.o; int64_t n=mp_len(x); return mp_iter(mp_range(r->start+(n-1)*r->step,r->start-r->step,-r->step)); }
-    if(IS(x,T_dict)){ Value l=mp_list_of(x); Value it=mp_iter_kind(IT_REVLIST,l,v_undef(),v_undef()); ((IterObj*)it.u.o)->i=AS_LIST(l)->len-1; return it; }
-    if(!(IS(x,T_list)||IS(x,T_tuple)||IS_STR(x)||IS(x,T_bytes)||((TYPE(x)->flags&TF_DUNDERS) && mp_type_lookup_s(TYPE(x),"__getitem__").k!=V_UNDEF)))
+    if(IS_DICT(x) || IS(x,T_dict_keys) || IS(x,T_dict_values) || IS(x,T_dict_items)){ Value l=mp_list_of(x); Value it=mp_iter_kind(IT_REVLIST,l,v_undef(),v_undef()); ((IterObj*)it.u.o)->i=AS_LIST(l)->len-1; return it; }
+    if(!(IS_LIST(x)||IS_TUPLE(x)||IS_STR(x)||IS_BYTES(x)||((TYPE(x)->flags&TF_DUNDERS) && mp_type_lookup_s(TYPE(x),"__getitem__").k!=V_UNDEF)))
         mp_raise_t(E_TypeError,"'%s' object is not reversible",mp_type_name(x));
-    if(IS(x,T_bytes)) x=mp_list_of(x);
+    if(IS_BYTES(x)) x=mp_list_of(x);
     Value it=mp_iter_kind(IT_REVLIST,x,v_undef(),v_undef()); ((IterObj*)it.u.o)->i=mp_len(x)-1; return it; }
 BI(iter){ no_kw("iter",kw); nargs("iter",argc,1,2);
     if(argc==2) return mp_iter_kind(IT_CALL,argv[0],argv[1],v_undef());
@@ -446,18 +510,23 @@ BI(next){ no_kw("next",kw); nargs("next",argc,1,2);
     mp_raise(mp_exc_args(E_StopIteration,mp_tuple(0,NULL))); }
 BI(isinstance){ no_kw("isinstance",kw); nargs("isinstance",argc,2,2);
     Value c=argv[1];
-    if(IS(c,T_tuple)){ for(int64_t i=0;i<AS_TUPLE(c)->len;i++){ Value a[2]={argv[0],AS_TUPLE(c)->items[i]}; if(mp_truth(bi_isinstance(2,a,NULL))) return v_bool(1); } return v_bool(0); }
-    if(!IS(c,T_type)){ Value m=mp_type_lookup_s(TYPE(c),"__instancecheck__");       /* int | str (typing.Union) */
+    if(IS_TUPLE(c)){ for(int64_t i=0;i<AS_TUPLE(c)->len;i++){ Value a[2]={argv[0],AS_TUPLE(c)->items[i]}; if(mp_truth(bi_isinstance(2,a,NULL))) return v_bool(1); } return v_bool(0); }
+    if(!IS_TYPE(c)){ Value m=mp_type_lookup_s(TYPE(c),"__instancecheck__");       /* int | str (typing.Union) */
         if(m.k!=V_UNDEF && !IS(m,T_native)) return v_bool(mp_truth(mp_call2(m,c,argv[0])));
         mp_raise_t(E_TypeError,"isinstance() arg 2 must be a type, a tuple of types, or a union"); }
+    if(TYPE(argv[0])==AS_TYPE(c)) return v_bool(1);
+    if(TYPE(c)!=T_type && (TYPE(c)->flags&TF_HEAP)){ Value m=mp_type_lookup_user(TYPE(c),"__instancecheck__");   /* a metaclass's (abc.ABCMeta) */
+        if(m.k!=V_UNDEF) return v_bool(mp_truth(mp_call2(m,c,argv[0]))); }
     return v_bool(mp_isinstance(argv[0],AS_TYPE(c))); }
 BI(issubclass){ no_kw("issubclass",kw); nargs("issubclass",argc,2,2);
-    if(!IS(argv[0],T_type)) mp_raise_t(E_TypeError,"issubclass() arg 1 must be a class");
+    if(!IS_TYPE(argv[0])) mp_raise_t(E_TypeError,"issubclass() arg 1 must be a class");
     Value c=argv[1];
-    if(IS(c,T_tuple)){ for(int64_t i=0;i<AS_TUPLE(c)->len;i++){ Value a[2]={argv[0],AS_TUPLE(c)->items[i]}; if(mp_truth(bi_issubclass(2,a,NULL))) return v_bool(1); } return v_bool(0); }
-    if(!IS(c,T_type)){ Value m=mp_type_lookup_s(TYPE(c),"__subclasscheck__");
-        if(m.k!=V_UNDEF && !IS(m,T_native)) return v_bool(mp_truth(mp_call2(m,c,argv[0])));
+    if(IS_TUPLE(c)){ for(int64_t i=0;i<AS_TUPLE(c)->len;i++){ Value a[2]={argv[0],AS_TUPLE(c)->items[i]}; if(mp_truth(bi_issubclass(2,a,NULL))) return v_bool(1); } return v_bool(0); }
+    if(!IS_TYPE(c)){ Value m=mp_type_lookup_user(TYPE(c),"__subclasscheck__");
+        if(m.k!=V_UNDEF) return v_bool(mp_truth(mp_call2(m,c,argv[0])));
         mp_raise_t(E_TypeError,"issubclass() arg 2 must be a class, a tuple of classes, or a union"); }
+    if(TYPE(c)!=T_type && (TYPE(c)->flags&TF_HEAP)){ Value m=mp_type_lookup_user(TYPE(c),"__subclasscheck__");   /* a metaclass's (abc.ABCMeta) */
+        if(m.k!=V_UNDEF) return v_bool(mp_truth(mp_call2(m,c,argv[0]))); }
     return v_bool(mp_is_subtype(AS_TYPE(argv[0]),AS_TYPE(c))); }
 BI(hasattr){ no_kw("hasattr",kw); nargs("hasattr",argc,2,2); if(!IS_STR(argv[1])) mp_raise_t(E_TypeError,"attribute name must be string, not '%s'",mp_type_name(argv[1]));
     Value v; Catch c; int r;
@@ -478,7 +547,7 @@ BI(id){ no_kw("id",kw); nargs("id",argc,1,1); Value x=argv[0]; if(x.k==V_OBJ) re
 BI(chr){ no_kw("chr",kw); nargs("chr",argc,1,1); int64_t c=mp_index(argv[0],"chr"); if(c<0||c>0x10FFFF) mp_raise_t(E_ValueError,"chr() arg not in range(0x110000)"); char u[4]; int m=mp_utf8_encode(u,(uint32_t)c); return mp_strn(u,m); }
 BI(ord){ no_kw("ord",kw); nargs("ord",argc,1,1); Value s=argv[0];
     if(IS_STR(s)){ if(AS_STR(s)->cplen!=1) mp_raise_t(E_TypeError,"ord() expected a character, but string of length %lld found",(long long)AS_STR(s)->cplen); int64_t p=0; return v_int(mp_utf8_decode(AS_STR(s)->s,AS_STR(s)->len,&p)); }
-    if(IS(s,T_bytes)){ if(AS_BYTES(s)->len!=1) mp_raise_t(E_TypeError,"ord() expected a character, but string of length %lld found",(long long)AS_BYTES(s)->len); return v_int(AS_BYTES(s)->s[0]); }
+    if(IS_BYTES(s)){ if(AS_BYTES(s)->len!=1) mp_raise_t(E_TypeError,"ord() expected a character, but string of length %lld found",(long long)AS_BYTES(s)->len); return v_int(AS_BYTES(s)->s[0]); }
     mp_raise_t(E_TypeError,"ord() expected string of length 1, but %s found",mp_type_name(s)); }
 static Value radix(Value x, int base, const char *prefix){
     int64_t v=mp_index(x,"radix"); uint64_t a= v<0 ? (uint64_t)(-(v+1))+1 : (uint64_t)v;
@@ -490,7 +559,11 @@ BI(oct){ no_kw("oct",kw); nargs("oct",argc,1,1); return radix(argv[0],8,"0o"); }
 BI(bin){ no_kw("bin",kw); nargs("bin",argc,1,1); return radix(argv[0],2,"0b"); }
 BI(divmod){ no_kw("divmod",kw); nargs("divmod",argc,2,2);
     Value a=argv[0], b=argv[1];
-    if(TYPE(a)->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(a),"__divmod__"); if(m.k!=V_UNDEF) return mp_call2(m,a,b); }
+    if(TYPE(a)->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(a),"__divmod__");
+        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,a,b); if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; } }
+    if(TYPE(b)->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(b),"__rdivmod__");     /* divmod(1, obj): obj.__rdivmod__(1) */
+        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,b,a); if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; } }
+    a=mp_unbox(a); b=mp_unbox(b);
     if(!((IS_INTLIKE(a)||a.k==V_FLOAT) && (IS_INTLIKE(b)||b.k==V_FLOAT))) mp_raise_t(E_TypeError,"unsupported operand type(s) for divmod(): '%s' and '%s'",mp_type_name(a),mp_type_name(b));
     Value r[2]={mp_binop(OP_FloorDiv,a,b),mp_binop(OP_Mod,a,b)}; return mp_tuple(2,r); }
 /* a*b mod m without 128-bit numbers (a, b < m < 2**63): as compiled programs do it */
@@ -506,6 +579,13 @@ BI(pow){
     Value mod= np>2 ? argv[2] : kwarg(argc,argv,kw,"mod",v_none());
     if(base.k==V_UNDEF || exp.k==V_UNDEF) mp_raise_t(E_TypeError,"pow() missing required argument");
     if(IS_NONE(mod)) return mp_binop(OP_Pow,base,exp);
+    if(TYPE(base)->flags&TF_DUNDERS){                  /* pow(x, y, z) of an object: type(x).__pow__(x, y, z) */
+        Value m=mp_type_lookup_s(TYPE(base),"__pow__");
+        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value v[3]={base,exp,mod}; Value r=mp_call(m,3,v,NULL);
+            if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; }
+        mp_raise_t(E_TypeError,"unsupported operand type(s) for ** or pow(): '%s', '%s', '%s'",mp_type_name(base),mp_type_name(exp),mp_type_name(mod));
+    }
+    base=mp_unbox(base); exp=mp_unbox(exp); mod=mp_unbox(mod);
     if(!IS_INTLIKE(base)||!IS_INTLIKE(exp)||!IS_INTLIKE(mod)) mp_raise_t(E_TypeError,"pow() 3rd argument not allowed unless all arguments are integers");
     int64_t m=mod.u.i, e=exp.u.i; if(m==0) mp_raise_t(E_ValueError,"pow() 3rd argument cannot be 0");
     uint64_t mm= m<0 ? (uint64_t)0-(uint64_t)m : (uint64_t)m;
@@ -528,6 +608,7 @@ BI(round){
     Value nd= np>1 ? argv[1] : kwarg(argc,argv,kw,"ndigits",v_none());
     if(x.k==V_UNDEF) mp_raise_t(E_TypeError,"round() missing required argument 'number' (pos 1)");
     if(TYPE(x)->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(x),"__round__"); if(m.k!=V_UNDEF){ if(IS_NONE(nd)) return mp_call1(m,x); return mp_call2(m,x,nd); } }
+    x=mp_unbox(x);
     if(IS_INTLIKE(x)){
         if(IS_NONE(nd)) return v_int(x.u.i);
         int64_t n=mp_index(nd,"round"); if(n>=0) return v_int(x.u.i);
@@ -575,6 +656,9 @@ BI(print){
     Catch c;
     if(!CATCH_BEGIN(c)){ mp_print_to(&b,np,argv,sep,end); CATCH_END(c); }
     else { free(b.s); mp_raise(mp_catch_exc(&c)); }
+    if(IS_NONE(file)){                                       /* sys.stdout now (it may have been replaced) */
+        Value sm, so;
+        if(mp_dict_get_s(mp_modules,"sys",&sm) && IS(sm,T_module) && mp_dict_get_s(((ModuleObj*)sm.u.o)->dict,"stdout",&so) && !IS_NONE(so)) file=so; }
     if(IS_NONE(file) || (file.k==V_OBJ && sys_stdout.k==V_OBJ && file.u.o==sys_stdout.u.o)){ mp_write_out(b.s?b.s:"",b.n); free(b.s); }
     else if(file.k==V_OBJ && sys_stderr.k==V_OBJ && file.u.o==sys_stderr.u.o){ mp_write_err(b.s?b.s:"",b.n); free(b.s); }
     else { Value s=sb_value(&b); mp_callmethod(file,"write",1,&s); }
@@ -604,7 +688,7 @@ BI(vars){ no_kw("vars",kw); nargs("vars",argc,0,1);
     Value d; if(mp_getattr_opt(argv[0],mp_intern("__dict__"),&d)) return d;
     mp_raise_t(E_TypeError,"vars() argument must have __dict__ attribute"); }
 BI(globals){ (void)argc; (void)argv; no_kw("globals",kw); Frame *f=mp_ts->frame; return v_obj(f?f->globals:mp_builtins); }
-BI(locals){ (void)argc; (void)argv; no_kw("locals",kw); Frame *f=mp_ts->frame;
+Value mp_frame_locals(Frame *f){
     if(!f) return v_obj(mp_builtins);
     if(f->locals) return v_obj(f->locals);
     if(f->code->flags&CO_MODULE) return v_obj(f->globals);
@@ -612,22 +696,68 @@ BI(locals){ (void)argc; (void)argv; no_kw("locals",kw); Frame *f=mp_ts->frame;
     for(int i=0;i<f->code->nlocals;i++) if(f->fast[i].k!=V_UNDEF && f->code->varnames[i]->s[0]!='.') mp_dict_set(AS_DICT(d),v_obj(f->code->varnames[i]),f->fast[i]);
     for(int i=0;i<f->code->ncells+f->code->nfrees;i++){ Value v=((CellObj*)f->cells[i].u.o)->v; if(v.k!=V_UNDEF) mp_dict_set(AS_DICT(d),v_obj(i<f->code->ncells?f->code->cellnames[i]:f->code->freenames[i-f->code->ncells]),v); }
     return d; }
+BI(locals){ (void)argc; (void)argv; no_kw("locals",kw); return mp_frame_locals(mp_ts->frame); }
+Value mp_compile_text(Value src, const char *file, const char *mode);
+Value mp_exec_code(Value code, DictObj *globals, DictObj *locals, int is_eval, int locals_given);
+/* compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1) */
+BI(compile){
+    Value a[6]; int n=argc; for(int i=0;i<6;i++) a[i]=i<argc?argv[i]:v_undef();
+    if(kw) for(int64_t i=0;i<kw->len;i++){ const char *k=mp_cstr(kw->items[i]); Value v=argv[argc+i];
+        if(!strcmp(k,"source")) a[0]=v; else if(!strcmp(k,"filename")) a[1]=v; else if(!strcmp(k,"mode")) a[2]=v;
+        else if(!strcmp(k,"flags")) a[3]=v; else if(!strcmp(k,"dont_inherit")) a[4]=v; else if(!strcmp(k,"optimize")||!strcmp(k,"_feature_version")) a[5]=v;
+        else mp_raise_t(E_TypeError,"compile() got an unexpected keyword argument '%s'",k); }
+    (void)n;
+    if(a[0].k==V_UNDEF || a[1].k==V_UNDEF || a[2].k==V_UNDEF) mp_raise_t(E_TypeError,"compile() missing required argument");
+    if(!IS_STR(a[2])) mp_raise_t(E_TypeError,"compile() argument 'mode' must be str");
+    Value fname= IS_STR(a[1]) ? a[1] : mp_callmethod(a[1],"__str__",0,NULL);
+    return mp_compile_text(a[0],mp_cstr(fname),mp_cstr(a[2])); }
+static Value exec_or_eval(int argc, Value *argv, TupleObj *kw, int is_eval){
+    const char *nm=is_eval?"eval":"exec";
+    Value a[3]; for(int i=0;i<3;i++) a[i]=i<argc?argv[i]:v_undef();
+    if(argc>3) mp_raise_t(E_TypeError,"%s expected at most 3 arguments, got %d",nm,argc);
+    if(kw) for(int64_t i=0;i<kw->len;i++){ const char *k=mp_cstr(kw->items[i]); Value v=argv[argc+i];
+        if(!strcmp(k,"globals")) a[1]=v; else if(!strcmp(k,"locals")) a[2]=v; else if(!strcmp(k,"closure")) ;
+        else mp_raise_t(E_TypeError,"%s() got an unexpected keyword argument '%s'",nm,k); }
+    if(a[0].k==V_UNDEF) mp_raise_t(E_TypeError,"%s expected at least 1 argument, got 0",nm);
+    DictObj *g=NULL, *l=NULL;
+    if(a[1].k!=V_UNDEF && a[1].k!=V_NONE){ if(!IS_DICT(a[1])) mp_raise_t(E_TypeError,"%s() globals must be a dict, not %s",nm,TYPE(a[1])->name->s); g=AS_DICT(a[1]); }
+    if(a[2].k!=V_UNDEF && a[2].k!=V_NONE){ if(!IS_DICT(a[2])) mp_raise_t(E_TypeError,"locals must be a mapping"); l=AS_DICT(a[2]); }
+    if(g && !l) l=NULL;
+    Value code;
+    if(IS(a[0],T_code)) code=a[0];
+    else { if(!IS_STR(a[0]) && !IS(a[0],T_bytes)) mp_raise_t(E_TypeError,"%s() arg 1 must be a string, bytes or code object",nm);
+        code=mp_compile_text(a[0],"<string>",is_eval?"eval":"exec"); }
+    Value keep=code; (void)keep;
+    return mp_exec_code(code,g,l,is_eval,a[2].k!=V_UNDEF && a[2].k!=V_NONE); }
+BI(exec){ return exec_or_eval(argc,argv,kw,0); }
+BI(eval){ return exec_or_eval(argc,argv,kw,1); }
 static void dir_add(Value set, DictObj *d){ if(!d) return; int64_t pos=0; Value k; while(mp_dict_next(d,&pos,&k,NULL)) if(IS_STR(k)) mp_set_add((SetObj*)set.u.o,k); }
+BI(exit){ no_kw("exit",kw); nargs("exit",argc,0,1);                  /* exit() / quit(): as sys.exit() */
+    mp_raise(mp_exc_args(E_SystemExit,argc?mp_tuple(1,argv):mp_tuple(0,NULL))); }
 BI(dir){ no_kw("dir",kw); nargs("dir",argc,0,1);
     Value s=mp_set(T_set);
     if(!argc){ Value l=bi_locals(0,NULL,NULL); dir_add(s,AS_DICT(l)); }
     else {
         Value x=argv[0]; Type *t=TYPE(x);
-        if(t->layout==LY_TYPE){ Type *c=AS_TYPE(x); for(int i=0;i<c->nmro;i++) dir_add(s,c->mro[i]->dict); }
-        else { Value d; if(mp_getattr_opt(x,mp_intern("__dict__"),&d) && IS(d,T_dict)) dir_add(s,AS_DICT(d)); for(int i=0;i<t->nmro;i++) dir_add(s,t->mro[i]->dict); }
+        Value ud= t->layout!=LY_TYPE ? mp_type_lookup_user(t,"__dir__") : v_undef();
+        if(ud.k!=V_UNDEF){ Value l=mp_list_of(mp_call1(ud,x)); mp_sort(l,v_none(),0); return l; }   /* (a class's own __dir__) */
+        if(t->layout==LY_MODULE){ dir_add(s,((ModuleObj*)x.u.o)->dict); }                         /* (a module: its names only) */
+        else if(t->layout==LY_TYPE){ Type *c=AS_TYPE(x); for(int i=0;i<c->nmro;i++) dir_add(s,c->mro[i]->dict); }
+        else { Value d; if(mp_getattr_opt(x,mp_intern("__dict__"),&d) && IS_DICT(d)) dir_add(s,AS_DICT(d)); for(int i=0;i<t->nmro;i++) dir_add(s,t->mro[i]->dict); }
     }
     Value l=mp_list_of(s); mp_sort(l,v_none(),0); return l; }
+Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
+/* open(): the io module's text or binary file (the standard library, as compiled programs have it) */
 BI(open){
     int np=npos(argc,kw);
     Value path= np>0 ? argv[0] : kwarg(argc,argv,kw,"file",v_undef());
     Value mode= np>1 ? argv[1] : kwarg(argc,argv,kw,"mode",mp_str("r"));
     if(path.k==V_UNDEF) mp_raise_t(E_TypeError,"open() missing required argument 'file' (pos 1)");
-    return mp_open(path,mode);
+    if(!IS_STR(mode)) mp_raise_t(E_TypeError,"open() argument 'mode' must be str, not %s",mp_type_name(mode));
+    if(!IS_STR(path)) mp_raise_t(E_TypeError,"expected str, bytes or os.PathLike object, not %s",mp_type_name(path));
+    Value nm=mp_str("io"), io=mp_builtin_import(1,&nm,NULL);
+    Value fn=mp_getattr_s(io,strchr(mp_cstr(mode),'b')?"_open_binary":"_open_text");
+    return mp_call(fn,argc,argv,kw);
 }
 BI(exec_eval_unsupported){ (void)argc; (void)argv; (void)kw; mp_raise_t(E_NotImplementedError,"not available"); }
 Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
@@ -658,7 +788,7 @@ Value mp_open(Value path, Value modev){
         char *data=mpy_fs_try_read_file(p,&err);
         if(!data){
             free(err);
-            if(mode=='r'){ Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_exc_args(E_FileNotFoundError,mp_tuple(3,args))); }
+            if(mode=='r'){ Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_call(v_obj(E_FileNotFoundError),3,args,NULL)); }
         } else {
             size_t n=mpy_fs_last_len ? mpy_fs_last_len : strlen(data);
             f->buf=data; f->len=(int64_t)n; f->cap=(int64_t)n+1;
@@ -668,7 +798,7 @@ Value mp_open(Value path, Value modev){
     }
     if(mode=='w'){
         char *err=NULL;
-        if(mpy_fs_write_file(p,"",0,&err)){ free(err); Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_exc_args(E_FileNotFoundError,mp_tuple(3,args))); }
+        if(mpy_fs_write_file(p,"",0,&err)){ free(err); Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_call(v_obj(E_FileNotFoundError),3,args,NULL)); }
     }
     if(!f->buf){ f->buf=(char*)xmalloc(64); f->cap=64; }
     return v_obj(f);
@@ -710,9 +840,9 @@ void mp_init(void){
     /* the first types by hand: type, object, str, dict (interning needs them) */
     T_type=(Type*)mp_alloc(NULL,sizeof(Type)); T_type->h.type=T_type; T_type->layout=LY_TYPE; T_type->flags=TF_BUILTIN|TF_BASETYPE;
     T_object=(Type*)mp_alloc(T_type,sizeof(Type)); T_object->layout=LY_OBJECT; T_object->flags=TF_BUILTIN|TF_BASETYPE;
-    T_str=(Type*)mp_alloc(T_type,sizeof(Type)); T_str->layout=LY_STR; T_str->flags=TF_BUILTIN;
-    T_dict=(Type*)mp_alloc(T_type,sizeof(Type)); T_dict->layout=LY_DICT; T_dict->flags=TF_BUILTIN;
-    T_tuple=(Type*)mp_alloc(T_type,sizeof(Type)); T_tuple->layout=LY_TUPLE; T_tuple->flags=TF_BUILTIN;
+    T_str=(Type*)mp_alloc(T_type,sizeof(Type)); T_str->layout=LY_STR; T_str->flags=TF_BUILTIN|TF_BASETYPE;
+    T_dict=(Type*)mp_alloc(T_type,sizeof(Type)); T_dict->layout=LY_DICT; T_dict->flags=TF_BUILTIN|TF_BASETYPE;
+    T_tuple=(Type*)mp_alloc(T_type,sizeof(Type)); T_tuple->layout=LY_TUPLE; T_tuple->flags=TF_BUILTIN|TF_BASETYPE;
     Type *boot[5]={T_type,T_object,T_str,T_dict,T_tuple};
     const char *names[5]={"type","object","str","dict","tuple"};
     for(int i=0;i<5;i++){ boot[i]->mro=(Type**)xmalloc(sizeof(Type*)*2); }
@@ -728,10 +858,10 @@ void mp_init(void){
     T_bool=btype("bool",T_int,LY_OBJECT,0,make_bool);
     T_float=btype("float",T_object,LY_OBJECT,TF_BASETYPE,make_float);
     T_complex=btype("complex",T_object,LY_COMPLEX,0,make_complex);
-    T_bytes=btype("bytes",T_object,LY_BYTES,0,make_bytes);
-    T_list=btype("list",T_object,LY_LIST,0,make_list);
-    T_set=btype("set",T_object,LY_SET,0,make_set);
-    T_frozenset=btype("frozenset",T_object,LY_SET,0,make_set);
+    T_bytes=btype("bytes",T_object,LY_BYTES,TF_BASETYPE,make_bytes);
+    T_list=btype("list",T_object,LY_LIST,TF_BASETYPE,make_list);
+    T_set=btype("set",T_object,LY_SET,TF_BASETYPE,make_set);
+    T_frozenset=btype("frozenset",T_object,LY_SET,TF_BASETYPE,make_set);
     T_range=btype("range",T_object,LY_RANGE,0,make_range);
     T_slice=btype("slice",T_object,LY_SLICE,0,make_slice);
     T_function=btype("function",T_object,LY_FUNC,0,NULL);
@@ -743,9 +873,9 @@ void mp_init(void){
     T_generator=btype("generator",T_object,LY_GEN,0,NULL);
     T_coroutine=btype("coroutine",T_object,LY_GEN,0,NULL);
     T_asyncgen=btype("async_generator",T_object,LY_GEN,0,NULL);
-    T_property=btype("property",T_object,LY_PROPERTY,0,make_property);
-    T_staticmethod=btype("staticmethod",T_object,LY_STATICMETHOD,0,make_box);
-    T_classmethod=btype("classmethod",T_object,LY_CLASSMETHOD,0,make_box);
+    T_property=btype("property",T_object,LY_PROPERTY,TF_BASETYPE,make_property);
+    T_staticmethod=btype("staticmethod",T_object,LY_STATICMETHOD,TF_BASETYPE,make_box);
+    T_classmethod=btype("classmethod",T_object,LY_CLASSMETHOD,TF_BASETYPE,make_box);
     T_super=btype("super",T_object,LY_SUPER,0,make_super);
     T_iter=btype("iterator",T_object,LY_ITER,0,NULL);
     T_file=btype("TextIOWrapper",T_object,LY_FILE,0,NULL);
@@ -817,13 +947,17 @@ void mp_init(void){
     mp_dict_set_s(mp_builtins,"__debug__",v_bool(1)); mp_dict_set_s(mp_builtins,"__name__",mp_str("builtins"));
     reg("len",bi_len); reg("repr",bi_repr); reg("ascii",bi_ascii); reg("abs",bi_abs); reg("min",bi_min); reg("max",bi_max); reg("sum",bi_sum);
     reg("sorted",bi_sorted); reg("any",bi_any); reg("all",bi_all); reg("enumerate",bi_enumerate); reg("zip",bi_zip); reg("map",bi_map);
+    reg("exit",bi_exit); reg("quit",bi_exit);
+    mp_dict_set_s(mp_builtins,"__doc__",mp_str("Built-in functions, types, exceptions, and other objects."));
+    mp_dict_set_s(mp_builtins,"__package__",mp_str("")); mp_dict_set_s(mp_builtins,"__spec__",v_none()); mp_dict_set_s(mp_builtins,"__loader__",v_none());
     reg("filter",bi_filter); reg("reversed",bi_reversed); reg("iter",bi_iter); reg("next",bi_next); reg("anext",bi_anext); reg("__mpy_tstr__",bi_mpy_tstr); reg("aiter",bi_aiter); reg("isinstance",bi_isinstance);
     reg("issubclass",bi_issubclass); reg("hasattr",bi_hasattr); reg("getattr",bi_getattr); reg("setattr",bi_setattr); reg("delattr",bi_delattr);
     reg("callable",bi_callable); reg("hash",bi_hash); reg("id",bi_id); reg("chr",bi_chr); reg("ord",bi_ord); reg("hex",bi_hex); reg("oct",bi_oct);
     reg("bin",bi_bin); reg("divmod",bi_divmod); reg("pow",bi_pow); reg("round",bi_round); reg("format",bi_format); reg("print",bi_print);
-    reg("input",bi_input); reg("vars",bi_vars); reg("globals",bi_globals); reg("locals",bi_locals); reg("dir",bi_dir); reg("open",bi_open);
+    reg("input",bi_input); reg("vars",bi_vars); reg("globals",bi_globals); reg("locals",bi_locals); reg("compile",bi_compile); reg("exec",bi_exec); reg("eval",bi_eval); reg("dir",bi_dir); reg("open",bi_open);
     reg("__import__",mp_builtin_import); reg("__typealias__",bi_typealias);
     (void)bi_exec_eval_unsupported; (void)bi_build_class;
+    mp_bytearray_init();
     mp_methods_init();
     /* sys.stdout / sys.stderr */
     Value so=mp_new_type("TextIO",T_object,LY_INSTANCE,0);

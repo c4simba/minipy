@@ -1,0 +1,39 @@
+Color.RED <Color.RED: 1> Color.GREEN Color.BLUE [<Color.RED: 1>, <Color.GREEN: 2>, <Color.BLUE: 3>] 3 True RED 1
+{'RED': <Color.RED: 1>, 'GREEN': <Color.GREEN: 2>, 'BLUE': <Color.BLUE: 3>, 'CRIMSON': <Color.RED: 1>} True True False <enum 'Color'> True <enum 'Color'>
+r True True False True
+Color.RED Color.GREEN Color.BLUE ['BLUE', 'GREEN', 'RED']
+ValueError 9 is not a valid Color
+TypeError '<' not supported between instances of 'Color' and 'Color'
+[<Shape.SQUARE: 1>, <Shape.CIRCLE: 2>, <Shape.TRI: 3>] 2
+5.976e+24 9.803 (3.303e+23, 2439700.0)
+1 <Num.TWO: 2> 2 6 True True [<Num.ONE: 1>, <Num.THREE: 3>] 20 2 3 003 True 2 1 3
+happy <Mood.HAPPY: 'happy'> True sad SAD happy-sad sad True happy!
+Perm.R|W <Perm.R|W: 6> True False [<Perm.R: 4>, <Perm.W: 2>] 2 False Perm.W|X Perm.R|W|X Perm(0) Perm.W <Perm: 0>
+5 <Open.RD|CREATE: 5> 4 13 3 True 5 False [<Open.RD: 1>, <Open.CREATE: 4>] 16
+[<Weekday.MON: 1>, <Weekday.TUE: 2>, <Weekday.WED: 4>] Weekday.WEEKDAYS <Weekday.MON|WED: 5> 7
+ValueError duplicate values found in <enum 'Dup'>: B -> A
+[<Animal.ANT: 1>, <Animal.BEE: 2>, <Animal.CAT: 3>] 2 Animal.CAT <enum 'Animal'>
+Pets.FISH Pets.DOG
+Status.ACTIVE inactive! active
+AttributeError cannot reassign member 'RED'
+<class 'enum.EnumType'> <class 'enum.EnumType'> Color Color
+[<Ordinal.A: 'a0'>, <Ordinal.B: 'b1'>] b1
+['X', 'fn'] 42 2 7
+[<Ign.ONE: 1>] False
+ValueError aliases found in <enum 'V'>: B -> A
+ValueError invalid enum 'V2': missing values 2
+ValueError <flag 'Strict'> invalid value 7
+    given 0b0 111
+  allowed 0b0 011
+<Conform.A|B: 3> 7 <Eject.A|B: 3>
+[<Color.RED: 1>, <Color.GREEN: 2>, <Color.BLUE: 4>] Color.WHITE <Color.BLACK: 0> Color.RED|BLUE [<Color.RED: 1>, <Color.GREEN: 2>, <Color.BLUE: 4>] Color.RED|GREEN WHITE GREEN|BLUE 3 Color.GREEN|BLUE Color.BLACK True
+[1, 4, 8] 0b0 1010 0b1 0101
+P=p Sub.P ['P=p', 'Q=q']
+TypeError <enum 'Bad'> cannot extend <enum 'Sub'>
+404 Ok 405 True x 200 True
+[<Size.S: 10>, <Size.M: 11>, <Size.L: 12>] 11 12
+[<Dir.UP: 'up'>, <Dir.DOWN: 'down'>] True down
+6 <Perm.R|W: 6> 7 7 5 4 <Perm.W|X: 3> [<Perm.R: 4>, <Perm.X: 1>] 0 False
+Dog [   Cat] <Animal.DOG: 1>
+Coord.UNIT 1 Coord.ORIGIN True
+dict_keys(['RED', 'GREEN', 'BLUE', 'WHITE', 'BLACK']) ['L', 'M', 'S'] True

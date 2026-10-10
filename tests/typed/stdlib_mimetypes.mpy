@@ -1,0 +1,9 @@
+import mimetypes
+for f in ['a.html', 'b.txt', 'c.png', 'd.json', 'e.tar.gz', 'f.unknownext', 'g.JPG', 'http://x/y.css?q=1', 'h.svg',
+          'i.js', 'j.mp3', 'k.pdf', 'l.zip', 'm.py', 'n.c', 'o.wasm', 'p.csv', 'q.xml', 'r.gif', 's.webp', 't.ico',
+          'u.woff2', 'v.md', 'data:text/plain;base64,xx', 'w.tgz']:
+    print(f, mimetypes.guess_type(f))
+print(mimetypes.guess_extension('text/html'), mimetypes.guess_extension('image/jpeg'), mimetypes.guess_extension('application/json'), sorted(mimetypes.guess_all_extensions('image/jpeg')))
+print(mimetypes.guess_file_type('x.tgz'), mimetypes.guess_type('a.rtf', strict=False), mimetypes.guess_type('a.rtf'))
+mimetypes.add_type('application/x-mine', '.mine')
+print(mimetypes.guess_type('z.mine'), mimetypes.guess_extension('application/x-mine'), mimetypes.types_map['.png'], mimetypes.encodings_map['.gz'])

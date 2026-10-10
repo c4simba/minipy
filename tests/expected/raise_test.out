@@ -1,8 +1,10 @@
 Traceback (most recent call last):
   File "tests/raise_test.mpy", line 7, in <module>
     wrap()
+    ~~~~^^
   File "tests/raise_test.mpy", line 5, in wrap
     bad()
+    ~~~^^
   File "tests/raise_test.mpy", line 2, in bad
     raise "boom"
 TypeError: exceptions must derive from BaseException

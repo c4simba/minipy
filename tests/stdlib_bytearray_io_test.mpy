@@ -1,0 +1,26 @@
+# the standard library with bytearray: hashlib, base64, binascii, struct.pack_into, io (BytesIO, readinto), files
+import io, struct, hashlib, base64, binascii, json
+ba = bytearray(b"hello world")
+print(hashlib.sha256(ba).hexdigest(), hashlib.md5(bytearray(b"x")).hexdigest())
+print(base64.b64encode(ba), base64.b64decode(bytearray(b"aGk=")), binascii.hexlify(ba), binascii.crc32(ba))
+buf = bytearray(8)
+struct.pack_into("<II", buf, 0, 1, 2)
+print(buf, struct.unpack("<II", buf), struct.unpack_from("<I", buf, 4), struct.calcsize("<II"))
+b = io.BytesIO()
+b.write(ba)
+b.write(bytearray(b"!"))
+print(b.getvalue())
+r = io.BytesIO(bytearray(b"abc\ndef\n"))
+print(r.readline(), r.read())
+x = bytearray(4)
+print(io.BytesIO(b"xyz").readinto(x), x)
+print(ba.decode().upper(), str(ba, "ascii"), bytes(ba[:5]))
+with open("build/ba_test.bin", "wb") as f:
+    f.write(bytearray(b"\x00\x01\x02"))
+with open("build/ba_test.bin", "rb") as f:
+    print(f.read())
+    f.seek(0)
+    y = bytearray(2)
+    print(f.readinto(y), y)
+print(int.from_bytes(bytearray(b"\x01\x00"), "little"), (258).to_bytes(2, "big") == bytearray(b"\x01\x02"))
+print(b"abc".startswith(bytearray(b"a")), b"a-b".split(bytearray(b"-")), bytearray(b"%s %d") , bytes(bytearray(range(5))))

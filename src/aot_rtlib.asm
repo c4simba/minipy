@@ -16,7 +16,7 @@
 ;   str      +8 length, +12 bytes, NUL
 ;   list/set +8 length, +12 capacity, +16 element array (4 or 8 bytes each)
 ;   dict     +8 length, +12 capacity, +16 key array (str), +20 value array
-;   object   +8 vtable (+0 class name, +4 base vtable, +8 methods), +12 fields
+;   object   +8 vtable (+0 class name, +4 base vtable, +8 methods; -8 its module's name, -4 "module." or ""), +12 fields
 ;   buffer   +8 length, +12 bytes
 ; A null pointer is the empty value (None): "" for str, an empty container.
 ; Static objects carry a huge refcount and are never destroyed.
@@ -239,9 +239,27 @@ rt_exc_top      rd 1
 rt_exc_cur      rd 1
 
 ;;; code rt_exc_uncaught : rt_write_err rt_exit
-rt_exc_uncaught:                ; eax = exception: "Name: message" (just Name without one), exit(1)
+rt_exc_uncaught:                ; eax = exception: "module.Name: message" (just Name without one), exit(1)
         mov     ebx,eax
-        mov     eax,[ebx+8]
+        mov     ecx,[rt_uncaught_hook]      ; (SystemExit: the status it says)
+        test    ecx,ecx
+        jz      .show
+        mov     dword [rt_uncaught_hook],0
+        push    ebx
+        call    ecx
+        add     esp,4
+        cmp     eax,0
+        jl      .show
+        mov     ebx,eax
+        jmp     rt_exit
+.show:  mov     eax,[ebx+8]
+        mov     eax,[eax-4]     ; "module." (none for __main__'s classes and the built-in ones)
+        lea     ecx,[eax+12]
+        mov     edx,[eax+8]
+        test    edx,edx
+        jz      .name
+        call    rt_write_err
+.name:  mov     eax,[ebx+8]
         mov     eax,[eax]       ; the class name (str)
         lea     ecx,[eax+12]
         mov     edx,[eax+8]
@@ -266,6 +284,8 @@ rt_exc_uncaught:                ; eax = exception: "Name: message" (just Name wi
         jmp     rt_exit
 ;;; data rt_exc_uncaught
 rt_s_colsp      db ': ',10
+align 4
+rt_uncaught_hook dd 0
 
 ;;; code rt_raise_builtin : rt_throw rt_obj_new rt_str_new
 rt_raise_builtin:               ; eax = vtable, edx = destroy routine, ecx = message str (owned) or 0 and esi = C text
@@ -1850,7 +1870,7 @@ rt_unicode:
 ;;; data rt_noprint
 ; the code points from 0x80 on that repr() escapes: sorted ranges lo, hi
 align 4
-rt_noprint_n    dd 28
+rt_noprint_n    dd 736
 rt_noprint:
         dd 0x80,0xA0
         dd 0xAD,0xAD
@@ -1868,18 +1888,726 @@ rt_noprint:
         dd 0x5F5,0x605
         dd 0x61C,0x61C
         dd 0x6DD,0x6DD
+        dd 0x70E,0x70F
+        dd 0x74B,0x74C
+        dd 0x7B2,0x7BF
+        dd 0x7FB,0x7FC
+        dd 0x82E,0x82F
+        dd 0x83F,0x83F
+        dd 0x85C,0x85D
+        dd 0x85F,0x85F
+        dd 0x86B,0x86F
+        dd 0x88F,0x896
+        dd 0x8E2,0x8E2
+        dd 0x984,0x984
+        dd 0x98D,0x98E
+        dd 0x991,0x992
+        dd 0x9A9,0x9A9
+        dd 0x9B1,0x9B1
+        dd 0x9B3,0x9B5
+        dd 0x9BA,0x9BB
+        dd 0x9C5,0x9C6
+        dd 0x9C9,0x9CA
+        dd 0x9CF,0x9D6
+        dd 0x9D8,0x9DB
+        dd 0x9DE,0x9DE
+        dd 0x9E4,0x9E5
+        dd 0x9FF,0xA00
+        dd 0xA04,0xA04
+        dd 0xA0B,0xA0E
+        dd 0xA11,0xA12
+        dd 0xA29,0xA29
+        dd 0xA31,0xA31
+        dd 0xA34,0xA34
+        dd 0xA37,0xA37
+        dd 0xA3A,0xA3B
+        dd 0xA3D,0xA3D
+        dd 0xA43,0xA46
+        dd 0xA49,0xA4A
+        dd 0xA4E,0xA50
+        dd 0xA52,0xA58
+        dd 0xA5D,0xA5D
+        dd 0xA5F,0xA65
+        dd 0xA77,0xA80
+        dd 0xA84,0xA84
+        dd 0xA8E,0xA8E
+        dd 0xA92,0xA92
+        dd 0xAA9,0xAA9
+        dd 0xAB1,0xAB1
+        dd 0xAB4,0xAB4
+        dd 0xABA,0xABB
+        dd 0xAC6,0xAC6
+        dd 0xACA,0xACA
+        dd 0xACE,0xACF
+        dd 0xAD1,0xADF
+        dd 0xAE4,0xAE5
+        dd 0xAF2,0xAF8
+        dd 0xB00,0xB00
+        dd 0xB04,0xB04
+        dd 0xB0D,0xB0E
+        dd 0xB11,0xB12
+        dd 0xB29,0xB29
+        dd 0xB31,0xB31
+        dd 0xB34,0xB34
+        dd 0xB3A,0xB3B
+        dd 0xB45,0xB46
+        dd 0xB49,0xB4A
+        dd 0xB4E,0xB54
+        dd 0xB58,0xB5B
+        dd 0xB5E,0xB5E
+        dd 0xB64,0xB65
+        dd 0xB78,0xB81
+        dd 0xB84,0xB84
+        dd 0xB8B,0xB8D
+        dd 0xB91,0xB91
+        dd 0xB96,0xB98
+        dd 0xB9B,0xB9B
+        dd 0xB9D,0xB9D
+        dd 0xBA0,0xBA2
+        dd 0xBA5,0xBA7
+        dd 0xBAB,0xBAD
+        dd 0xBBA,0xBBD
+        dd 0xBC3,0xBC5
+        dd 0xBC9,0xBC9
+        dd 0xBCE,0xBCF
+        dd 0xBD1,0xBD6
+        dd 0xBD8,0xBE5
+        dd 0xBFB,0xBFF
+        dd 0xC0D,0xC0D
+        dd 0xC11,0xC11
+        dd 0xC29,0xC29
+        dd 0xC3A,0xC3B
+        dd 0xC45,0xC45
+        dd 0xC49,0xC49
+        dd 0xC4E,0xC54
+        dd 0xC57,0xC57
+        dd 0xC5B,0xC5C
+        dd 0xC5E,0xC5F
+        dd 0xC64,0xC65
+        dd 0xC70,0xC76
+        dd 0xC8D,0xC8D
+        dd 0xC91,0xC91
+        dd 0xCA9,0xCA9
+        dd 0xCB4,0xCB4
+        dd 0xCBA,0xCBB
+        dd 0xCC5,0xCC5
+        dd 0xCC9,0xCC9
+        dd 0xCCE,0xCD4
+        dd 0xCD7,0xCDC
+        dd 0xCDF,0xCDF
+        dd 0xCE4,0xCE5
+        dd 0xCF0,0xCF0
+        dd 0xCF4,0xCFF
+        dd 0xD0D,0xD0D
+        dd 0xD11,0xD11
+        dd 0xD45,0xD45
+        dd 0xD49,0xD49
+        dd 0xD50,0xD53
+        dd 0xD64,0xD65
+        dd 0xD80,0xD80
+        dd 0xD84,0xD84
+        dd 0xD97,0xD99
+        dd 0xDB2,0xDB2
+        dd 0xDBC,0xDBC
+        dd 0xDBE,0xDBF
+        dd 0xDC7,0xDC9
+        dd 0xDCB,0xDCE
+        dd 0xDD5,0xDD5
+        dd 0xDD7,0xDD7
+        dd 0xDE0,0xDE5
+        dd 0xDF0,0xDF1
+        dd 0xDF5,0xE00
+        dd 0xE3B,0xE3E
+        dd 0xE5C,0xE80
+        dd 0xE83,0xE83
+        dd 0xE85,0xE85
+        dd 0xE8B,0xE8B
+        dd 0xEA4,0xEA4
+        dd 0xEA6,0xEA6
+        dd 0xEBE,0xEBF
+        dd 0xEC5,0xEC5
+        dd 0xEC7,0xEC7
+        dd 0xECF,0xECF
+        dd 0xEDA,0xEDB
+        dd 0xEE0,0xEFF
+        dd 0xF48,0xF48
+        dd 0xF6D,0xF70
+        dd 0xF98,0xF98
+        dd 0xFBD,0xFBD
+        dd 0xFCD,0xFCD
+        dd 0xFDB,0xFFF
+        dd 0x10C6,0x10C6
+        dd 0x10C8,0x10CC
+        dd 0x10CE,0x10CF
+        dd 0x1249,0x1249
+        dd 0x124E,0x124F
+        dd 0x1257,0x1257
+        dd 0x1259,0x1259
+        dd 0x125E,0x125F
+        dd 0x1289,0x1289
+        dd 0x128E,0x128F
+        dd 0x12B1,0x12B1
+        dd 0x12B6,0x12B7
+        dd 0x12BF,0x12BF
+        dd 0x12C1,0x12C1
+        dd 0x12C6,0x12C7
+        dd 0x12D7,0x12D7
+        dd 0x1311,0x1311
+        dd 0x1316,0x1317
+        dd 0x135B,0x135C
+        dd 0x137D,0x137F
+        dd 0x139A,0x139F
+        dd 0x13F6,0x13F7
+        dd 0x13FE,0x13FF
         dd 0x1680,0x1680
-        dd 0x2000,0x200F
+        dd 0x169D,0x169F
+        dd 0x16F9,0x16FF
+        dd 0x1716,0x171E
+        dd 0x1737,0x173F
+        dd 0x1754,0x175F
+        dd 0x176D,0x176D
+        dd 0x1771,0x1771
+        dd 0x1774,0x177F
+        dd 0x17DE,0x17DF
+        dd 0x17EA,0x17EF
+        dd 0x17FA,0x17FF
+        dd 0x180E,0x180E
+        dd 0x181A,0x181F
+        dd 0x1879,0x187F
+        dd 0x18AB,0x18AF
+        dd 0x18F6,0x18FF
+        dd 0x191F,0x191F
+        dd 0x192C,0x192F
+        dd 0x193C,0x193F
+        dd 0x1941,0x1943
+        dd 0x196E,0x196F
+        dd 0x1975,0x197F
+        dd 0x19AC,0x19AF
+        dd 0x19CA,0x19CF
+        dd 0x19DB,0x19DD
+        dd 0x1A1C,0x1A1D
+        dd 0x1A5F,0x1A5F
+        dd 0x1A7D,0x1A7E
+        dd 0x1A8A,0x1A8F
+        dd 0x1A9A,0x1A9F
+        dd 0x1AAE,0x1AAF
+        dd 0x1ACF,0x1AFF
+        dd 0x1B4D,0x1B4D
+        dd 0x1BF4,0x1BFB
+        dd 0x1C38,0x1C3A
+        dd 0x1C4A,0x1C4C
+        dd 0x1C8B,0x1C8F
+        dd 0x1CBB,0x1CBC
+        dd 0x1CC8,0x1CCF
+        dd 0x1CFB,0x1CFF
+        dd 0x1F16,0x1F17
+        dd 0x1F1E,0x1F1F
+        dd 0x1F46,0x1F47
+        dd 0x1F4E,0x1F4F
+        dd 0x1F58,0x1F58
+        dd 0x1F5A,0x1F5A
+        dd 0x1F5C,0x1F5C
+        dd 0x1F5E,0x1F5E
+        dd 0x1F7E,0x1F7F
+        dd 0x1FB5,0x1FB5
+        dd 0x1FC5,0x1FC5
+        dd 0x1FD4,0x1FD5
+        dd 0x1FDC,0x1FDC
+        dd 0x1FF0,0x1FF1
+        dd 0x1FF5,0x1FF5
+        dd 0x1FFF,0x200F
         dd 0x2028,0x202F
         dd 0x205F,0x206F
+        dd 0x2072,0x2073
+        dd 0x208F,0x208F
+        dd 0x209D,0x209F
+        dd 0x20C1,0x20CF
+        dd 0x20F1,0x20FF
         dd 0x218C,0x218F
+        dd 0x242A,0x243F
+        dd 0x244B,0x245F
+        dd 0x2B74,0x2B75
+        dd 0x2B96,0x2B96
+        dd 0x2CF4,0x2CF8
+        dd 0x2D26,0x2D26
+        dd 0x2D28,0x2D2C
+        dd 0x2D2E,0x2D2F
+        dd 0x2D68,0x2D6E
+        dd 0x2D71,0x2D7E
+        dd 0x2D97,0x2D9F
+        dd 0x2DA7,0x2DA7
+        dd 0x2DAF,0x2DAF
+        dd 0x2DB7,0x2DB7
+        dd 0x2DBF,0x2DBF
+        dd 0x2DC7,0x2DC7
+        dd 0x2DCF,0x2DCF
+        dd 0x2DD7,0x2DD7
+        dd 0x2DDF,0x2DDF
+        dd 0x2E5E,0x2E7F
+        dd 0x2E9A,0x2E9A
+        dd 0x2EF4,0x2EFF
+        dd 0x2FD6,0x2FEF
         dd 0x3000,0x3000
         dd 0x3040,0x3040
         dd 0x3097,0x3098
-        dd 0xFF00,0xFF00
-        dd 0xD800,0xF8FF
-        dd 0xFEFF,0xFEFF
-        dd 0xFFF9,0xFFFB
+        dd 0x3100,0x3104
+        dd 0x3130,0x3130
+        dd 0x318F,0x318F
+        dd 0x31E6,0x31EE
+        dd 0x321F,0x321F
+        dd 0xA48D,0xA48F
+        dd 0xA4C7,0xA4CF
+        dd 0xA62C,0xA63F
+        dd 0xA6F8,0xA6FF
+        dd 0xA7CE,0xA7CF
+        dd 0xA7D2,0xA7D2
+        dd 0xA7D4,0xA7D4
+        dd 0xA7DD,0xA7F1
+        dd 0xA82D,0xA82F
+        dd 0xA83A,0xA83F
+        dd 0xA878,0xA87F
+        dd 0xA8C6,0xA8CD
+        dd 0xA8DA,0xA8DF
+        dd 0xA954,0xA95E
+        dd 0xA97D,0xA97F
+        dd 0xA9CE,0xA9CE
+        dd 0xA9DA,0xA9DD
+        dd 0xA9FF,0xA9FF
+        dd 0xAA37,0xAA3F
+        dd 0xAA4E,0xAA4F
+        dd 0xAA5A,0xAA5B
+        dd 0xAAC3,0xAADA
+        dd 0xAAF7,0xAB00
+        dd 0xAB07,0xAB08
+        dd 0xAB0F,0xAB10
+        dd 0xAB17,0xAB1F
+        dd 0xAB27,0xAB27
+        dd 0xAB2F,0xAB2F
+        dd 0xAB6C,0xAB6F
+        dd 0xABEE,0xABEF
+        dd 0xABFA,0xABFF
+        dd 0xD7A4,0xD7AF
+        dd 0xD7C7,0xD7CA
+        dd 0xD7FC,0xF8FF
+        dd 0xFA6E,0xFA6F
+        dd 0xFADA,0xFAFF
+        dd 0xFB07,0xFB12
+        dd 0xFB18,0xFB1C
+        dd 0xFB37,0xFB37
+        dd 0xFB3D,0xFB3D
+        dd 0xFB3F,0xFB3F
+        dd 0xFB42,0xFB42
+        dd 0xFB45,0xFB45
+        dd 0xFBC3,0xFBD2
+        dd 0xFD90,0xFD91
+        dd 0xFDC8,0xFDCE
+        dd 0xFDD0,0xFDEF
+        dd 0xFE1A,0xFE1F
+        dd 0xFE53,0xFE53
+        dd 0xFE67,0xFE67
+        dd 0xFE6C,0xFE6F
+        dd 0xFE75,0xFE75
+        dd 0xFEFD,0xFF00
+        dd 0xFFBF,0xFFC1
+        dd 0xFFC8,0xFFC9
+        dd 0xFFD0,0xFFD1
+        dd 0xFFD8,0xFFD9
+        dd 0xFFDD,0xFFDF
+        dd 0xFFE7,0xFFE7
+        dd 0xFFEF,0xFFFB
+        dd 0xFFFE,0xFFFF
+        dd 0x1000C,0x1000C
+        dd 0x10027,0x10027
+        dd 0x1003B,0x1003B
+        dd 0x1003E,0x1003E
+        dd 0x1004E,0x1004F
+        dd 0x1005E,0x1007F
+        dd 0x100FB,0x100FF
+        dd 0x10103,0x10106
+        dd 0x10134,0x10136
+        dd 0x1018F,0x1018F
+        dd 0x1019D,0x1019F
+        dd 0x101A1,0x101CF
+        dd 0x101FE,0x1027F
+        dd 0x1029D,0x1029F
+        dd 0x102D1,0x102DF
+        dd 0x102FC,0x102FF
+        dd 0x10324,0x1032C
+        dd 0x1034B,0x1034F
+        dd 0x1037B,0x1037F
+        dd 0x1039E,0x1039E
+        dd 0x103C4,0x103C7
+        dd 0x103D6,0x103FF
+        dd 0x1049E,0x1049F
+        dd 0x104AA,0x104AF
+        dd 0x104D4,0x104D7
+        dd 0x104FC,0x104FF
+        dd 0x10528,0x1052F
+        dd 0x10564,0x1056E
+        dd 0x1057B,0x1057B
+        dd 0x1058B,0x1058B
+        dd 0x10593,0x10593
+        dd 0x10596,0x10596
+        dd 0x105A2,0x105A2
+        dd 0x105B2,0x105B2
+        dd 0x105BA,0x105BA
+        dd 0x105BD,0x105BF
+        dd 0x105F4,0x105FF
+        dd 0x10737,0x1073F
+        dd 0x10756,0x1075F
+        dd 0x10768,0x1077F
+        dd 0x10786,0x10786
+        dd 0x107B1,0x107B1
+        dd 0x107BB,0x107FF
+        dd 0x10806,0x10807
+        dd 0x10809,0x10809
+        dd 0x10836,0x10836
+        dd 0x10839,0x1083B
+        dd 0x1083D,0x1083E
+        dd 0x10856,0x10856
+        dd 0x1089F,0x108A6
+        dd 0x108B0,0x108DF
+        dd 0x108F3,0x108F3
+        dd 0x108F6,0x108FA
+        dd 0x1091C,0x1091E
+        dd 0x1093A,0x1093E
+        dd 0x10940,0x1097F
+        dd 0x109B8,0x109BB
+        dd 0x109D0,0x109D1
+        dd 0x10A04,0x10A04
+        dd 0x10A07,0x10A0B
+        dd 0x10A14,0x10A14
+        dd 0x10A18,0x10A18
+        dd 0x10A36,0x10A37
+        dd 0x10A3B,0x10A3E
+        dd 0x10A49,0x10A4F
+        dd 0x10A59,0x10A5F
+        dd 0x10AA0,0x10ABF
+        dd 0x10AE7,0x10AEA
+        dd 0x10AF7,0x10AFF
+        dd 0x10B36,0x10B38
+        dd 0x10B56,0x10B57
+        dd 0x10B73,0x10B77
+        dd 0x10B92,0x10B98
+        dd 0x10B9D,0x10BA8
+        dd 0x10BB0,0x10BFF
+        dd 0x10C49,0x10C7F
+        dd 0x10CB3,0x10CBF
+        dd 0x10CF3,0x10CF9
+        dd 0x10D28,0x10D2F
+        dd 0x10D3A,0x10D3F
+        dd 0x10D66,0x10D68
+        dd 0x10D86,0x10D8D
+        dd 0x10D90,0x10E5F
+        dd 0x10E7F,0x10E7F
+        dd 0x10EAA,0x10EAA
+        dd 0x10EAE,0x10EAF
+        dd 0x10EB2,0x10EC1
+        dd 0x10EC5,0x10EFB
+        dd 0x10F28,0x10F2F
+        dd 0x10F5A,0x10F6F
+        dd 0x10F8A,0x10FAF
+        dd 0x10FCC,0x10FDF
+        dd 0x10FF7,0x10FFF
+        dd 0x1104E,0x11051
+        dd 0x11076,0x1107E
+        dd 0x110BD,0x110BD
+        dd 0x110C3,0x110CF
+        dd 0x110E9,0x110EF
+        dd 0x110FA,0x110FF
+        dd 0x11135,0x11135
+        dd 0x11148,0x1114F
+        dd 0x11177,0x1117F
+        dd 0x111E0,0x111E0
+        dd 0x111F5,0x111FF
+        dd 0x11212,0x11212
+        dd 0x11242,0x1127F
+        dd 0x11287,0x11287
+        dd 0x11289,0x11289
+        dd 0x1128E,0x1128E
+        dd 0x1129E,0x1129E
+        dd 0x112AA,0x112AF
+        dd 0x112EB,0x112EF
+        dd 0x112FA,0x112FF
+        dd 0x11304,0x11304
+        dd 0x1130D,0x1130E
+        dd 0x11311,0x11312
+        dd 0x11329,0x11329
+        dd 0x11331,0x11331
+        dd 0x11334,0x11334
+        dd 0x1133A,0x1133A
+        dd 0x11345,0x11346
+        dd 0x11349,0x1134A
+        dd 0x1134E,0x1134F
+        dd 0x11351,0x11356
+        dd 0x11358,0x1135C
+        dd 0x11364,0x11365
+        dd 0x1136D,0x1136F
+        dd 0x11375,0x1137F
+        dd 0x1138A,0x1138A
+        dd 0x1138C,0x1138D
+        dd 0x1138F,0x1138F
+        dd 0x113B6,0x113B6
+        dd 0x113C1,0x113C1
+        dd 0x113C3,0x113C4
+        dd 0x113C6,0x113C6
+        dd 0x113CB,0x113CB
+        dd 0x113D6,0x113D6
+        dd 0x113D9,0x113E0
+        dd 0x113E3,0x113FF
+        dd 0x1145C,0x1145C
+        dd 0x11462,0x1147F
+        dd 0x114C8,0x114CF
+        dd 0x114DA,0x1157F
+        dd 0x115B6,0x115B7
+        dd 0x115DE,0x115FF
+        dd 0x11645,0x1164F
+        dd 0x1165A,0x1165F
+        dd 0x1166D,0x1167F
+        dd 0x116BA,0x116BF
+        dd 0x116CA,0x116CF
+        dd 0x116E4,0x116FF
+        dd 0x1171B,0x1171C
+        dd 0x1172C,0x1172F
+        dd 0x11747,0x117FF
+        dd 0x1183C,0x1189F
+        dd 0x118F3,0x118FE
+        dd 0x11907,0x11908
+        dd 0x1190A,0x1190B
+        dd 0x11914,0x11914
+        dd 0x11917,0x11917
+        dd 0x11936,0x11936
+        dd 0x11939,0x1193A
+        dd 0x11947,0x1194F
+        dd 0x1195A,0x1199F
+        dd 0x119A8,0x119A9
+        dd 0x119D8,0x119D9
+        dd 0x119E5,0x119FF
+        dd 0x11A48,0x11A4F
+        dd 0x11AA3,0x11AAF
+        dd 0x11AF9,0x11AFF
+        dd 0x11B0A,0x11BBF
+        dd 0x11BE2,0x11BEF
+        dd 0x11BFA,0x11BFF
+        dd 0x11C09,0x11C09
+        dd 0x11C37,0x11C37
+        dd 0x11C46,0x11C4F
+        dd 0x11C6D,0x11C6F
+        dd 0x11C90,0x11C91
+        dd 0x11CA8,0x11CA8
+        dd 0x11CB7,0x11CFF
+        dd 0x11D07,0x11D07
+        dd 0x11D0A,0x11D0A
+        dd 0x11D37,0x11D39
+        dd 0x11D3B,0x11D3B
+        dd 0x11D3E,0x11D3E
+        dd 0x11D48,0x11D4F
+        dd 0x11D5A,0x11D5F
+        dd 0x11D66,0x11D66
+        dd 0x11D69,0x11D69
+        dd 0x11D8F,0x11D8F
+        dd 0x11D92,0x11D92
+        dd 0x11D99,0x11D9F
+        dd 0x11DAA,0x11EDF
+        dd 0x11EF9,0x11EFF
+        dd 0x11F11,0x11F11
+        dd 0x11F3B,0x11F3D
+        dd 0x11F5B,0x11FAF
+        dd 0x11FB1,0x11FBF
+        dd 0x11FF2,0x11FFE
+        dd 0x1239A,0x123FF
+        dd 0x1246F,0x1246F
+        dd 0x12475,0x1247F
+        dd 0x12544,0x12F8F
+        dd 0x12FF3,0x12FFF
+        dd 0x13430,0x1343F
+        dd 0x13456,0x1345F
+        dd 0x143FB,0x143FF
+        dd 0x14647,0x160FF
+        dd 0x1613A,0x167FF
+        dd 0x16A39,0x16A3F
+        dd 0x16A5F,0x16A5F
+        dd 0x16A6A,0x16A6D
+        dd 0x16ABF,0x16ABF
+        dd 0x16ACA,0x16ACF
+        dd 0x16AEE,0x16AEF
+        dd 0x16AF6,0x16AFF
+        dd 0x16B46,0x16B4F
+        dd 0x16B5A,0x16B5A
+        dd 0x16B62,0x16B62
+        dd 0x16B78,0x16B7C
+        dd 0x16B90,0x16D3F
+        dd 0x16D7A,0x16E3F
+        dd 0x16E9B,0x16EFF
+        dd 0x16F4B,0x16F4E
+        dd 0x16F88,0x16F8E
+        dd 0x16FA0,0x16FDF
+        dd 0x16FE5,0x16FEF
+        dd 0x16FF2,0x16FFF
+        dd 0x187F8,0x187FF
+        dd 0x18CD6,0x18CFE
+        dd 0x18D09,0x1AFEF
+        dd 0x1AFF4,0x1AFF4
+        dd 0x1AFFC,0x1AFFC
+        dd 0x1AFFF,0x1AFFF
+        dd 0x1B123,0x1B131
+        dd 0x1B133,0x1B14F
+        dd 0x1B153,0x1B154
+        dd 0x1B156,0x1B163
+        dd 0x1B168,0x1B16F
+        dd 0x1B2FC,0x1BBFF
+        dd 0x1BC6B,0x1BC6F
+        dd 0x1BC7D,0x1BC7F
+        dd 0x1BC89,0x1BC8F
+        dd 0x1BC9A,0x1BC9B
+        dd 0x1BCA0,0x1CBFF
+        dd 0x1CCFA,0x1CCFF
+        dd 0x1CEB4,0x1CEFF
+        dd 0x1CF2E,0x1CF2F
+        dd 0x1CF47,0x1CF4F
+        dd 0x1CFC4,0x1CFFF
+        dd 0x1D0F6,0x1D0FF
+        dd 0x1D127,0x1D128
+        dd 0x1D173,0x1D17A
+        dd 0x1D1EB,0x1D1FF
+        dd 0x1D246,0x1D2BF
+        dd 0x1D2D4,0x1D2DF
+        dd 0x1D2F4,0x1D2FF
+        dd 0x1D357,0x1D35F
+        dd 0x1D379,0x1D3FF
+        dd 0x1D455,0x1D455
+        dd 0x1D49D,0x1D49D
+        dd 0x1D4A0,0x1D4A1
+        dd 0x1D4A3,0x1D4A4
+        dd 0x1D4A7,0x1D4A8
+        dd 0x1D4AD,0x1D4AD
+        dd 0x1D4BA,0x1D4BA
+        dd 0x1D4BC,0x1D4BC
+        dd 0x1D4C4,0x1D4C4
+        dd 0x1D506,0x1D506
+        dd 0x1D50B,0x1D50C
+        dd 0x1D515,0x1D515
+        dd 0x1D51D,0x1D51D
+        dd 0x1D53A,0x1D53A
+        dd 0x1D53F,0x1D53F
+        dd 0x1D545,0x1D545
+        dd 0x1D547,0x1D549
+        dd 0x1D551,0x1D551
+        dd 0x1D6A6,0x1D6A7
+        dd 0x1D7CC,0x1D7CD
+        dd 0x1DA8C,0x1DA9A
+        dd 0x1DAA0,0x1DAA0
+        dd 0x1DAB0,0x1DEFF
+        dd 0x1DF1F,0x1DF24
+        dd 0x1DF2B,0x1DFFF
+        dd 0x1E007,0x1E007
+        dd 0x1E019,0x1E01A
+        dd 0x1E022,0x1E022
+        dd 0x1E025,0x1E025
+        dd 0x1E02B,0x1E02F
+        dd 0x1E06E,0x1E08E
+        dd 0x1E090,0x1E0FF
+        dd 0x1E12D,0x1E12F
+        dd 0x1E13E,0x1E13F
+        dd 0x1E14A,0x1E14D
+        dd 0x1E150,0x1E28F
+        dd 0x1E2AF,0x1E2BF
+        dd 0x1E2FA,0x1E2FE
+        dd 0x1E300,0x1E4CF
+        dd 0x1E4FA,0x1E5CF
+        dd 0x1E5FB,0x1E5FE
+        dd 0x1E600,0x1E7DF
+        dd 0x1E7E7,0x1E7E7
+        dd 0x1E7EC,0x1E7EC
+        dd 0x1E7EF,0x1E7EF
+        dd 0x1E7FF,0x1E7FF
+        dd 0x1E8C5,0x1E8C6
+        dd 0x1E8D7,0x1E8FF
+        dd 0x1E94C,0x1E94F
+        dd 0x1E95A,0x1E95D
+        dd 0x1E960,0x1EC70
+        dd 0x1ECB5,0x1ED00
+        dd 0x1ED3E,0x1EDFF
+        dd 0x1EE04,0x1EE04
+        dd 0x1EE20,0x1EE20
+        dd 0x1EE23,0x1EE23
+        dd 0x1EE25,0x1EE26
+        dd 0x1EE28,0x1EE28
+        dd 0x1EE33,0x1EE33
+        dd 0x1EE38,0x1EE38
+        dd 0x1EE3A,0x1EE3A
+        dd 0x1EE3C,0x1EE41
+        dd 0x1EE43,0x1EE46
+        dd 0x1EE48,0x1EE48
+        dd 0x1EE4A,0x1EE4A
+        dd 0x1EE4C,0x1EE4C
+        dd 0x1EE50,0x1EE50
+        dd 0x1EE53,0x1EE53
+        dd 0x1EE55,0x1EE56
+        dd 0x1EE58,0x1EE58
+        dd 0x1EE5A,0x1EE5A
+        dd 0x1EE5C,0x1EE5C
+        dd 0x1EE5E,0x1EE5E
+        dd 0x1EE60,0x1EE60
+        dd 0x1EE63,0x1EE63
+        dd 0x1EE65,0x1EE66
+        dd 0x1EE6B,0x1EE6B
+        dd 0x1EE73,0x1EE73
+        dd 0x1EE78,0x1EE78
+        dd 0x1EE7D,0x1EE7D
+        dd 0x1EE7F,0x1EE7F
+        dd 0x1EE8A,0x1EE8A
+        dd 0x1EE9C,0x1EEA0
+        dd 0x1EEA4,0x1EEA4
+        dd 0x1EEAA,0x1EEAA
+        dd 0x1EEBC,0x1EEEF
+        dd 0x1EEF2,0x1EFFF
+        dd 0x1F02C,0x1F02F
+        dd 0x1F094,0x1F09F
+        dd 0x1F0AF,0x1F0B0
+        dd 0x1F0C0,0x1F0C0
+        dd 0x1F0D0,0x1F0D0
+        dd 0x1F0F6,0x1F0FF
+        dd 0x1F1AE,0x1F1E5
+        dd 0x1F203,0x1F20F
+        dd 0x1F23C,0x1F23F
+        dd 0x1F249,0x1F24F
+        dd 0x1F252,0x1F25F
+        dd 0x1F266,0x1F2FF
+        dd 0x1F6D8,0x1F6DB
+        dd 0x1F6ED,0x1F6EF
+        dd 0x1F6FD,0x1F6FF
+        dd 0x1F777,0x1F77A
+        dd 0x1F7DA,0x1F7DF
+        dd 0x1F7EC,0x1F7EF
+        dd 0x1F7F1,0x1F7FF
+        dd 0x1F80C,0x1F80F
+        dd 0x1F848,0x1F84F
+        dd 0x1F85A,0x1F85F
+        dd 0x1F888,0x1F88F
+        dd 0x1F8AE,0x1F8AF
+        dd 0x1F8BC,0x1F8BF
+        dd 0x1F8C2,0x1F8FF
+        dd 0x1FA54,0x1FA5F
+        dd 0x1FA6E,0x1FA6F
+        dd 0x1FA7D,0x1FA7F
+        dd 0x1FA8A,0x1FA8E
+        dd 0x1FAC7,0x1FACD
+        dd 0x1FADD,0x1FADE
+        dd 0x1FAEA,0x1FAEF
+        dd 0x1FAF9,0x1FAFF
+        dd 0x1FB93,0x1FB93
+        dd 0x1FBFA,0x1FFFF
+        dd 0x2A6E0,0x2A6FF
+        dd 0x2B73A,0x2B73F
+        dd 0x2B81E,0x2B81F
+        dd 0x2CEA2,0x2CEAF
+        dd 0x2EBE1,0x2EBEF
+        dd 0x2EE5E,0x2F7FF
+        dd 0x2FA1E,0x2FFFF
+        dd 0x3134B,0x3134F
+        dd 0x323B0,0xE00FF
+        dd 0xE01F0,0x10FFFF
 
 ;;; data rt_ucspecial
 ; mappings that are not one code point to one: code point, kind (U upper, L lower,
@@ -3842,6 +4570,82 @@ rt_bytes_hex:                   ; eax = bytes -> eax = str of two hex digits per
         pop     edi esi
         ret
 
+;;; code rt_bytes_hex_sep : rt_bytes_hex rt_sb_char rt_sb_take rt_panic_value
+rt_bytes_hex_sep:               ; eax = bytes, edx = sep (a str or bytes: one ASCII character), ecx = bytes_per_sep
+        push    ebx esi edi ebp ;   -> eax = str: bytes.hex(sep, bytes_per_sep)
+        push    eax
+        mov     esi,edx
+        mov     ebx,[esi+8]
+        xor     edi,edi
+.asc:   cmp     edi,ebx
+        jae     .one
+        cmp     byte [esi+edi+12],0x80
+        jae     .ascii
+        inc     edi
+        jmp     .asc
+.one:   cmp     ebx,1
+        jne     .len
+        movzx   ebx,byte [esi+12]
+        mov     ebp,ecx         ; ebp = bytes in a group
+        test    ebp,ebp
+        jns     @f
+        neg     ebp
+@@:     pop     eax
+        test    ebp,ebp
+        jz      .plain
+        lea     esi,[eax+12]
+        mov     edi,[eax+8]
+        add     edi,esi
+        test    ecx,ecx
+        js      .left
+        mov     eax,[eax+8]     ; groups counted from the right: the first has n % k bytes (k when 0)
+        xor     edx,edx
+        div     ebp
+        test    edx,edx
+        jnz     .start
+.left:  mov     edx,ebp
+.start: push    dword [rt_sb_len]
+        push    edx             ; [esp] = bytes until the next separator
+.l:     cmp     esi,edi
+        jae     .done
+        cmp     dword [esp],0
+        jne     .byte
+        mov     [esp],ebp
+        mov     eax,ebx
+        call    rt_sb_char
+.byte:  dec     dword [esp]
+        movzx   eax,byte [esi]
+        inc     esi
+        push    eax
+        shr     al,4
+        call    .digit
+        pop     eax
+        and     al,15
+        call    .digit
+        jmp     .l
+.digit: add     al,'0'
+        cmp     al,'9'
+        jbe     @f
+        add     al,'a'-'0'-10
+@@:     jmp     rt_sb_char
+.done:  add     esp,4
+        pop     eax
+        call    rt_sb_take
+        pop     ebp edi esi ebx
+        ret
+.plain: pop     ebp edi esi ebx
+        jmp     rt_bytes_hex
+.ascii: mov     eax,rt_msg_hexasc
+        jmp     .fail
+.len:   mov     eax,rt_msg_hexlen
+.fail:  add     esp,4
+        pop     ebp edi esi ebx
+        mov     esi,eax
+        jmp     rt_panic_value
+;;; data rt_bytes_hex_sep
+rt_msg_hexasc   db 'sep must be ASCII.',0
+rt_msg_hexlen   db 'sep must be length 1.',0
+
 ;;; code rt_bytes_fromhex : rt_sb_char rt_sb_take rt_sb_need rt_sb_cstr rt_sb_int rt_raise_valerr rt_str_cpidx rt_bytes_cp
 rt_bytes_fromhex:               ; eax = str -> eax = bytes of its pairs of hex digits (whitespace between them)
         push    ebx esi edi ebp
@@ -4998,9 +5802,14 @@ rt_sb_json_str:                 ; eax = str (0: ""), edx = 1: non-ASCII as \uXXX
         je      .esc
         cmp     al,0x20
         jb      .ctrl
-        cmp     al,0x80
+        cmp     al,0x7F
         jb      .plain
-        test    ebp,ebp
+        ja      .high
+        test    ebp,ebp                 ; DEL: \u007f when ensure_ascii (as Python's json)
+        jz      .plain
+        call    .u4
+        jmp     .next
+.high:  test    ebp,ebp
         jz      .plain
         cmp     al,0xE0                 ; UTF-8: the code point
         jb      .two
@@ -5266,6 +6075,35 @@ rt_sb_flush:                    ; eax = mark: write [mark, length) to stdout; le
         jnz     rt_write
         ret
 
+;;; code rt_sb_funcval : rt_sb_str rt_sb_cstr
+rt_sb_funcval:                  ; eax = function value: its name if it is "<class '...'>" (a type made a function), else <function>
+        test    eax,eax
+        jz      .plain
+        mov     ecx,[eax+12]
+        test    ecx,ecx
+        jz      .plain
+        cmp     dword [ecx+8],8
+        jb      .plain
+        cmp     dword [ecx+12],0x616C633C       ; "<cla"
+        jne     .plain
+        mov     eax,ecx
+        jmp     rt_sb_str
+.plain: mov     eax,rt_msg_funcval
+        jmp     rt_sb_cstr
+;;; data rt_sb_funcval
+rt_msg_funcval  db '<function>',0
+
+;;; code rt_sb_flush_err : rt_write_err
+rt_sb_flush_err:                ; eax = mark: write [mark, length) to stderr; length = mark
+        mov     edx,[rt_sb_len]
+        sub     edx,eax
+        mov     [rt_sb_len],eax
+        mov     ecx,[rt_sb_buf]
+        add     ecx,eax
+        test    edx,edx
+        jnz     rt_write_err
+        ret
+
 ;;; code rt_sb_pad : rt_sb_need rt_u8_next rt_u8_put
 rt_sb_pad:                      ; eax = mark of a field, ecx = width (code points), edx = 0 right / 1 left / 2 centre / 3 centre as str.center | 4: a sign stays in front | fill code point << 8 (0: space): pad [mark, length)
         push    ebx esi edi ebp
@@ -5488,7 +6326,7 @@ rt_scale10:                     ; st0 = v, eax = k -> st0 = v * 10^k
 ; st0 = value (popped). edx = significant digits (1..17); ecx bit 0: add ".0"
 ; when the text looks like an integer, bit 1: fixed notation up to 1e16 (both:
 ; Python's float printing), bit 2: scientific keeping trailing zeros (%.*e with
-; P-1 decimals). Otherwise printf %.*g.
+; P-1 decimals), bit 3: one unit more in the last digit. Otherwise printf %.*g.
 rt_sb_gen:
         push    rt_sb_gen_x          ; in extended precision
         jmp     rt_ext_call
@@ -5582,6 +6420,23 @@ rt_sb_gen_x:
         inc     dword [esp+8]
         jmp     .scale
 .ok:    fstp    st0
+        test    dword [esp+28],8
+        jz      .nobump
+        add     dword [esp+16],1          ; one unit more (10^P: 10^(P-1), the exponent one more)
+        adc     dword [esp+20],0
+        mov     eax,[esp+24]
+        mov     edx,dword [rt_pow10q+eax*8+4]
+        cmp     edx,[esp+20]
+        jne     .nobump
+        mov     edx,dword [rt_pow10q+eax*8]
+        cmp     edx,[esp+16]
+        jne     .nobump
+        mov     edx,dword [rt_pow10q+eax*8-8]
+        mov     [esp+16],edx
+        mov     edx,dword [rt_pow10q+eax*8-4]
+        mov     [esp+20],edx
+        inc     dword [esp+8]
+.nobump:
         mov     ecx,[esp+24]    ; P digits of the mantissa into the text buffer
         lea     edi,[esp+32]
         add     edi,ecx
@@ -5724,24 +6579,33 @@ rt_sb_gen_x:
         pop     ebp edi esi ebx
         ret
 ;;; data rt_sb_gen
+align 8
+rt_pow10q       dq 1,10,100,1000,10000,100000,1000000,10000000,100000000,1000000000,10000000000
+                dq 100000000000,1000000000000,10000000000000,100000000000000,1000000000000000
+                dq 10000000000000000,100000000000000000
 rt_s_nan        db 'nan',0
 rt_s_inf        db 'inf',0
 rt_s_minf       db '-inf',0
 
 ;;; code rt_sb_float : rt_sb_gen rt_sb_take rt_sb_str rt_float_parse rt_free
 rt_sb_float:                    ; st0 = value (popped): Python's repr - the shortest text that reads back the same
-        push    ebx esi
+        push    ebx esi edi
         sub     esp,16          ; +0 value, +8 value read back
         fstp    qword [esp]
         mov     esi,15
+        xor     edi,edi         ; edi 8: the candidate one unit up
         mov     eax,[esp+4]
         and     eax,0x7FF00000
         cmp     eax,0x7FF00000
         je      .last           ; inf, nan
+        test    eax,eax
+        jnz     .try
+        mov     esi,1           ; a subnormal: fewer digits than 15 may read back the same
 .try:   mov     ebx,[rt_sb_len]
         fld     qword [esp]
         mov     edx,esi
         mov     ecx,3
+        or      ecx,edi
         call    rt_sb_gen
         cmp     esi,17
         jae     .done
@@ -5763,6 +6627,19 @@ rt_sb_float:                    ; st0 = value (popped): Python's repr - the shor
         jmp     .done
 .no:    pop     eax
         call    rt_free
+        test    edi,edi
+        jnz     .next
+        fld     qword [esp+8]   ; read back below the value (an exact tie rounded down):
+        fabs                    ; the candidate one unit up may read back
+        fld     qword [esp]
+        fabs
+        fcompp
+        fnstsw  ax
+        sahf
+        jbe     .next
+        mov     edi,8
+        jmp     .try
+.next:  xor     edi,edi
         inc     esi
         jmp     .try
 .last:  fld     qword [esp]
@@ -5770,7 +6647,7 @@ rt_sb_float:                    ; st0 = value (popped): Python's repr - the shor
         mov     ecx,3
         call    rt_sb_gen
 .done:  add     esp,16
-        pop     esi ebx
+        pop     edi esi ebx
         ret
 
 ;;; code rt_sb_fixed : rt_sb_char rt_sb_bytes rt_scale10 rt_sb_gen rt_ext_call
@@ -6505,6 +7382,196 @@ rt_int_parse:                   ; eax = str -> edx:eax = int(str): spaces around
 ;;; data rt_int_parse
 rt_msg_int      db 'invalid literal for int() with base 10: ',0
 rt_msg_ibig     db 'int too large (ints are 64-bit)',0
+
+;;; code rt_int_parse_base : rt_is_space rt_sb_cstr rt_sb_char rt_sb_int rt_sb_repr_str rt_sb_repr_bytes rt_sb_take rt_raise_valerr rt_ovferr_text rt_panic_value
+rt_int_parse_base:              ; eax = str (bytes: edx 1), ecx = base (0 or 2..36) -> edx:eax = int(x, base):
+        push    ebx esi edi ebp ;   spaces around, a sign, 0x/0o/0b, _ between digits (CPython's)
+        push    edx             ; [esp+8] bytes?
+        push    eax             ; [esp+4] the object, for the message
+        push    ecx             ; [esp] the base as given
+        cmp     ecx,1
+        je      .badbase
+        cmp     ecx,36
+        ja      .badbase
+        mov     ebx,ecx
+        test    eax,eax
+        jz      .bad
+        mov     ecx,[eax+8]
+        lea     esi,[eax+12]
+        lea     edi,[esi+ecx]
+.lead:  cmp     esi,edi
+        jae     .bad
+        mov     al,[esi]
+        call    rt_is_space
+        jne     @f
+        inc     esi
+        jmp     .lead
+@@:     xor     ebp,ebp         ; ebp bit 0 negative, 1 after a prefix, 2 base 0 decimal, 3 a leading 0 of base 0
+        cmp     al,'-'
+        jne     @f
+        inc     ebp
+        inc     esi
+        jmp     .pfx
+@@:     cmp     al,'+'
+        jne     .pfx
+        inc     esi
+.pfx:   mov     ecx,edi
+        sub     ecx,esi
+        cmp     ecx,2
+        jb      .nopfx
+        cmp     byte [esi],'0'
+        jne     .nopfx
+        mov     al,[esi+1]
+        or      al,0x20
+        mov     edx,16
+        cmp     al,'x'
+        je      .haspfx
+        mov     edx,8
+        cmp     al,'o'
+        je      .haspfx
+        mov     edx,2
+        cmp     al,'b'
+        je      .haspfx
+        jmp     .nopfx
+.haspfx:
+        test    ebx,ebx
+        jz      @f
+        cmp     ebx,edx
+        jne     .nopfx          ; (int('0b1', 16): hex digits)
+@@:     mov     ebx,edx
+        add     esi,2
+        or      ebp,2
+        cmp     esi,edi
+        jae     .bad
+        cmp     byte [esi],'_'  ; (0x_1f)
+        jne     .first
+        inc     esi
+        jmp     .first
+.nopfx: test    ebx,ebx
+        jnz     .first
+        mov     ebx,10
+        or      ebp,4
+.first: xor     eax,eax
+        xor     edx,edx
+        cmp     esi,edi
+        jae     .bad
+        movzx   ecx,byte [esi]
+        call    .val
+        cmp     ecx,ebx
+        jae     .bad
+        test    ebp,4
+        jz      .digit
+        test    ecx,ecx
+        jnz     .digit
+        or      ebp,8           ; base 0: a leading 0 makes it 0 (zeros only)
+.digit: cmp     esi,edi
+        jae     .done
+        movzx   ecx,byte [esi]
+        cmp     cl,'_'
+        je      .us
+        call    .val
+        cmp     ecx,ebx
+        jae     .tail
+        test    ebp,8
+        jz      @f
+        test    ecx,ecx
+        jnz     .bad
+@@:     push    ecx             ; value = value*base + digit
+        mov     ecx,eax
+        mov     eax,edx
+        mul     ebx
+        test    edx,edx
+        jnz     .ovf1
+        push    eax
+        mov     eax,ecx
+        mul     ebx
+        pop     ecx
+        add     edx,ecx
+        jc      .ovf1
+        pop     ecx
+        add     eax,ecx
+        adc     edx,0
+        jc      .ovf
+        cmp     edx,0x80000000
+        ja      .ovf
+        jb      @f
+        test    eax,eax
+        jnz     .ovf
+@@:     inc     esi
+        jmp     .digit
+.us:    inc     esi             ; _: a digit must follow
+        cmp     esi,edi
+        jae     .bad
+        movzx   ecx,byte [esi]
+        call    .val
+        cmp     ecx,ebx
+        jae     .bad
+        jmp     .digit
+.tail:  cmp     esi,edi
+        jae     .done
+        push    eax
+        mov     al,[esi]
+        call    rt_is_space
+        pop     eax
+        jne     .bad
+        inc     esi
+        jmp     .tail
+.done:  test    ebp,1
+        jz      .pos
+        neg     eax
+        adc     edx,0
+        neg     edx
+        jmp     .out
+.pos:   test    edx,edx
+        js      .ovf
+.out:   add     esp,12
+        pop     ebp edi esi ebx
+        ret
+.val:   cmp     ecx,'0'         ; ecx = a character -> its digit (99: none)
+        jb      .none
+        cmp     ecx,'9'
+        jbe     .dec
+        or      ecx,0x20
+        cmp     ecx,'a'
+        jb      .none
+        cmp     ecx,'z'
+        ja      .none
+        sub     ecx,'a'-10
+        ret
+.dec:   sub     ecx,'0'
+        ret
+.none:  mov     ecx,99
+        ret
+.ovf1:  pop     ecx
+.ovf:   mov     esi,rt_msg_ibig_b
+        jmp     rt_ovferr_text
+.badbase:
+        mov     esi,rt_msg_intbase
+        jmp     rt_panic_value
+.bad:   push    dword [rt_sb_len]
+        mov     eax,rt_msg_intb
+        call    rt_sb_cstr
+        mov     eax,[esp+4]
+        cdq
+        call    rt_sb_int
+        mov     al,':'
+        call    rt_sb_char
+        mov     al,' '
+        call    rt_sb_char
+        mov     eax,[esp+8]
+        cmp     dword [esp+12],0
+        jne     .rb
+        call    rt_sb_repr_str
+        jmp     .rd
+.rb:    call    rt_sb_repr_bytes
+.rd:    pop     eax
+        call    rt_sb_take
+        mov     ecx,eax
+        jmp     rt_raise_valerr
+;;; data rt_int_parse_base
+rt_msg_intb     db 'invalid literal for int() with base ',0
+rt_msg_intbase  db 'int() base must be >= 2 and <= 36, or 0',0
+rt_msg_ibig_b   db 'int too large (ints are 64-bit)',0
 
 ;;; code rt_fround : rt_ftoi
 ;;; code rt_ftoi : rt_ovferr_text rt_panic_value
@@ -10839,6 +11906,21 @@ rt_buf_peek_str:                ; eax = buffer, edx = offset, ecx = length -> ea
         pop     edi esi
         ret
 
+;;; code rt_buf_peek_bytes : rt_buf_at rt_str_new
+rt_buf_peek_bytes:              ; eax = buffer, edx = offset, ecx = length -> eax = new bytes
+        push    esi edi
+        push    ecx
+        call    rt_buf_at
+        mov     esi,eax
+        mov     eax,[esp]
+        call    rt_str_new
+        pop     ecx
+        mov     [eax+13+ecx],ecx        ; (bytes: the length where a str keeps its code point count)
+        lea     edi,[eax+12]
+        rep     movsb
+        pop     edi esi
+        ret
+
 ;;; code rt_mem_peek
 rt_mem_peek:                    ; eax = address, edx = size (bytes) -> eax = little-endian value
         mov     ecx,edx
@@ -10878,6 +11960,65 @@ rt_mem_peek_str:                ; eax = address, edx = length -> eax = new str o
         rep     movsb
         pop     edi esi
         ret
+
+;;; code rt_sys_args linux : rt_list_new rt_list_push rt_mem_cstr rt_kd_str
+rt_sys_args:                    ; eax = 0: argv, 1: the environment ("NAME=value") -> eax = new list[str]
+        push    ebx esi
+        mov     esi,[rt_sp0]    ; the stack at start: argc, argv..., 0, envp..., 0
+        mov     ebx,[esi]
+        add     esi,4
+        test    eax,eax
+        jz      @f
+        lea     esi,[esi+ebx*4+4]
+@@:     mov     eax,rt_kd_str
+        call    rt_list_new
+        mov     ebx,eax
+.l:     mov     eax,[esi]
+        test    eax,eax
+        jz      .out
+        mov     edx,65536
+        call    rt_mem_cstr
+        push    eax
+        mov     eax,ebx
+        call    rt_list_push
+        pop     ecx
+        mov     [eax],ecx
+        add     esi,4
+        jmp     .l
+.out:   mov     eax,ebx
+        pop     esi ebx
+        ret
+;;; data rt_sys_args linux
+rt_sp0          dd 0            ; esp at start (set there when rt_sys_args is used)
+
+;;; code rt_sys_args kolibri : rt_list_new rt_list_push rt_mem_cstr rt_kd_str
+rt_sys_args:                    ; eax = 0: [the program's path, its parameters], 1: [] (no environment)
+        push    ebx
+        push    eax
+        mov     eax,rt_kd_str
+        call    rt_list_new
+        mov     ebx,eax
+        pop     eax
+        test    eax,eax
+        jnz     .out
+        mov     eax,rt_kpath    ; (the kernel filled both: the MENUET01 header points at them)
+        call    .add
+        mov     eax,rt_kparams
+        call    .add
+.out:   mov     eax,ebx
+        pop     ebx
+        ret
+.add:   mov     edx,1024
+        call    rt_mem_cstr
+        push    eax
+        mov     eax,ebx
+        call    rt_list_push
+        pop     ecx
+        mov     [eax],ecx
+        ret
+;;; bss rt_sys_args kolibri
+rt_kparams      rb 1024
+rt_kpath        rb 1024
 
 ;;; code rt_mem_cstr : rt_mem_peek_str
 rt_mem_cstr:                    ; eax = address, edx = most bytes -> eax = new str of the bytes before the first 0
@@ -11537,7 +12678,14 @@ rt_ready_tail   rd 1
 rt_cur_task     rd 1            ; the running task, 0 in the scheduler
 rt_sched_esp    rd 1
 rt_sched_exc    rd 1            ; the scheduler's handler chain while a task runs
+rt_sched_gen    rd 1            ; the scheduler's running generator while a task runs (it may wait in one)
 rt_sleepers     rd 1
+
+;;; code rt_thread_current : rt_task_ready
+rt_thread_current:              ; -> edx:eax = the running task (0: the main program), thread.current()
+        mov     eax,[rt_cur_task]
+        xor     edx,edx
+        ret
 
 ;;; code rt_task_yield : rt_task_ready
 rt_task_yield:                  ; the running task hands the CPU back to the scheduler; returns when resumed
@@ -11553,7 +12701,8 @@ end if
 if defined rt_cur_gen
         mov     ecx,[rt_cur_gen]
         mov     [eax+52],ecx
-        mov     dword [rt_cur_gen],0
+        mov     ecx,[rt_sched_gen]
+        mov     [rt_cur_gen],ecx
 end if
         mov     esp,[rt_sched_esp]
         pop     edi esi ebx ebp
@@ -11572,6 +12721,8 @@ end if
         mov     [rt_cur_task],eax
         mov     dword [eax+8],1
 if defined rt_cur_gen
+        mov     ecx,[rt_cur_gen]
+        mov     [rt_sched_gen],ecx
         mov     ecx,[eax+52]
         mov     [rt_cur_gen],ecx
 end if
@@ -11595,6 +12746,10 @@ rt_task_exit:                   ; a task's function returned (the result is stor
 if defined rt_throw
         mov     ecx,[rt_sched_exc]
         mov     [rt_exc_top],ecx
+end if
+if defined rt_cur_gen
+        mov     ecx,[rt_sched_gen]
+        mov     [rt_cur_gen],ecx
 end if
         mov     esp,[rt_sched_esp]
         pop     edi esi ebx ebp
@@ -12295,8 +13450,13 @@ rt_idle_sleep:
         ret
 
 ;;; code rt_time_sleep : rt_idle_sleep
-rt_time_sleep:                  ; st0 = seconds (popped): block
-        push    1000
+rt_time_sleep:                  ; st0 = seconds (popped): block (once threads were started: let them run meanwhile)
+        mov     eax,[rt_sleep_hook]
+        test    eax,eax
+        jz      .block
+        call    eax
+        ret
+.block: push    1000
         fimul   dword [esp]
         fistp   dword [esp]
         pop     eax
@@ -12304,6 +13464,8 @@ rt_time_sleep:                  ; st0 = seconds (popped): block
         jle     @f
         jmp     rt_idle_sleep
 @@:     ret
+;;; data rt_time_sleep
+rt_sleep_hook   dd 0            ; rt_thread_sleep once thread.start() ran
 
 ;;; code rt_time_now linux
 rt_time_now:                    ; -> st0 = seconds since the epoch
@@ -12355,6 +13517,78 @@ rt_fexp_x:
         fstp    st1
         ret
 
+; one-argument math functions, in extended precision (st0 = x -> st0 = f(x));
+; macOS programs (C) use the C library's instead (aot_x2c.c natives)
+;;; code rt_flog : rt_ext_call
+rt_flog:        push    rt_flog_x
+                jmp     rt_ext_call
+rt_flog_x:      fldln2
+                fxch
+                fyl2x
+                ret
+;;; code rt_flog10 : rt_ext_call
+rt_flog10:      push    rt_flog10_x
+                jmp     rt_ext_call
+rt_flog10_x:    fldlg2
+                fxch
+                fyl2x
+                ret
+;;; code rt_flog2 : rt_ext_call
+rt_flog2:       push    rt_flog2_x
+                jmp     rt_ext_call
+rt_flog2_x:     fld1
+                fxch
+                fyl2x
+                ret
+;;; code rt_fatan : rt_ext_call
+rt_fatan:       push    rt_fatan_x
+                jmp     rt_ext_call
+rt_fatan_x:     fld1
+                fpatan
+                ret
+;;; code rt_fasin : rt_ext_call
+rt_fasin:       push    rt_fasin_x
+                jmp     rt_ext_call
+rt_fasin_x:     fld     st0
+                fmul    st0,st0
+                fld1
+                fsubrp  st1,st0
+                fsqrt
+                fpatan
+                ret
+;;; code rt_facos : rt_ext_call
+rt_facos:       push    rt_facos_x
+                jmp     rt_ext_call
+rt_facos_x:     fld     st0
+                fmul    st0,st0
+                fld1
+                fsubrp  st1,st0
+                fsqrt
+                fxch
+                fpatan
+                ret
+;;; code rt_fsin : rt_ext_call
+rt_fsin:        push    rt_fsin_x
+                jmp     rt_ext_call
+rt_fsin_x:      fsin
+                ret
+;;; code rt_fcos : rt_ext_call
+rt_fcos:        push    rt_fcos_x
+                jmp     rt_ext_call
+rt_fcos_x:      fcos
+                ret
+;;; code rt_ftan : rt_ext_call
+rt_ftan:        push    rt_ftan_x
+                jmp     rt_ext_call
+rt_ftan_x:      fptan
+                fstp    st0
+                ret
+;;; code rt_fatan2 : rt_ext_call
+rt_fatan2:      push    rt_fatan2_x     ; st0 = x, st1 = y -> st0 = atan2(y, x)
+                jmp     rt_ext_call
+rt_fatan2_x:    fpatan
+                ret
+
 ;;; code rt_fmod_c : rt_panic_zero
 rt_fmod_c:                      ; st0 = x, st1 = y (both popped) -> st0 = fmod(x, y), the sign of x
         fxch
@@ -12372,6 +13606,90 @@ rt_fmod_c:                      ; st0 = x, st1 = y (both popped) -> st0 = fmod(x
 .zero:  fstp    st0
         fstp    st0
         jmp     rt_panic_zero
+
+;;; code rt_frexp
+rt_frexp:                       ; st0 = x -> st0 = m (0.5 <= |m| < 1, x's sign), eax = e: x = m * 2**e
+        sub     esp,8           ; (0, an infinity, a NaN: x itself and 0)
+        fst     qword [esp]
+        mov     eax,[esp+4]
+        mov     ecx,eax
+        shr     ecx,20
+        and     ecx,0x7FF
+        jz      .small
+        cmp     ecx,0x7FF
+        je      .same
+.exp:   and     eax,0x800FFFFF  ; the exponent of 0.5
+        or      eax,0x3FE00000
+        mov     [esp+4],eax
+        fstp    st0
+        fld     qword [esp]
+        lea     eax,[ecx-1022]
+        add     esp,8
+        ret
+.small: mov     edx,eax
+        and     edx,0x7FFFFFFF
+        or      edx,[esp]
+        jz      .same
+        fmul    qword [rt_two54]  ; a subnormal: scaled up into the normal ones
+        fst     qword [esp]
+        mov     eax,[esp+4]
+        mov     ecx,eax
+        shr     ecx,20
+        and     ecx,0x7FF
+        sub     ecx,54
+        jmp     .exp
+.same:  xor     eax,eax
+        add     esp,8
+        ret
+;;; data rt_frexp
+align 8
+rt_two54        dd 0,0x43500000   ; 2**54
+
+;;; code rt_ldexp : rt_ovferr_text
+rt_ldexp:                       ; st0 = x, edx:eax = i -> st0 = x * 2**i (OverflowError when too big)
+        mov     ecx,eax
+        sar     ecx,31
+        cmp     ecx,edx
+        jne     .far
+        cmp     eax,65536
+        jg      .up
+        cmp     eax,-65536
+        jl      .down
+        jmp     .go
+.far:   test    edx,edx
+        js      .down
+.up:    mov     eax,65536
+        jmp     .go
+.down:  mov     eax,-65536
+.go:    sub     esp,8
+        fst     qword [esp]     ; 0, an infinity, a NaN: x itself
+        mov     ecx,[esp+4]
+        and     ecx,0x7FF00000
+        cmp     ecx,0x7FF00000
+        je      .same
+        mov     ecx,[esp+4]
+        and     ecx,0x7FFFFFFF
+        or      ecx,[esp]
+        jz      .same
+        mov     [esp],eax
+        fild    dword [esp]
+        fxch
+        fscale
+        fstp    st1
+        fstp    qword [esp]     ; (rounded to a float once)
+        fld     qword [esp]
+        mov     ecx,[esp+4]
+        and     ecx,0x7FF00000
+        cmp     ecx,0x7FF00000
+        je      .big
+.same:  add     esp,8
+        ret
+.big:   fstp    st0
+        add     esp,8
+        mov     esi,rt_msg_mrange
+        jmp     rt_ovferr_text
+;;; data rt_ldexp
+rt_msg_mrange   db 'math range error',0
 
 ;;; code rt_rand : rt_now_ms
 rt_rand:                        ; -> eax = 32 random bits (xorshift32; seeded from the clock unless seeded)

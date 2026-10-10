@@ -211,11 +211,19 @@ static void use_fn(AFunc *fn){
     if(gg->nq==gg->cq){ gg->cq=gg->cq?gg->cq*2:32; gg->queue=(AFunc**)xrealloc(gg->queue,sizeof(AFunc*)*(size_t)gg->cq); }
     gg->queue[gg->nq++]=fn;
 }
+/* vtable slot i of class c is called through the table (a method some class overrides) or by
+   the run time (a dunder method): its code is needed once the class is */
+static int vt_dispatched(AClass *c, int i){
+    const char *n=c->vt[i]->name; size_t l=strlen(n);
+    if(l>4 && n[0]=='_' && n[1]=='_' && n[l-1]=='_' && n[l-2]=='_') return 1;
+    for(AClass *b=c;b;b=b->base) if(i<b->nvt && b->vt[i]->overridden) return 1;
+    return 0;
+}
 static void use_class(AClass *c){
     for(;c;c=c->base){
         if(gg->class_used[c->id]) return;
         gg->class_used[c->id]=1;
-        for(int i=0;i<c->nvt;i++) use_fn(c->vt[i]);
+        for(int i=0;i<c->nvt;i++) if(vt_dispatched(c,i)) use_fn(c->vt[i]);   /* (the others: when a call names them) */
         for(int i=0;i<c->nmethods;i++) if(c->methods[i]->is_static) use_fn(c->methods[i]);
         rt("rt_free"); rt("rt_decref"); rt("rt_static");
         str_lit(c->name);
@@ -272,7 +280,7 @@ static const char *fnl(AFunc *fn, int kind);
 static void fn_qualname(AFunc *fn, char *out, size_t n){
     if(fn->outer){ snprintf(out,n,"%s.%s",fnl(fn->outer,LB_CODE),fn->lam?"lambda":fn->genexp?"genexpr":fn->name); return; }   /* under the outer function's label */
     if(!fn->def){ snprintf(out,n,"%s.module_body",mod_prefix(fn->mod)); return; }
-    if(fn->cls){ snprintf(out,n,"%s.%s.%s",mod_prefix(fn->mod),fn->cls->name,fn->name); return; }
+    if(fn->cls){ snprintf(out,n,"%s.%s.%s",mod_prefix(fn->cls->mod),fn->cls->name,fn->name); return; }   /* (a mixin's copy: in its own module) */
     ASym *s=symtab_find(&fn->mod->syms,fn->name);
     snprintf(out,n,"%s.%s%s",mod_prefix(fn->mod),fn->name,s && s->kind==AS_VAR?".def":"");   /* decorated: the name is the decorated value */
 }
@@ -359,7 +367,7 @@ static void layout_caps(AFunc *fn){
     for(int i=0;i<fn->ncaps;i++){ AVar *v=fn->caps[i]; v->capoff=off; off+=root_var(v)->cell?4:ty_size(v->ty); }
     fn->capsize=off-16;
 }
-static const char *fn_display_name(AFunc *g){ return g->lam?"<lambda>":g->genexp?"<genexpr>":g->name; }
+static const char *fn_display_name(AFunc *g){ return g->shown?g->shown:g->lam?"<lambda>":g->genexp?"<genexpr>":g->name; }
 static void var_addr_at(char *buf, size_t n, AVar *v, int extra){
     if(v->global){ if(extra) snprintf(buf,n,"[%s+%d]",global_label(v),extra); else snprintf(buf,n,"[%s]",global_label(v)); }
     else snprintf(buf,n,"[ebp%+d]",v->offset+extra);
@@ -455,6 +463,7 @@ static void CALLRT(F *f, const char *name);
 static int zlit(const char *s);
 static void check_none(F *f, Ty *t, const char *exc, const char *msg){
     if(!is_opt(t)) return;
+    if(!msg) msg="unsupported operand type: 'NoneType'";
     int lnone=new_label(), lok=new_label();
     jump_if_none(f,t,lnone); E(f,"jmp L%d",lok);
     LBL(f,lnone);
@@ -492,7 +501,7 @@ static int btype_match(Ty *t, const char *name){
         case TY_LIST: return !strcmp(name,t->tup?"tuple":"list");
         case TY_TUPLE: return !strcmp(name,t->names?"dict":"tuple");
         case TY_DICT: return !strcmp(name,"dict");
-        case TY_SET: return !strcmp(name,"set");
+        case TY_SET: return !strcmp(name,t->tup?"frozenset":"set");
         case TY_TYPE: return !strcmp(name,"type");
         default: return 0;
     }
@@ -501,7 +510,7 @@ static int btype_match(Ty *t, const char *name){
 static const char *py_type_name(Ty *t){
     t=ty_find(t);
     switch(t->k){ case TY_INT: return "int"; case TY_BOOL: return "bool"; case TY_FLOAT: return "float"; case TY_STR: return "str"; case TY_BYTES: return "bytes"; case TY_TYPE: return "type";
-        case TY_LIST: return t->tup?"tuple":"list"; case TY_DICT: return "dict"; case TY_SET: return "set"; case TY_TUPLE: return t->names?"dict":"tuple";
+        case TY_LIST: return t->tup?"tuple":"list"; case TY_DICT: return "dict"; case TY_SET: return t->tup?"frozenset":"set"; case TY_TUPLE: return t->names?"dict":"tuple";
         case TY_OBJ: return t->cls->name; case TY_FUNC: return "function"; case TY_GEN: return "generator"; case TY_FILE: return "TextIOWrapper";
         case TY_BUF: return "buffer"; case TY_TASK: return "Task"; default: return "NoneType"; }
 }
@@ -621,10 +630,12 @@ static void gen_as(F *f, Expr *e, Ty *want, int owned){
         E(f,"mov eax,%s",fnl(ad,LB_VALUE));
         return;
     }
+    const char *given=g_none_text;                                           /* (e's own code may set it) */
+    char *keep= given && is_opt(TY(e)) ? xstrdup2(given) : NULL;
     if(owned) gen_owned(f,e); else gen_borrow(f,e);
     Ty *w=ty_find(want);
     if(is_opt(TY(e)) && !w->opt && w->k!=TY_VAR && w->k!=TY_VOID){          /* None where a value is needed */
-        const char *msg=g_none_text;
+        const char *msg=keep;
         if(!msg) msg = w->k==TY_INT||w->k==TY_BOOL ? "'NoneType' object cannot be interpreted as an integer"
                      : w->k==TY_FLOAT ? "must be real number, not NoneType"
                      : none_msg("expected %s, got NoneType",py_type_name(w));
@@ -712,21 +723,30 @@ static void call_on_top(F *f, AFunc *m){
     if(m->overridden){ E(f,"mov eax,[eax+8]"); E(f,"call dword [eax+%d]",8+4*m->vslot); }
     else E(f,"call %s",fnl(m,LB_CODE));
 }
+/* the size of the arguments of an operator method's call: self, then the rest (the operand, defaults) */
+static int op_frame(AFunc *m){ int t=4; for(int i=1;i<m->nparams;i++) t+=esize(m->params[i]->ty); return t; }
+/* the defaults of its parameters after the used ones (constants: see op_method_of) */
+static void op_defaults(F *f, AFunc *m, int used){
+    int off=4; for(int i=1;i<used && i<m->nparams;i++) off+=esize(m->params[i]->ty);
+    for(int i=used;i<m->nparams;i++){ Ty *pt=m->params[i]->ty; gen_as(f,m->defaults[i],pt,m->params[i]->consumed); put_arg(f,pt,off); off+=esize(pt); }
+}
 /* self.__r<op>__(arg) for `arg <op> self`: arg (the left operand) evaluated first */
 static int gen_op_call_r(F *f, AFunc *m, Expr *self, Expr *arg){
-    Ty *pt=m->params[1]->ty; int total=4+esize(pt);
+    Ty *pt=m->params[1]->ty; int total=op_frame(m);
     E(f,"sub esp,%d",total);
     gen_as(f,arg,pt,0); put_arg(f,pt,4);
+    op_defaults(f,m,2);
     gen_borrow(f,self); E(f,"mov [esp],eax");
     call_on_top(f,m);
     E(f,"add esp,%d",total);
     return is_ptr(m->ret);
 }
 static int gen_op_call(F *f, AFunc *m, Expr *self, Expr *arg){
-    int total=4+(arg?esize(m->params[1]->ty):0);
+    int total=op_frame(m);
     E(f,"sub esp,%d",total);
     gen_borrow(f,self); E(f,"mov [esp],eax");
     if(arg){ Ty *pt=m->params[1]->ty; gen_as(f,arg,pt,0); put_arg(f,pt,4); }
+    op_defaults(f,m,arg?2:1);
     call_on_top(f,m);
     E(f,"add esp,%d",total);
     return is_ptr(m->ret);
@@ -764,11 +784,12 @@ static int gen_binary(F *f, Expr *e){
     if(e->op==T_PERCENT && ta->k==TY_STR) return gen_format(f,e);
     if(e->op==T_PLUS && t->k==TY_STR && concat_worth(e) && !is_opt(ta) && !is_opt(tb)) return gen_concat(f,e);
     int num=numeric_ty(t);
-    g_none_text=binop_none_msg(e->op,ta,tb,1);
-    gen_as(f,e->a,num?t:ta,0); if(!num) check_none(f,ta,"TypeError",g_none_text);
+    char *ma=xstrdup2(binop_none_msg(e->op,ta,tb,1)), *mb=xstrdup2(binop_none_msg(e->op,ta,tb,0));   /* (an operand's own code may set g_none_text) */
+    g_none_text=ma;
+    gen_as(f,e->a,num?t:ta,0); if(!num) check_none(f,ta,"TypeError",ma);
     push_value(f,num?t:ta);
-    g_none_text=binop_none_msg(e->op,ta,tb,0);
-    gen_as(f,e->b,num?t:tb,0); if(!num) check_none(f,tb,"TypeError",g_none_text);
+    g_none_text=mb;
+    gen_as(f,e->b,num?t:tb,0); if(!num) check_none(f,tb,"TypeError",mb);
     g_none_text=NULL;
     return apply_binop(f,e->op,t,ta,tb,e->line);
 }
@@ -948,11 +969,29 @@ static void cmp_finish(F *f, int code, Ty *ta, Ty *tb, int line){
     }
     cg_fail(line,"unsupported comparison");
 }
-static void gen_cmp2_m(F *f, int code, Expr *a, Expr *b, int line, AFunc *m, int neg){
+static void gen_cmp2_m(F *f, int code, Expr *a, Expr *b, int line, AFunc *m, int neg, int swap){
     (void)line;
+    Ty *r=ty_find(m->ret);
+    if(swap){ gen_op_call_r(f,m,b,a); if(r->k!=TY_BOOL) truth(f,r); if(neg) E(f,"xor eax,1"); return; }   /* 1 < obj: obj.__gt__(1) */
+    if((code==CMP_EQ||code==CMP_NE) && is_opt(TY(a))){       /* a maybe None: None == b is b is None */
+        Ty *pt=m->params[1]->ty; int total=op_frame(m), lcall=new_label(), ldone=new_label();
+        E(f,"sub esp,%d",total);
+        gen_borrow(f,a); E(f,"mov [esp],eax");
+        gen_as(f,b,pt,0); put_arg(f,pt,4);
+        op_defaults(f,m,2);
+        E(f,"mov eax,[esp]"); E(f,"test eax,eax"); E(f,"jnz L%d",lcall);
+        if(is_ptr(pt)){ E(f,"mov eax,[esp+4]"); E(f,"test eax,eax"); E(f,"sete al"); E(f,"movzx eax,al"); }
+        else E(f,"xor eax,eax");
+        E(f,"jmp L%d",ldone);
+        LBL(f,lcall);
+        call_on_top(f,m);
+        if(r->k!=TY_BOOL) truth(f,r);
+        LBL(f,ldone);
+        E(f,"add esp,%d",total);
+        if(neg) E(f,"xor eax,1");
+        return; }
     if(code==CMP_IN||code==CMP_NOTIN){ int o=gen_op_call(f,m,b,a); (void)o; }     /* b.__contains__(a) */
     else gen_op_call(f,m,a,b);
-    Ty *r=ty_find(m->ret);
     if(r->k!=TY_BOOL) truth(f,r);
     if(neg || code==CMP_NOTIN) E(f,"xor eax,1");
 }
@@ -1014,11 +1053,12 @@ static void gen_compare_chain_m(F *f, Expr *e){
         Ty *t=TY(e->items[i]); int code=e->items[i]->akind; AFunc *m=xi->cmpfn[i];
         gen_borrow(f,e->items[i]); store_new(f,t,"ebp",cs);
         if(m){
-            int contains= code==CMP_IN||code==CMP_NOTIN;              /* b.__contains__(a) */
-            Ty *at=contains?prev:t, *pt=m->params[1]->ty; int sslot=contains?cs:ps, aslot=contains?ps:cs, total=4+esize(pt);
+            int contains= code==CMP_IN||code==CMP_NOTIN || ((xi->cmpswap>>i)&1);   /* b.__contains__(a), b.__gt__(a) */
+            Ty *at=contains?prev:t, *pt=m->params[1]->ty; int sslot=contains?cs:ps, aslot=contains?ps:cs, total=op_frame(m);
             E(f,"sub esp,%d",total);
             E(f,"mov eax,[ebp%+d]",sslot); E(f,"mov [esp],eax");
             load_mem(f,at,"ebp",aslot); conv_num(f,at,pt); put_arg(f,pt,4);
+            op_defaults(f,m,2);
             call_on_top(f,m); E(f,"add esp,%d",total);
             Ty *r=ty_find(m->ret); if(r->k!=TY_BOOL) truth(f,r);
             if(((xi->cmpneg>>i)&1) || code==CMP_NOTIN) E(f,"xor eax,1");
@@ -1036,7 +1076,7 @@ static void gen_compare_chain_m(F *f, Expr *e){
 }
 static void gen_compare(F *f, Expr *e){
     XInfo *xi=xinfo(e);
-    if(e->count==2 && xi->cmpfn && xi->cmpfn[1]){ gen_cmp2_m(f,e->items[1]->akind,e->items[0],e->items[1],e->line,xi->cmpfn[1],(xi->cmpneg>>1)&1); return; }
+    if(e->count==2 && xi->cmpfn && xi->cmpfn[1]){ gen_cmp2_m(f,e->items[1]->akind,e->items[0],e->items[1],e->line,xi->cmpfn[1],(xi->cmpneg>>1)&1,(xi->cmpswap>>1)&1); return; }
     if(e->count==2){ gen_cmp2(f,e->items[1]->akind,e->items[0],e->items[1],e->line); return; }
     if(xi->cmpfn) for(int i=1;i<e->count;i++) if(xi->cmpfn[i]){ gen_compare_chain_m(f,e); return; }
     int lend=new_label(), slot=frame_slot(f,8);           /* a < b < c: each middle operand once */
@@ -1087,6 +1127,7 @@ static void gen_jump(F *f, Expr *e, int label, int want){
     }
     int mark=scope_open(f);
     if(e->kind==EXPR_COMPARE && e->count==2 && int_like(TY(e->items[0])) && int_like(TY(e->items[1]))
+       && !is_opt(TY(e->items[0])) && !is_opt(TY(e->items[1]))                    /* (None == 5: gen_cmp2's way) */
        && !is_none_lit(e->items[0]) && !is_none_lit(e->items[1]) && e->items[1]->akind<=CMP_NE){
         Ty *ct=num_common(TY(e->items[0]),TY(e->items[1])); int code=e->items[1]->akind;
         gen_as(f,e->items[0],ct,0); push_value(f,ct); gen_as(f,e->items[1],ct,0);
@@ -1117,7 +1158,7 @@ typedef struct {
     int nsrc, srcs[8]; ItKind subs[8]; Ty *elems[8];   /* zip: its iterables */
 } Iter;
 static ItKind seq_kind(Ty *t){ t=ty_find(t); return t->k==TY_STR?IT_STR:t->k==TY_BYTES?IT_BYTES:t->k==TY_DICT?IT_KEYS:t->k==TY_TUPLE?IT_TUP:t->k==TY_GEN?IT_GEN:IT_SEQ; }
-static Ty *seq_elem(Ty *t){ t=ty_find(t); return t->k==TY_STR?TY_STR_T:t->k==TY_BYTES?TY_INT_T:t->k==TY_DICT?ty_dkey(t):t->k==TY_TUPLE?t->elems[0]:t->elem; }
+static Ty *seq_elem(Ty *t){ t=ty_find(t); return t->k==TY_STR?TY_STR_T:t->k==TY_BYTES?TY_INT_T:t->k==TY_DICT?ty_dkey(t):t->k==TY_TUPLE?(t->nelems?t->elems[0]:TY_INT_T):t->elem; }   /* (an empty tuple: no items) */
 /* the object a loop goes over, kept in a slot of its own: a sequence, a
    generator, obj.__iter__()'s result, a file's lines -> its kind and items */
 static ItKind iter_source(F *f, Expr *x, int *slot, Ty **elem){
@@ -1384,7 +1425,7 @@ static int gen_index(F *f, Expr *e){
     }
     Ty *ct=TY(e->a);
     if(xinfo(e)->kind==X_TYPEVAL){ E(f,"mov eax,%s",typeval_label(xinfo(e))); return 0; }      /* Box[int]: the class */
-    if(ct->k==TY_OBJ) return gen_op_call(f,aot_find_method(ct->cls,"__getitem__"),e->a,e->b);   /* obj[key] */
+    if(ct->k==TY_OBJ) return gen_op_call(f,xinfo(e)->kind==X_OPMETHOD && xinfo(e)->fn ? xinfo(e)->fn : aot_find_method(ct->cls,"__getitem__"),e->a,e->b);   /* obj[key] (a generic one: its copy) */
     if(is_opt(ct)){ int o=gen(f,e->a); if(o) hold(f); check_none(f,ct,"TypeError","'NoneType' object is not subscriptable"); drop_value(f,ct,0); }
     if(ct->k==TY_TUPLE){
         XInfo *xi=xinfo(e);
@@ -1852,6 +1893,12 @@ static void gen_list_of(F *f, Expr *x, Ty *elem){
         case TY_BYTES: CALLRT(f,"rt_bytes_list"); break;
         case TY_SET: E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_set_to_list"); break;
         case TY_GEN: E(f,"mov edx,%s",kd_of(elem)); CALLRT(f,"rt_gen_drain"); break;
+        case TY_TUPLE:{                                     /* a tuple's items, one by one */
+            E(f,"push eax"); new_list(f,elem); E(f,"push eax");
+            for(int i=0;i<t->nelems;i++){ Ty *et=t->elems[i];
+                E(f,"mov eax,[esp+4]"); load_mem(f,et,"eax",tuple_off(t,i)); if(is_ptr(et)) incref(f);
+                conv_num(f,et,elem); list_append_top(f,elem); }
+            E(f,"pop eax"); E(f,"add esp,4"); break; }
         default: E(f,"mov edx,%s",kd_of(t->elem)); CALLRT(f,"rt_list_copy"); break;
     }
 }
@@ -1910,11 +1957,13 @@ static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
     if(!strcmp(n,"downcast")) return gen(f,e->items[1]);                  /* (the same object, known to be of a subclass) */
     if(!strcmp(n,"aiter")) return gen(f,a0);
     if(!strncmp(n,"thread.",7)){ const char *m=n+7;                       /* threads: tasks */
-        if(!strcmp(m,"start")){ gen_task_new(f,xi->key); return 1; }      /* (at the end the program does not wait for them, as the interpreter) */
+        if(!strcmp(m,"start")){ gen_task_new(f,xi->key); rt("rt_time_sleep"); rt("rt_thread_sleep");
+            E(f,"mov dword [rt_sleep_hook],rt_thread_sleep"); return 1; }          /* (time.sleep() lets the threads run from now on) */      /* (at the end the program does not wait for them, as the interpreter) */
         if(!strcmp(m,"join")){ gen_borrow(f,a0); CALLRT(f,"rt_thread_join"); return 0; }
         if(!strcmp(m,"lock")){ CALLRT(f,"rt_thread_lock"); return 0; }
         if(!strcmp(m,"acquire")||!strcmp(m,"release")){ gen(f,a0); to_i32(f,TY(a0)); CALLRT(f,m[0]=='a'?"rt_thread_acquire":"rt_thread_release"); return 0; }
-        if(!strcmp(m,"sleep")){ gen_as(f,a0,TY_FLOAT_T,0); CALLRT(f,"rt_thread_sleep"); return 0; } }
+        if(!strcmp(m,"sleep")){ gen_as(f,a0,TY_FLOAT_T,0); CALLRT(f,"rt_thread_sleep"); return 0; }
+        if(!strcmp(m,"current")){ CALLRT(f,"rt_thread_current"); return 0; } }
     if(!strcmp(n,"next")||!strcmp(n,"anext")){
         Ty *el=t; int slot=frame_slot(f,4), lmiss=new_label(), lend=new_label();
         gen_borrow(f,a0); panic_if_null(f); E(f,"mov [ebp%+d],eax",slot);
@@ -1978,7 +2027,12 @@ static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
     if(!strcmp(n,"round")) g_none_text="type NoneType doesn't define __round__ method";
     if(!strcmp(n,"int")){
         if(!a0){ gen_int_const(f,TY_INT_T,0); return 0; }
+        if(!g_none_text) g_none_text="int() argument must be a string, a bytes-like object or a real number, not 'NoneType'";
         if(t0->k==TY_FLOAT){ gen(f,a0); CALLRT(f,"rt_ftoi"); return 0; }
+        if(e->count==2 || t0->k==TY_BYTES){                                       /* int(s, base), int(b"12") */
+            if(e->count==2){ gen_as(f,e->items[1],TY_INT_T,0); to_i32(f,TY_INT_T); E(f,"push eax"); } else E(f,"push 10");
+            gen_borrow(f,a0); check_none(f,t0,"TypeError",g_none_text);
+            E(f,"pop ecx"); E(f,"mov edx,%d",t0->k==TY_BYTES); CALLRT(f,"rt_int_parse_base"); return 0; }
         if(t0->k==TY_STR){ gen_borrow(f,a0); check_none(f,t0,"TypeError",g_none_text); CALLRT(f,"rt_int_parse"); return 0; }
         gen_as(f,a0,TY_INT_T,0); return 0;
     }
@@ -2023,6 +2077,9 @@ static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
         return 0;
     }
     if(!strcmp(n,"ord")){ gen_borrow(f,a0); CALLRT(f,"rt_ord"); widen(f,0); return 0; }
+    if(!strcmp(n,"id")){                                    /* an object's address (an int, a bool: its value) */
+        if(is_ptr(t0)){ gen_borrow(f,a0); widen(f,0); return 0; }
+        gen_borrow(f,a0); if(esize(t0)<8) widen(f,1); return 0; }
     if(!strcmp(n,"hash")){                                  /* the type's hash (the interpreter's numbers) */
         gen_borrow(f,a0); push_value(f,t0); E(f,"mov eax,esp"); E(f,"mov ecx,%s",kd_of(t0)); E(f,"call dword [ecx+16]"); E(f,"add esp,%d",esize(t0)); return 0; }
     if(!strcmp(n,"open")){
@@ -2088,6 +2145,8 @@ static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
         Expr *k=e->items[1]; int nk=k->kind==EXPR_TUPLE?k->count:1;
         gen(f,a0); E(f,"push eax"); E(f,"push 0");
         for(int i=0;i<nk;i++){ XInfo *ki=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k);
+            if(ki->kind!=X_TYPEVAL){                         /* a class value: when running */
+                gen(f,k); E(f,"mov edx,eax"); E(f,"mov eax,[esp+4]"); CALLRT(f,"rt_issubclass"); E(f,"or [esp],eax"); continue; }
             if(!ki->cls && !strcmp(ki->name,"object")){ E(f,"mov dword [esp],1"); continue; }
             E(f,"mov eax,[esp+4]"); E(f,"mov edx,%s",typeval_label(ki)); CALLRT(f,"rt_issubclass"); E(f,"or [esp],eax"); }
         E(f,"pop eax"); E(f,"add esp,4"); return 0;
@@ -2097,6 +2156,9 @@ static int gen_builtin_in(F *f, Expr *e, XInfo *xi){
         if(t0->k==TY_OBJ){                                     /* an object: its class (None: an instance of nothing here) */
             gen_borrow(f,a0); E(f,"push eax"); E(f,"push 0");
             for(int i=0;i<nk;i++){ XInfo *ki=xinfo(k->kind==EXPR_TUPLE?k->items[i]:k);
+                if(ki->kind!=X_TYPEVAL){                         /* a class value: its descriptor, when running */
+                    gen(f,k->kind==EXPR_TUPLE?k->items[i]:k); E(f,"mov edx,eax"); E(f,"mov eax,[esp+4]"); CALLRT(f,"rt_isinstance"); E(f,"or [esp],eax");
+                    continue; }
                 if(!ki->cls){ if(!strcmp(ki->name,"object")){ int l=new_label(); E(f,"cmp dword [esp+4],0"); E(f,"je L%d",l); E(f,"mov dword [esp],1"); LBL(f,l); }
                     else if(!strcmp(ki->name,"NoneType")){ int l=new_label(); E(f,"cmp dword [esp+4],0"); E(f,"jne L%d",l); E(f,"mov dword [esp],1"); LBL(f,l); }
                     continue; }
@@ -2300,6 +2362,10 @@ static int gen_tmethod(F *f, Expr *e, XInfo *xi){
             if(a0){ E(f,"push eax"); gen(f,a0); E(f,"mov edx,eax"); E(f,"pop eax"); } else E(f,"xor edx,edx");
             CALLRT(f,"rt_bytes_splitlines"); return 1;
         }
+        if(!strcmp(m,"hex") && a0){
+            gen_recv(f,obj,m); E(f,"push eax"); gen_borrow(f,a0); E(f,"push eax");
+            if(a1){ gen_as(f,a1,TY_INT_T,0); to_i32(f,TY_INT_T); E(f,"mov ecx,eax"); } else E(f,"mov ecx,1");
+            E(f,"pop edx"); E(f,"pop eax"); CALLRT(f,"rt_bytes_hex_sep"); return 1; }
         gen_recv(f,obj,m);
         if(!strcmp(m,"hex")){ CALLRT(f,"rt_bytes_hex"); return 1; }
         if(bytes_case_mode(m)>=0){ E(f,"mov edx,%d",bytes_case_mode(m)); CALLRT(f,"rt_bytes_case"); return 1; }
@@ -2454,6 +2520,8 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
     const char *m=xi->name;
     if(!strcmp(m,"buffer")){ Ty *t0=TY(e->items[0]); gen_borrow(f,e->items[0]); to_i32(f,t0); CALLRT(f,t0->k==TY_STR||t0->k==TY_BYTES?"rt_buf_from_str":"rt_buf_new"); return 1; }
     if(!strcmp(m,"addr")){ gen_borrow(f,e->items[0]); E(f,"add eax,12"); widen(f,0); return 0; }
+    if(!strcmp(m,"_rawargs")){ gen(f,e->items[0]); CALLRT(f,"rt_sys_args"); return 1; }
+    if(!strcmp(m,"_sleep")){ gen_as(f,e->items[0],TY_FLOAT_T,0); CALLRT(f,"rt_time_sleep"); return 0; }
     if(!strcmp(m,"exit")){ if(e->count) gen(f,e->items[0]); else E(f,"xor eax,eax"); E(f,"mov ebx,eax"); CALLRT(f,"rt_exit"); return 0; }
     if(!strcmp(m,"peek_at")||!strcmp(m,"peek_str_at")||!strcmp(m,"cstr_at")||!strcmp(m,"poke_str_at")){   /* raw memory: (address, n | str) */
         gen(f,e->items[0]); E(f,"push eax");
@@ -2471,8 +2539,8 @@ static int gen_sys(F *f, Expr *e, XInfo *xi){
     if(!strcmp(m,"poke")){ CALLRT(f,"rt_buf_poke"); E(f,"add esp,16"); return 0; }
     if(!strcmp(m,"peek")){ CALLRT(f,"rt_buf_peek"); E(f,"add esp,12"); widen(f,0); return 0; }
     E(f,"pop eax"); E(f,"pop edx"); E(f,"pop ecx");
-    if(!strcmp(m,"poke_str")){ CALLRT(f,"rt_buf_poke_str"); return 0; }
-    CALLRT(f,"rt_buf_peek_str"); return 1;
+    if(!strcmp(m,"poke_str")||!strcmp(m,"poke_bytes")){ CALLRT(f,"rt_buf_poke_str"); return 0; }   /* (bytes: the same layout) */
+    CALLRT(f,!strcmp(m,"peek_bytes")?"rt_buf_peek_bytes":"rt_buf_peek_str"); return 1;
 }
 
 /* A C function through ctypes (cdecl, i386 System V): the arguments are
@@ -2780,6 +2848,9 @@ static int gen_closure(F *f, AFunc *g){
 static void fill_defaults(F *f, AFunc *g, const char *lbl){
     layout_defaults(g);
     for(int i=0;i<g->nparams;i++){ Expr *d=g->defaults[i]; if(!d || i==g->star || i==g->dstar) continue;
+        if(i<32 && (g->defaults_mismatch>>i&1)) continue;        /* (a generic copy's constant default of another type: calls put it in) */
+        if(!d->ty && g->origin && i<g->origin->nparams && g->origin->defaults[i] && g->origin->defaults[i]->ty) d=g->origin->defaults[i];   /* (a copy's unchecked one: its origin's) */
+        if(!d->ty) continue;
         Ty *pt=g->params[i]->ty;
         gen_as(f,d,pt,1);
         if(lbl) E(f,"mov ecx,%s",lbl); else E(f,"mov ecx,[esp]");
@@ -2868,6 +2939,7 @@ static int gen(F *f, Expr *e){
                 E(f,"mov eax,S%d",str_lit(xinfo(e->a)->cls->qualname)); return 0; }
             if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_qualname")){ gen(f,e->a); CALLRT(f,"rt_type_qualname"); return 0; }   /* type(x).__qualname__ */
             if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_name")){ gen(f,e->a); E(f,"mov eax,[eax]"); return 0; }   /* C.__name__ (static) */
+            if(xi->kind==X_BUILTIN && !strcmp(xi->name,"type_module")){ gen(f,e->a); E(f,"mov eax,[eax-8]"); return 0; }   /* C.__module__ (static) */
             if(xi->kind==X_BUILTIN && !strcmp(xi->name,"exc_args")){            /* e.args: (message,) or () */
                 AField *fm=aot_find_field(ty_find(TY(e->a))->cls,"_msg"); int l=new_label();
                 gen_borrow(f,e->a); E(f,"push dword [eax+%d]",fm->offset);
@@ -2978,9 +3050,17 @@ static void kd_truth(Buf *o, Ty *r){                  /* eax = truth of a method
     if(ty_find(r)->k!=TY_BOOL) buf_printf(o,"        test eax,eax\n        setne al\n        movzx eax,al\n");
 }
 static int kd_method_ok(AFunc *m, int nparams){
-    if(!m || m->is_static || m->nparams!=nparams) return 0;
+    if(!m || m->is_static || m->nparams<nparams) return 0;
     for(int i=1;i<nparams;i++) if(!is_ptr(m->params[i]->ty) || is_flt(m->params[i]->ty)) return 0;
+    for(int i=nparams;i<m->nparams;i++)                  /* (more parameters: pointers left None - __lt__(self, other, context=None)) */
+        if(!m->defaults[i] || m->defaults[i]->kind!=EXPR_NONE || !is_ptr(m->params[i]->ty) || i==m->star || i==m->dstar) return 0;
     return 1;
+}
+/* the None arguments of a kind method's parameters after the first n (pushed before the others) */
+static const char *kd_nones(AFunc *m, int n){
+    static char b[4][160]; static int k; char *o=b[k++&3]; o[0]=0;
+    for(int i=n;i<m->nparams && i<16;i++) strcat(o,"        push 0\n");
+    return o;
 }
 static const char *class_kd(AClass *c){
     if(!gg->kdlabels){ gg->kdlabels=(char**)xmalloc(sizeof(char*)*(size_t)(gg->p->nclasses+1)); memset(gg->kdlabels,0,sizeof(char*)*(size_t)(gg->p->nclasses+1)); }
@@ -2989,26 +3069,26 @@ static const char *class_kd(AClass *c){
     gg->kdlabels[c->id]=xstrdup2(lab);
     use_class(c);
     Buf *o=&gg->text;
-    AFunc *eq=aot_find_method(c,"__eq__"), *lt=aot_find_method(c,"__lt__"), *hs=aot_find_method(c,"__hash__");
+    AFunc *eq=c->eq_inst?c->eq_inst:aot_find_method(c,"__eq__"), *lt=c->lt_inst?c->lt_inst:aot_find_method(c,"__lt__"), *hs=aot_find_method(c,"__hash__");
     if(!kd_method_ok(eq,2)) eq=NULL;
     if(!kd_method_ok(lt,2)) lt=NULL;
     if(!kd_method_ok(hs,1) || !(ty_find(hs->ret)->k==TY_INT||ty_find(hs->ret)->k==TY_BOOL)) hs=NULL;
     char eqf[64]="rt_eq_w", cmpf[64]="rt_cmp_no", hashf[64]="rt_hash_p";
     if(eq){ use_fn(eq); snprintf(eqf,sizeof eqf,"KDC%d_eq",c->id);
         int lid=++gg->labels;
-        buf_printf(o,"\n%s:                       ; %s.__eq__ for containers (None: identity)\n        mov ecx,[eax]\n        mov eax,[edx]\n        test ecx,ecx\n        jz L%d\n        test eax,eax\n        jz L%d\n        push eax\n        push ecx\n",eqf,c->name,lid,lid);
-        kd_call_method(o,eq); buf_printf(o,"        add esp,8\n"); kd_truth(o,eq->ret);
+        buf_printf(o,"\n%s:                       ; %s.__eq__ for containers (None: identity)\n        mov ecx,[eax]\n        mov eax,[edx]\n        test ecx,ecx\n        jz L%d\n        test eax,eax\n        jz L%d\n%s        push eax\n        push ecx\n",eqf,c->name,lid,lid,kd_nones(eq,2));
+        kd_call_method(o,eq); buf_printf(o,"        add esp,%d\n",4*eq->nparams); kd_truth(o,eq->ret);
         buf_printf(o,"        ret\nL%d:\n        cmp ecx,eax\n        sete al\n        movzx eax,al\n        ret\n",lid); }
     if(lt){ use_fn(lt); snprintf(cmpf,sizeof cmpf,"KDC%d_cmp",c->id);
         int l1=++gg->labels, l2=++gg->labels;
-        buf_printf(o,"\n%s:                       ; ordering by %s.__lt__\n        push ebx\n        push esi\n        mov ebx,[eax]\n        mov esi,[edx]\n        push esi\n        push ebx\n",cmpf,c->name);
-        kd_call_method(o,lt); buf_printf(o,"        add esp,8\n"); kd_truth(o,lt->ret);
-        buf_printf(o,"        test eax,eax\n        jz L%d\n        or eax,-1\n        jmp L%d\nL%d:\n        push ebx\n        push esi\n",l1,l2,l1);
-        kd_call_method(o,lt); buf_printf(o,"        add esp,8\n"); kd_truth(o,lt->ret);
+        buf_printf(o,"\n%s:                       ; ordering by %s.__lt__\n        push ebx\n        push esi\n        mov ebx,[eax]\n        mov esi,[edx]\n%s        push esi\n        push ebx\n",cmpf,c->name,kd_nones(lt,2));
+        kd_call_method(o,lt); buf_printf(o,"        add esp,%d\n",4*lt->nparams); kd_truth(o,lt->ret);
+        buf_printf(o,"        test eax,eax\n        jz L%d\n        or eax,-1\n        jmp L%d\nL%d:\n%s        push ebx\n        push esi\n",l1,l2,l1,kd_nones(lt,2));
+        kd_call_method(o,lt); buf_printf(o,"        add esp,%d\n",4*lt->nparams); kd_truth(o,lt->ret);
         buf_printf(o,"L%d:\n        pop esi\n        pop ebx\n        ret\n",l2); }
     if(hs){ use_fn(hs); snprintf(hashf,sizeof hashf,"KDC%d_hash",c->id);
-        buf_printf(o,"\n%s:                       ; %s.__hash__\n        push dword [eax]\n",hashf,c->name);
-        kd_call_method(o,hs); buf_printf(o,"        add esp,4\n        cdq\n        jmp rt_hash_int\n"); rt("rt_hash_int"); }
+        buf_printf(o,"\n%s:                       ; %s.__hash__\n%s        push dword [eax]\n",hashf,c->name,kd_nones(hs,1));
+        kd_call_method(o,hs); buf_printf(o,"        add esp,%d\n%s        jmp rt_hash_int\n",4*hs->nparams,ty_find(hs->ret)->k==TY_BOOL?"        cdq\n":""); rt("rt_hash_int"); }   /* (an int: all 64 bits in edx:eax) */
     else if(eq) snprintf(hashf,sizeof hashf,"rt_hash_no");
     if(!eq) rt("rt_eq_w");
     if(!lt) rt("rt_cmp_no");
@@ -3037,9 +3117,20 @@ static void gen_fmt(F *f, Ty *t, int repr){
         case TY_BUF: E(f,"mov eax,Z%d",zlit("<buffer>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_TASK: E(f,"mov eax,Z%d",zlit("<Task>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_FILE: E(f,"mov eax,Z%d",zlit("<file>")); CALLRT(f,"rt_sb_cstr"); return;
-        case TY_FUNC: E(f,"mov eax,Z%d",zlit("<function>")); CALLRT(f,"rt_sb_cstr"); return;
+        case TY_FUNC: CALLRT(f,"rt_sb_funcval"); return;
         case TY_GEN: E(f,"mov eax,Z%d",zlit("<generator object>")); CALLRT(f,"rt_sb_cstr"); return;
         case TY_LIST: case TY_SET: case TY_DICT: case TY_OBJ: case TY_TUPLE:
+            if(t->k==TY_LIST && t->view){                                  /* a dict's view: dict_items([...]) */
+                static const char *const pre[]={"","dict_keys(","dict_values(","dict_items("};
+                Ty *plain=(Ty*)xmalloc(sizeof(Ty)); *plain=*t; plain->view=0;
+                E(f,"push eax"); E(f,"mov eax,Z%d",zlit(pre[t->view])); CALLRT(f,"rt_sb_cstr"); E(f,"pop eax");
+                rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(plain,repr)); E(f,"mov eax,Z%d",zlit(")")); CALLRT(f,"rt_sb_cstr"); return; }
+            if(t->k==TY_SET && t->tup){                                    /* frozenset({...}), frozenset() */
+                Ty *plain=(Ty*)xmalloc(sizeof(Ty)); *plain=*t; plain->tup=0; int le=new_label(), ld=new_label();
+                E(f,"cmp dword [eax+8],0"); E(f,"je L%d",le);
+                E(f,"push eax"); E(f,"mov eax,Z%d",zlit("frozenset(")); CALLRT(f,"rt_sb_cstr"); E(f,"pop eax");
+                rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(plain,repr)); E(f,"mov eax,Z%d",zlit(")")); CALLRT(f,"rt_sb_cstr"); E(f,"jmp L%d",ld);
+                LBL(f,le); E(f,"mov eax,Z%d",zlit("frozenset()")); CALLRT(f,"rt_sb_cstr"); LBL(f,ld); return; }
             rt("rt_sb_need"); E(f,"call FMT%d",fmt_index(t,repr)); return;
         default: E(f,"mov eax,Z%d",zlit("None")); CALLRT(f,"rt_sb_cstr"); return;     /* a bare None */
     }
@@ -3184,6 +3275,8 @@ static void emit_formatter(int i){
                 E(f,"push eax"); E(f,"mov eax,[eax+8]"); E(f,"mov eax,[eax]"); CALLRT(f,"rt_sb_str");
                 E(f,"mov al,'('"); CALLRT(f,"rt_sb_char");
                 AClass *ke=NULL; for(int i=0;i<gg->p->nclasses;i++) if(gg->p->classes[i]->builtin && !strcmp(gg->p->classes[i]->name,"KeyError")) ke=gg->p->classes[i];
+                { AField *ar=aot_find_field(cls,"_argrepr");          /* OSError(errno, strerror): repr shows those two */
+                  if(ar){ int lnoar=new_label(); E(f,"mov eax,[esp]"); E(f,"mov eax,[eax+%d]",ar->offset); E(f,"test eax,eax"); E(f,"jz L%d",lnoar); CALLRT(f,"rt_sb_str"); E(f,"jmp L%d",ldone); LBL(f,lnoar); } }
                 E(f,"mov eax,[esp]"); E(f,"cmp dword [eax+12],0"); E(f,"je L%d",lno);
                 E(f,"cmp dword [eax+%d],0",exc_rawoff(cls)); E(f,"jne L%d",lstr);          /* the message is the repr already */
                 if(is_keyerror(cls)) E(f,"jmp L%d",lstr);                                  /* (a KeyError the run time raised) */
@@ -3356,10 +3449,17 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi){
         if(!strcmp(m,"trunc")){ farg(f,a[0]); CALLRT(f,"rt_ftoi"); return 0; }
         if(!strcmp(m,"gcd")){ gen_as(f,a[0],TY_INT_T,0); push_value(f,TY_INT_T); gen_as(f,a[1],TY_INT_T,0); CALLRT(f,"rt_gcd"); E(f,"add esp,8"); return 0; }
         if(!strcmp(m,"isqrt")){ gen_as(f,a[0],TY_INT_T,0); CALLRT(f,"rt_isqrt"); return 0; }
+        if(!strcmp(m,"frexp")){ Ty *t=TY(e); farg(f,a[0]); CALLRT(f,"rt_frexp");        /* (m, e): a new tuple */
+            E(f,"push eax"); E(f,"sub esp,8"); E(f,"fstp qword [esp]");
+            E(f,"mov eax,TD%d",tdesc(t)); E(f,"mov edx,%d",tuple_size(t)); CALLRT(f,"rt_tuple_new");
+            E(f,"pop ecx"); E(f,"mov [eax+%d],ecx",tuple_off(t,0)); E(f,"pop ecx"); E(f,"mov [eax+%d],ecx",tuple_off(t,0)+4);
+            E(f,"pop ecx"); E(f,"mov [eax+%d],ecx",tuple_off(t,1)); E(f,"sar ecx,31"); E(f,"mov [eax+%d],ecx",tuple_off(t,1)+4);
+            return 1; }
+        if(!strcmp(m,"ldexp")){ gen_as(f,a[1],TY_INT_T,0); push_value(f,TY_INT_T); farg(f,a[0]); E(f,"pop eax"); E(f,"pop edx"); CALLRT(f,"rt_ldexp"); return 0; }
         if(e->count==2){                                                   /* two floats */
             farg(f,a[0]); E(f,"sub esp,8"); E(f,"fstp qword [esp]");
             farg(f,a[1]); E(f,"fld qword [esp]"); E(f,"add esp,8");          /* st0 = x, st1 = y */
-            if(!strcmp(m,"atan2")){ E(f,"fxch"); E(f,"fpatan"); }             /* atan(st1/st0): st1 = x(=y arg), st0 = y(=x arg) */
+            if(!strcmp(m,"atan2")){ E(f,"fxch"); CALLRT(f,"rt_fatan2"); }      /* atan(st1/st0): st1 = x(=y arg), st0 = y(=x arg) */
             else if(!strcmp(m,"pow")) CALLRT(f,"rt_fpow");
             else if(!strcmp(m,"hypot")){ E(f,"fmul st0,st0"); E(f,"fxch"); E(f,"fmul st0,st0"); E(f,"faddp st1,st0"); E(f,"fsqrt"); }
             else if(!strcmp(m,"fmod")) CALLRT(f,"rt_fmod_c");
@@ -3377,16 +3477,16 @@ static int gen_bmod(F *f, Expr *e, XInfo *xi){
             E(f,"movzx eax,al"); return 0; }
         farg(f,a[0]);
         if(!strcmp(m,"sqrt")) E(f,"fsqrt");
-        else if(!strcmp(m,"sin")) E(f,"fsin");
-        else if(!strcmp(m,"cos")) E(f,"fcos");
-        else if(!strcmp(m,"tan")){ E(f,"fptan"); E(f,"fstp st0"); }
-        else if(!strcmp(m,"atan")){ E(f,"fld1"); E(f,"fpatan"); }
-        else if(!strcmp(m,"asin")){ E(f,"fld st0"); E(f,"fmul st0,st0"); E(f,"fld1"); E(f,"fsubrp st1,st0"); E(f,"fsqrt"); E(f,"fpatan"); }
-        else if(!strcmp(m,"acos")){ E(f,"fld st0"); E(f,"fmul st0,st0"); E(f,"fld1"); E(f,"fsubrp st1,st0"); E(f,"fsqrt"); E(f,"fxch"); E(f,"fpatan"); }
+        else if(!strcmp(m,"sin")) CALLRT(f,"rt_fsin");
+        else if(!strcmp(m,"cos")) CALLRT(f,"rt_fcos");
+        else if(!strcmp(m,"tan")) CALLRT(f,"rt_ftan");
+        else if(!strcmp(m,"atan")) CALLRT(f,"rt_fatan");
+        else if(!strcmp(m,"asin")) CALLRT(f,"rt_fasin");
+        else if(!strcmp(m,"acos")) CALLRT(f,"rt_facos");
         else if(!strcmp(m,"exp")) CALLRT(f,"rt_fexp");
-        else if(!strcmp(m,"log")){ E(f,"fldln2"); E(f,"fxch"); E(f,"fyl2x"); }
-        else if(!strcmp(m,"log10")){ E(f,"fldlg2"); E(f,"fxch"); E(f,"fyl2x"); }
-        else if(!strcmp(m,"log2")){ E(f,"fld1"); E(f,"fxch"); E(f,"fyl2x"); }
+        else if(!strcmp(m,"log")) CALLRT(f,"rt_flog");
+        else if(!strcmp(m,"log10")) CALLRT(f,"rt_flog10");
+        else if(!strcmp(m,"log2")) CALLRT(f,"rt_flog2");
         else if(!strcmp(m,"fabs")) E(f,"fabs");
         else if(!strcmp(m,"degrees")) E(f,"fmul qword [FC%d]",float_const("57.29577951308232"));      /* 180/pi, as Python */
         else if(!strcmp(m,"radians")) E(f,"fmul qword [FC%d]",float_const("0.017453292519943295"));
@@ -3447,18 +3547,19 @@ static void gen_print_star(F *f, APrint *pr){
         else gen_into_sb(f,pr->args[i]);
     }
     if(pr->end) gen_into_sb(f,pr->end); else { E(f,"mov al,10"); CALLRT(f,"rt_sb_char"); }
-    E(f,"pop eax"); CALLRT(f,"rt_sb_flush");
+    E(f,"pop eax"); CALLRT(f,pr->fd==2?"rt_sb_flush_err":"rt_sb_flush");
 }
 static void gen_print(F *f, APrint *pr){
     int n=pr->n;
+    if(pr->flush){ int o=gen(f,pr->flush); drop_value(f,TY(pr->flush),o); }   /* (writes are not buffered: nothing to flush) */
     for(int i=0;i<n;i++) if(pr->star[i]){ gen_print_star(f,pr); return; }
-    if(!pr->sep && !pr->end){
+    if(!pr->sep && !pr->end && pr->fd!=2){
         if(n==0){ E(f,"mov ecx,P%d",print_lit("",0)); E(f,"mov edx,1"); CALLRT(f,"rt_write"); return; }
         Expr *a=pr->args[0]; Ty *t=TY(a);
         if(n==1 && is_str_lit(a) && a->tok->len){
             E(f,"mov ecx,P%d",print_lit(a->tok->text,(int)a->tok->len)); E(f,"mov edx,%d",(int)a->tok->len+1); CALLRT(f,"rt_write"); return; }
-        if(n==1 && t->k==TY_STR && !is_concat(a) && !is_fmt_expr(a) && !is_str_call(a)){ gen_borrow(f,a); CALLRT(f,"rt_print_str"); return; }
-        if(n==1 && t->k==TY_INT){ gen(f,a); CALLRT(f,"rt_print_int"); return; }      /* edx:eax */
+        if(n==1 && t->k==TY_STR && !t->opt && !is_concat(a) && !is_fmt_expr(a) && !is_str_call(a)){ gen_borrow(f,a); CALLRT(f,"rt_print_str"); return; }
+        if(n==1 && t->k==TY_INT && !t->opt){ gen(f,a); CALLRT(f,"rt_print_int"); return; }      /* edx:eax */
     }
     /* print(xs, xs.pop()): every argument is evaluated before any is formatted */
     int early=0, slots[32];
@@ -3474,7 +3575,7 @@ static void gen_print(F *f, APrint *pr){
         else gen_into_sb(f,pr->args[i]);
     }
     if(pr->end) gen_into_sb(f,pr->end); else { E(f,"mov al,10"); CALLRT(f,"rt_sb_char"); }
-    E(f,"pop eax"); CALLRT(f,"rt_sb_flush");
+    E(f,"pop eax"); CALLRT(f,pr->fd==2?"rt_sb_flush_err":"rt_sb_flush");
 }
 
 /* Store the owned value in eax/st0 (of type vt) into an assignment target. */
@@ -3600,11 +3701,12 @@ static void gen_augassign(F *f, AAssign *a, int line){
     Ty *cur=TY(t), *tv=TY(v); int num=numeric_ty(cur);
     XInfo *xi=xinfo(t);
     if(a->opfn){                                             /* v += w with __add__ & co: v = v.__add__(w) */
-        AFunc *m=a->opfn; Ty *pt=m->params[1]->ty; int total=4+esize(pt);
+        AFunc *m=a->opfn; Ty *pt=m->params[1]->ty; int total=op_frame(m);
         if(t->kind==EXPR_INDEX && TY(t->a)->k==TY_OBJ) cg_fail(line,"augmented assignment to obj[key] is not supported in compiled code");
         E(f,"sub esp,%d",total);
         gen_borrow(f,t); E(f,"mov [esp],eax");
         gen_as(f,v,pt,0); put_arg(f,pt,4);
+        op_defaults(f,m,2);
         call_on_top(f,m); E(f,"add esp,%d",total);
         store_target(f,t,m->ret,line);
         return;
@@ -3962,7 +4064,10 @@ static void gen_stmt(F *f, Stmt *s){
         case STMT_IMPORT: case STMT_FROM_IMPORT: gen_import(f,s); break;
         case STMT_FUNCTION_DEF:
             if(!is_fn_body(f->fn)){ AFunc *mf=module_def_fn(f,s);       /* module level: its defaults, evaluated now */
-                if(mf && has_defaults(mf)){ use_fn(mf); gg->fv_used[mf->id]=1; rt("rt_static"); fill_defaults(f,mf,fnl(mf,LB_VALUE)); } }
+                if(mf && has_defaults(mf)){
+                    for(int q=-1;q<mf->ninsts;q++){ AFunc *g=q<0?mf:mf->insts[q];  /* (a generic function: the instances calls use) */
+                        if(q<0 && mf->pristine && !mf->direct) continue;
+                        gg->fv_used[g->id]=1; rt("rt_static"); fill_defaults(f,g,fnl(g,LB_VALUE)); } } }   /* (its code only if something calls it) */
             if(s->expr2){                                /* decorated: name = d1(d2(function)) */
                 if(is_fn_body(f->fn) && ((AFunc*)s->aux)->unused) break;
                 gen_owned(f,s->expr2); store_var(f,find_var(f,s->name,s->line));
@@ -3982,7 +4087,8 @@ static void gen_stmt(F *f, Stmt *s){
                             if(fd->cvar && fd->init==a->value){ gen_as(f,fd->init,fd->ty,1); store_var(f,fd->cvar); } } }
                     for(int k=0;k<cls->nmethods;k++){ AFunc *m=cls->methods[k];
                         if(m->def!=bs) continue;
-                        if(has_defaults(m)){ use_fn(m); gg->fv_used[m->id]=1; rt("rt_static"); fill_defaults(f,m,fnl(m,LB_VALUE)); }   /* its defaults, evaluated now */
+                        if(has_defaults(m)) for(int q=-1;q<m->ninsts;q++){ AFunc *g=q<0?m:m->insts[q];      /* its defaults, evaluated now (its code: if called); */
+                            gg->fv_used[g->id]=1; rt("rt_static"); fill_defaults(f,g,fnl(g,LB_VALUE)); }      /* (a generic method's copies too) */
                         if(m->decovar){ gen_owned(f,m->def->expr2); store_var(f,m->decovar); } }
                     if(bs->kind==STMT_CLASS_DEF) gen_stmt(f,bs); }                 /* a nested class */
             }
@@ -4046,7 +4152,7 @@ static int pure_call(Expr *e){
             if((!strcmp(n,"str")||!strcmp(n,"repr")||!strcmp(n,"format")) && e->count && !fmt_pure(TY(e->items[0]))) return 0;
             if(xi->key){ if(e->a && xi->key->kind==EXPR_LAMBDA) { if(!pure_expr(xi->key->a)) return 0; } else if(strcmp(n,"reduce")) return 0; }
             if(!strcmp(n,"reduce") && !pure_expr(xi->key)) return 0;
-            for(int i=0;i<e->count;i++) if(TY(e->items[i])->k==TY_GEN) return 0;   /* draining a generator runs its code */
+            for(int i=0;i<e->count;i++){ Ty *it=TY(e->items[i]); if(it && it->k==TY_GEN) return 0; }   /* draining a generator runs its code (a format spec: no type) */
             return 1;
         case X_TMETHOD:{
             static const char *removing[]={"pop","remove","clear","discard","update",NULL};
@@ -4723,9 +4829,12 @@ static void emit_closure_destroy(AFunc *fn){
 }
 
 static void emit_class(AClass *c){
-    buf_printf(&gg->data,"align 4\n%s dd S%d,",class_label(c,0),str_lit(c->name));
+    const char *mn= c->builtin || !c->mod || !c->mod->name ? "builtins" : c->mod->name;     /* (before it: its module's name, and "module." as */
+    char pre[300]; snprintf(pre,sizeof pre,"%s.",mn);                                       /* an uncaught exception shows it: none for __main__'s and built-in ones) */
+    if(!strcmp(mn,"builtins") || !strcmp(mn,"__main__")) pre[0]=0;
+    buf_printf(&gg->data,"align 4\n        dd S%d,S%d\n%s dd S%d,",str_lit(mn),str_lit(pre),class_label(c,0),str_lit(c->name));
     if(c->base) buf_printf(&gg->data,"%s",class_label(c->base,0)); else buf_printf(&gg->data,"0");
-    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",%s",c->vt[i]->unused?"0":fnl(c->vt[i],LB_CODE));   /* (a mixin's own methods: only its copies run) */
+    for(int i=0;i<c->nvt;i++) buf_printf(&gg->data,",%s",c->vt[i]->unused||!c->vt[i]->used?"0":fnl(c->vt[i],LB_CODE));   /* (a mixin's own methods: only its copies run; uncalled ones: none) */
     buf_printf(&gg->data,"   ; class %s\n",c->name);
     Buf *o=&gg->text; int any=0;
     buf_printf(o,"\n%s:                          ; destroy %s\n",class_label(c,1),c->name);
@@ -4746,7 +4855,9 @@ static void emit_lit_pools(void){
         buf_printf(d,",%d",tuple_size(t));
         for(int k=0;k<t->nelems;k++) buf_printf(d,",%s,%d",kd_of(t->elems[k]),tuple_off(t,k));
         buf_printf(d,"   ; %s\n",ty_name(t)); }
-    if(gg->nflts){ buf_printf(d,"align 8\n"); for(int i=0;i<gg->nflts;i++) buf_printf(d,"FC%d dq %s\n",i,gg->flts[i].s); }
+    if(gg->nflts){ buf_printf(d,"align 8\n");            /* (as bits: fasm does not always round a decimal one right) */
+        for(int i=0;i<gg->nflts;i++){ double v=strtod(gg->flts[i].s,NULL); unsigned long long b; memcpy(&b,&v,8);
+            buf_printf(d,"FC%d dd 0x%08X,0x%08X ; %s\n",i,(unsigned)(b&0xFFFFFFFFu),(unsigned)(b>>32),gg->flts[i].s); } }
     for(int i=0;i<gg->nlits;i++){
         buf_printf(d,"align 4\nS%d dd 0x40000000,rt_static,%d\n        ",i,gg->lits[i].len);
         buf_bytes(d,gg->lits[i].s,gg->lits[i].len,1);
@@ -4828,6 +4939,7 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     g.bm_used=(char*)xmalloc((size_t)p->nfuncs+1); memset(g.bm_used,0,(size_t)p->nfuncs+1);
     AFunc *main_body=p->mods[0]->body;
     use_fn(main_body);
+    if(p->uncaught_fn) use_fn(p->uncaught_fn);
     rt("rt_exit");
     if(!getenv("MPY_NO_CONSUME")) for(int i=0;i<p->nfuncs;i++) if(!p->funcs[i]->unused) plan_consumed(p->funcs[i]);
     int nf=0, ns=0, na=0;
@@ -4845,14 +4957,15 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     for(int i=0;i<p->nfuncs;i++){
         if(g.cd_used[i]) emit_closure_destroy(p->funcs[i]);
         if(g.fv_used[i]){ AFunc *fi=p->funcs[i]; layout_defaults(fi);
-            buf_printf(&g.data,"align 4\n%s dd 0x40000000,rt_static,%s,S%d   ; %s as a value\n",fnl(fi,LB_VALUE),fnl(fi,LB_CODE),str_lit(fn_display_name(fi)),fn_display_name(fi));
+            buf_printf(&g.data,"align 4\n%s dd 0x40000000,rt_static,%s,S%d   ; %s as a value\n",fnl(fi,LB_VALUE),fi->used?fnl(fi,LB_CODE):"0",str_lit(fn_display_name(fi)),fn_display_name(fi));   /* (0: only its defaults are used) */
             if(fi->defsize){ buf_printf(&g.data,"        dd 0"); for(int k=4;k<fi->defsize;k+=4) buf_printf(&g.data,",0"); buf_printf(&g.data,"   ; its defaults\n"); } }
     }
     if(aot_rt_used(g.rt,"rt_throw")){                   /* run-time errors raise built-in exceptions */
         static const char *rtexc[]={"IndexError","KeyError","ZeroDivisionError","AttributeError","ValueError","AssertionError","FileNotFoundError","StopIteration","TypeError","OverflowError","EOFError","LookupError","UnicodeDecodeError","UnicodeEncodeError","UnboundLocalError","NameError","GeneratorExit","RuntimeError",NULL};
         rt("rt_raise_builtin");
         if(aot_rt_used(g.rt,"rt_gen_new")) rt("rt_gen_close");          /* abandoned generators are closed (their finally blocks run) */
-        for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !p->classes[i]->base && !strcmp(p->classes[i]->name,"BaseException")) buf_printf(&g.data,"RT_EXC_SIZE = %d\n",p->classes[i]->size);
+        { int mx=0; for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && aot_is_exception(p->classes[i]) && p->classes[i]->size>mx) mx=p->classes[i]->size;
+          buf_printf(&g.data,"RT_EXC_SIZE = %d\n",mx); }                  /* (the largest built-in one: an OSError's fields) */
         for(int k=0;rtexc[k];k++) for(int i=0;i<p->nclasses;i++) if(p->classes[i]->builtin && !strcmp(p->classes[i]->name,rtexc[k])){
             use_class(p->classes[i]);
             buf_printf(&g.data,"VTX_%s = %s\nDTX_%s = %s\n",rtexc[k],class_label(p->classes[i],0),rtexc[k],class_label(p->classes[i],1));
@@ -4860,7 +4973,7 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     }
     for(int i=0;i<p->nclasses;i++) if(g.class_used[i]) emit_class(p->classes[i]);
     for(int i=0;i<g.nbtypes;i++)                                 /* built-in types as values: name, base */
-        buf_printf(&g.data,"align 4\nTYD_%s dd S%d,%s\n",g.btypes[i],str_lit(g.btypes[i]),!strcmp(g.btypes[i],"bool")?"TYD_int":"0");
+        buf_printf(&g.data,"align 4\n        dd S%d,S%d\nTYD_%s dd S%d,%s\n",str_lit("builtins"),str_lit(""),g.btypes[i],str_lit(g.btypes[i]),!strcmp(g.btypes[i],"bool")?"TYD_int":"0");
     if(aot_rt_used(g.rt,"rt_sb_type")){                          /* "<class '__main__.C'>": qualified names */
         buf_printf(&g.data,"align 4\nTYQ");
         for(int i=0;i<p->nclasses;i++) if(g.class_used[i] && !p->classes[i]->builtin){ AClass *c=p->classes[i]; char q[300];
@@ -4878,6 +4991,8 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     Buf o; memset(&o,0,sizeof o);
     int heap=aot_rt_used(g.rt,"rt_os_alloc")||aot_rt_used(g.rt,"rt_con_open");
     buf_printf(&o,"; generated by minipy --compile from %s\n",p->mods[0]->unit->path?p->mods[0]->unit->path:"?");
+    char hook[200]="";                                     /* an uncaught exception: _mpy_exit.__mpy_uncaught (SystemExit's status) */
+    if(p->uncaught_fn && aot_rt_used(g.rt,"rt_exc_uncaught")) snprintf(hook,sizeof hook,"        mov dword [rt_uncaught_hook],%s\n",fnl(p->uncaught_fn,LB_CODE));
     const char *report="";
     if(opt->count_allocs && aot_rt_used(g.rt,"rt_alloc")){ rt("rt_live_report"); report="        call rt_live_report\n"; buf_printf(&g.data,"RT_COUNT_ALLOCS = 1\n"); }
     int dyn=g.target!=AOT_TARGET_KOLIBRI && dyn_used(p);
@@ -4886,11 +5001,13 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         if(g.target==AOT_TARGET_MACOS) buf_printf(&o,"; target macos: minipy translates this listing to C (aot_x2c.c)\n");
         buf_printf(&o,"format ELF executable 3\nentry start\n\n");
         if(dyn && g.target==AOT_TARGET_LINUX) emit_dynamic_header(&o,p);
-        buf_printf(&o,"segment readable executable\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
+        buf_printf(&o,"segment readable executable\n\nstart:\n%s        fninit\n%s%s",aot_rt_used(g.rt,"rt_sys_args")?"        mov [rt_sp0],esp\n":"",FPU_DOUBLE,hook);
         buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     } else {
-        buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,0,0\n\nstart:\n        fninit\n%s",FPU_DOUBLE);
+        buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,%s\n\nstart:\n        fninit\n%s",
+                   aot_rt_used(g.rt,"rt_sys_args")?"rt_kparams,rt_kpath":"0,0",FPU_DOUBLE);
         if(heap) buf_printf(&o,"        mov eax,68\n        mov ebx,11\n        int 0x40\n");
+        buf_printf(&o,"%s",hook);
         buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     }
     buf_cat(&o,&g.text);

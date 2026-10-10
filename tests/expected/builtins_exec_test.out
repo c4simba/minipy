@@ -1,0 +1,10 @@
+6 ['a', 'b']
+3 42 5
+11
+3 code
+9
+9
+SyntaxError True
+ValueError: compile() mode must be 'exec', 'eval' or 'single'
+[0, 1, 4, 9] 2
+8

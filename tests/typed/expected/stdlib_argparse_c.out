@@ -1,0 +1,97 @@
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+
+Does things.
+
+positional arguments:
+  path                input file
+  files
+
+options:
+  -h, --help          show this help message and exit
+  -n, --count COUNT   how many
+  -v, --verbose       talk more
+  --mode {fast,slow}
+  --tag TAG           tags
+  --ratio RATIO
+  -q
+
+Bye.
+
+Namespace(path='in.txt', count=3, verbose=True, mode='fast', tag=['x', 'y'], ratio=None, files=['a', 'b'], q=2)
+in.txt 4 True fast ['x', 'y'] None ['a', 'b'] 2
+Namespace(path='x', count=1, verbose=False, mode='fast', tag=None, ratio=2.5, files=['-f'], q=0) 2.5
+-- ['x', '--mode', 'bad']
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+tool: error: argument --mode: invalid choice: 'bad' (choose from 'fast', 'slow')
+exit 2
+-- ['x', '-n', 'zz']
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+tool: error: argument -n/--count: invalid int value: 'zz'
+exit 2
+-- []
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+tool: error: the following arguments are required: path
+exit 2
+-- ['x', '--nope']
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+tool: error: unrecognized arguments: --nope
+exit 2
+-- ['x', '--count']
+usage: tool [-h] [-n COUNT] [-v] [--mode {fast,slow}] [--tag TAG]
+            [--ratio RATIO] [-q]
+            path [files ...]
+tool: error: argument -n/--count: expected one argument
+exit 2
+-- ['x', '--verb']
+usage: g [-h] [--a | --b] {run,stop} ...
+
+positional arguments:
+  {run,stop}  commands
+    run       run it
+
+options:
+  -h, --help  show this help message and exit
+  --a
+  --b
+
+-- ['run', '--fast']
+Namespace(a=False, b=False, cmd='run', fast=True)
+-- ['stop']
+Namespace(a=False, b=False, cmd='stop')
+-- []
+Namespace(a=False, b=False, cmd=None)
+-- ['--a', '--b']
+usage: g [-h] [--a | --b] {run,stop} ...
+g: error: argument --b: not allowed with argument --a
+exit 2
+-- ['nope']
+usage: g [-h] [--a | --b] {run,stop} ...
+g: error: argument cmd: invalid choice: 'nope' (choose from 'run', 'stop')
+exit 2
+usage: h --level {1,2,3} [--opt [OPT]] NAME [NAME ...]
+Namespace(level=2, names=['x', 'y'], opt='d')
+Namespace(level=3, names=['x'], opt='c')
+Namespace(level=1, names=['x'], opt='v')
+Namespace(level=1, names=['n'], opt='d') ['--zzz']
+-- ['x']
+usage: h --level {1,2,3} [--opt [OPT]] NAME [NAME ...]
+h: error: the following arguments are required: --level
+exit 2
+-- ['--level', '5', 'x']
+usage: h --level {1,2,3} [--opt [OPT]] NAME [NAME ...]
+h: error: argument --level: invalid choice: '5' (choose from '1', '2', '3')
+exit 2
+-- ['--level', '1']
+usage: h --level {1,2,3} [--opt [OPT]] NAME [NAME ...]
+h: error: the following arguments are required: NAME
+exit 2

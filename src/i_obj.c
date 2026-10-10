@@ -54,10 +54,19 @@ void *mp_alloc(Type *t, size_t size){
     return o;
 }
 
+/* objects of subclasses of the built-in value types: the built-in's layout, then an instance dict pointer */
+static void *alloc_sub(Type *t, size_t size){
+    size=(size+7)&~(size_t)7;
+    return mp_alloc(t,size+sizeof(DictObj*));
+}
+DictObj **mp_sub_slot(Obj *o){ return (DictObj**)((char*)o+o->size-sizeof(DictObj*)); }
+
 #if defined(MPY_KOLIBRI)
+int mp_gc_enabled=1;
 void mp_gc_maybe(void){}
 void mp_gc_collect(void){}
 void mp_gc_set_stack_base(void *p){ (void)p; }
+int64_t mp_gc_objects(void){ return 0; }
 #else
 void mp_gc_set_stack_base(void *p){ mp_ts->cstack_base=p; }
 
@@ -85,10 +94,11 @@ static void mark_frame(Frame *f){
 }
 static void mark_children(Obj *o){
     mark_obj((Obj*)o->type);
+    if(o->type->flags&TF_SUBVAL) mark_obj((Obj*)*mp_sub_slot(o));
     switch(o->type->layout){
         case LY_TYPE:{ Type *t=(Type*)o; mark_obj((Obj*)t->name); mark_obj((Obj*)t->qualname); mark_obj((Obj*)t->base); mark_obj((Obj*)t->bases);
             for(int i=0;i<t->nmro;i++) mark_obj((Obj*)t->mro[i]);
-            mark_obj((Obj*)t->dict); break; }
+            mark_obj((Obj*)t->dict); mark_v(t->subs); break; }
         case LY_TUPLE:{ TupleObj *t=(TupleObj*)o; for(int64_t i=0;i<t->len;i++) mark_v(t->items[i]); break; }
         case LY_LIST:{ ListObj *l=(ListObj*)o; for(int64_t i=0;i<l->len;i++) mark_v(l->items[i]); break; }
         case LY_DICT:{ DictObj *d=(DictObj*)o; for(int64_t i=0;i<d->nent;i++){ mark_v(d->ent[i].key); mark_v(d->ent[i].val); } break; }
@@ -115,7 +125,8 @@ static void mark_children(Obj *o){
         case LY_ITER:{ IterObj *it=(IterObj*)o; mark_v(it->src); mark_v(it->aux); mark_v(it->aux2); break; }
         case LY_FILE: mark_v(((FileObj*)o)->name); break;
         case LY_INSTANCE: mark_obj((Obj*)((InstObj*)o)->dict); break;
-        case LY_EXC:{ ExcObj *e=(ExcObj*)o; mark_obj((Obj*)e->dict); mark_v(e->args); mark_v(e->cause); mark_v(e->context); mark_v(e->tb); mark_v(e->notes); break; }
+        case LY_NUM: break;
+        case LY_EXC:{ ExcObj *e=(ExcObj*)o; mark_obj((Obj*)e->dict); mark_v(e->args); mark_v(e->cause); mark_v(e->context); mark_v(e->tb); mark_v(e->notes); mark_v(e->hint); break; }
         default: break;
     }
 }
@@ -125,12 +136,13 @@ static void free_obj(Obj *o){
         case LY_LIST: free(((ListObj*)o)->items); break;
         case LY_DICT: free(((DictObj*)o)->ent); free(((DictObj*)o)->idx); break;
         case LY_SET: free(((SetObj*)o)->table); break;
-        case LY_CODE:{ CodeObj *c=(CodeObj*)o; free(c->code); free(c->lines); free(c->consts); free(c->names); free(c->varnames); free(c->cellnames); free(c->freenames); free(c->cellarg);
+        case LY_CODE:{ CodeObj *c=(CodeObj*)o; free(c->code); free(c->lines); free(c->pos); free(c->anc); free(c->consts); free(c->names); free(c->varnames); free(c->cellnames); free(c->freenames); free(c->cellarg);
             if(c->annots){ for(int i=0;i<c->argc+c->kwonly+2;i++) free(c->annots[i]); free(c->annots); }
             for(int i=0;i<c->nann;i++){ free(c->annname[i]); free(c->anntext[i]); }
             free(c->annname); free(c->anntext); break; }
         case LY_GEN:{ GenObj *g=(GenObj*)o; if(g->f) free(g->f); break; }
         case LY_BUFFER: free(((BufferObj*)o)->data); break;
+        case LY_BYTEARRAY: free(((ByteArrayObj*)o)->data); break;
         case LY_FILE: free(((FileObj*)o)->buf); break;
         default: break;
     }
@@ -198,11 +210,14 @@ void mp_gc_collect(void){
         while(nfinal>0){ Value g=final[--nfinal]; mp_gen_close_quietly(g); }
         finalizing=0; }
 }
+int mp_gc_enabled=1;                                      /* gc.disable(): no collections while allocating */
 void mp_gc_maybe(void){
     static int stress=-1;
     if(stress<0) stress=getenv("MPY_GC_STRESS")?1:0;
+    if(!mp_gc_enabled) return;
     if(stress || gc_count>=gc_threshold) mp_gc_collect();
 }
+int64_t mp_gc_objects(void){ return gc_count; }
 #endif
 
 /* ---------------------------------------------------------------- text buffers */
@@ -272,6 +287,35 @@ Value mp_bytes(const void *s, int64_t n){
     return v_obj(o);
 }
 
+void mp_set_merge(SetObj *s, SetObj *o);
+/* plain (a value of t's built-in base) as an object of t: a copy with t's layout and an instance dict slot */
+Value mp_sub_value(Type *t, Value plain){
+    switch(t->layout){
+        case LY_STR:{ StrObj *x=AS_STR(plain); StrObj *o=(StrObj*)alloc_sub(t,sizeof(StrObj)+(size_t)x->len+1);
+            memcpy(o->s,x->s,(size_t)x->len+1); o->len=x->len; o->cplen=x->cplen; o->ascii=x->ascii; return v_obj(o); }
+        case LY_BYTES:{ BytesObj *x=AS_BYTES(plain); BytesObj *o=(BytesObj*)alloc_sub(t,sizeof(BytesObj)+(size_t)x->len+1);
+            memcpy(o->s,x->s,(size_t)x->len+1); o->len=x->len; return v_obj(o); }
+        case LY_TUPLE:{ TupleObj *x=AS_TUPLE(plain); TupleObj *o=(TupleObj*)alloc_sub(t,sizeof(TupleObj)+sizeof(Value)*(size_t)x->len);
+            o->len=x->len; memcpy(o->items,x->items,sizeof(Value)*(size_t)x->len); return v_obj(o); }
+        case LY_LIST:{ ListObj *x=AS_LIST(plain); ListObj *o=(ListObj*)alloc_sub(t,sizeof(ListObj));
+            o->cap=x->len>4?x->len:4; o->items=(Value*)xmalloc(sizeof(Value)*(size_t)o->cap); o->len=x->len;
+            memcpy(o->items,x->items,sizeof(Value)*(size_t)x->len); return v_obj(o); }
+        case LY_DICT:{ DictObj *o=(DictObj*)alloc_sub(t,sizeof(DictObj)); Value r=v_obj(o);
+            int64_t pos=0; Value k, val; while(mp_dict_next(AS_DICT(plain),&pos,&k,&val)) mp_dict_set(o,k,val); return r; }
+        case LY_SET:{ SetObj *o=(SetObj*)alloc_sub(t,sizeof(SetObj)); Value r=v_obj(o);
+            o->mask=7; o->table=(SEnt*)xmalloc(sizeof(SEnt)*8); memset(o->table,0,sizeof(SEnt)*8);
+            mp_set_merge(o,(SetObj*)plain.u.o); return r; }
+        case LY_NUM:{ NumObj *o=(NumObj*)alloc_sub(t,sizeof(NumObj)); o->v=plain; return v_obj(o); }
+        case LY_STATICMETHOD: case LY_CLASSMETHOD:{ BoxObj *o=(BoxObj*)alloc_sub(t,sizeof(BoxObj)); o->v=((BoxObj*)plain.u.o)->v; return v_obj(o); }
+        case LY_PROPERTY:{ PropertyObj *x=(PropertyObj*)plain.u.o, *o=(PropertyObj*)alloc_sub(t,sizeof(PropertyObj));
+            o->get=x->get; o->set=x->set; o->del=x->del; o->doc=x->doc; return v_obj(o); }
+        case LY_BYTEARRAY:{ ByteArrayObj *x=(ByteArrayObj*)plain.u.o, *o=(ByteArrayObj*)alloc_sub(t,sizeof(ByteArrayObj));
+            o->len=x->len; o->cap=x->len; o->data=(unsigned char*)xmalloc((size_t)x->len+1); if(x->len) memcpy(o->data,x->data,(size_t)x->len); return v_obj(o); }
+        default: break;
+    }
+    mp_raise_t(E_TypeError,"cannot make a '%s' object",t->name->s);
+}
+
 /* ---------------------------------------------------------------- tuple, list */
 Value mp_tuple(int64_t n, const Value *items){
     TupleObj *t=(TupleObj*)mp_alloc(T_tuple,sizeof(TupleObj)+sizeof(Value)*(size_t)n);
@@ -338,6 +382,15 @@ uint64_t mp_hash(Value v){
         default: break;
     }
     Obj *o=v.u.o; Type *t=o->type;
+    if(t->flags&TF_SUBVAL){                                  /* a subclass of a built-in: its __hash__ first */
+        Value h=mp_type_lookup_s(t,"__hash__");
+        if(h.k==V_NONE) mp_raise_t(E_TypeError,"unhashable type: '%s'",t->name->s);
+        if(h.k!=V_UNDEF && !IS(h,T_native)){
+            Value r=mp_call1(h,v); r=mp_unbox(r);
+            if(!IS_INTLIKE(r)) mp_raise_t(E_TypeError,"__hash__ method should return an integer");
+            return r.u.i==-1 ? (uint64_t)-2 : (uint64_t)r.u.i; }
+        if(t->layout==LY_NUM) return mp_hash(((NumObj*)o)->v);
+    }
     switch(t->layout){
         case LY_STR:{ StrObj *s=(StrObj*)o; if(!s->hashed){ s->hash=hash_bytes((unsigned char*)s->s,s->len); s->hashed=1; } return s->hash; }
         case LY_BYTES:{ BytesObj *s=(BytesObj*)o; if(!s->hashed){ s->hash=hash_bytes(s->s,s->len); s->hashed=1; } return s->hash; }
@@ -360,16 +413,16 @@ uint64_t mp_hash(Value v){
             if(h==(uint64_t)-1) h=590923713UL;
             s->hash=h; s->hashed=1; return h; }
         case LY_COMPLEX:{ ComplexObj *c=(ComplexObj*)o; uint64_t h=hash_double(c->re)+1000003ULL*hash_double(c->im); if(h==(uint64_t)-1) h=(uint64_t)-2; return h; }
-        case LY_LIST: case LY_DICT: mp_raise_t(E_TypeError,"unhashable type: '%s'",t->name->s);
+        case LY_LIST: case LY_DICT: case LY_BYTEARRAY: mp_raise_t(E_TypeError,"unhashable type: '%s'",t->name->s);
         default: break;
     }
     if(t->flags&TF_DUNDERS){
         Value h=mp_type_lookup_s(t,"__hash__");
         if(h.k==V_NONE) mp_raise_t(E_TypeError,"unhashable type: '%s'",t->name->s);
         if(h.k!=V_UNDEF && !IS(h,T_native)){
-            Value r=mp_call1(h,v);
+            Value r=mp_unbox(mp_call1(h,v));
             if(!IS_INTLIKE(r)) mp_raise_t(E_TypeError,"__hash__ method should return an integer");
-            uint64_t x=hash_int(r.u.i); return x;
+            return r.u.i==-1 ? (uint64_t)-2 : (uint64_t)r.u.i;
         }
     }
     uint64_t p=(uint64_t)(uintptr_t)o; p=(p>>4)|(p<<60);
@@ -381,7 +434,7 @@ uint64_t mp_hash(Value v){
 static int key_eq(Value a, uint64_t ha, Value b, uint64_t hb){
     if(ha!=hb) return 0;
     if(a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o) return 1;
-    if(a.k==V_OBJ && b.k==V_OBJ && a.u.o->type==T_str && b.u.o->type==T_str){
+    if(a.k==V_OBJ && b.k==V_OBJ && a.u.o->type->layout==LY_STR && b.u.o->type->layout==LY_STR && !(a.u.o->type->flags&TF_SUBVAL) && !(b.u.o->type->flags&TF_SUBVAL)){
         StrObj *x=AS_STR(a), *y=AS_STR(b); return x->len==y->len && !memcmp(x->s,y->s,(size_t)x->len); }
     return mp_eq(a,b);
 }
@@ -423,16 +476,30 @@ static int64_t dict_lookup(DictObj *d, Value key, uint64_t h, int *found){
         perturb>>=5; p=(p*5+1+perturb)&m;
     }
 }
+/* a dict key's / set element's hash: a TypeError from hashing becomes CPython 3.14's
+   "cannot use 'list' as a dict key (unhashable type: 'list')" */
+static uint64_t hash_as(Value key, const char *what){
+    if(key.k!=V_OBJ) return mp_hash(key);
+    Type *t=key.u.o->type;
+    if(t==T_str || t==T_bytes || t==T_frozenset || (t==T_tuple && ((TupleObj*)key.u.o)->hashed) || (!(t->flags&TF_DUNDERS) && t->layout!=LY_TUPLE
+       && t->layout!=LY_LIST && t->layout!=LY_DICT && t->layout!=LY_SET && t->layout!=LY_BYTEARRAY)) return mp_hash(key);
+    Catch c; uint64_t h=0;
+    if(!CATCH_BEGIN(c)){ h=mp_hash(key); CATCH_END(c); return h; }
+    Value e=mp_catch_exc(&c);
+    if(e.k==V_OBJ && e.u.o->type==E_TypeError){ Value m=mp_tostr(e); mp_raise_t(E_TypeError,"cannot use '%s' as a %s (%s)",t->name->s,what,AS_STR(m)->s); }
+    mp_raise(e);
+    return 0;
+}
 int mp_dict_get(DictObj *d, Value key, Value *out){
+    uint64_t h=hash_as(key,"dict key"); int found;
     if(!d->used) return 0;
-    uint64_t h=mp_hash(key); int found;
     int64_t slot=dict_lookup(d,key,h,&found);
     if(!found) return 0;
     if(out) *out=d->ent[d->idx[slot]].val;
     return 1;
 }
 void mp_dict_set(DictObj *d, Value key, Value val){
-    uint64_t h=mp_hash(key); int found;
+    uint64_t h=hash_as(key,"dict key"); int found;
     if(!d->idx) dict_rebuild(d,8);
     int64_t slot=dict_lookup(d,key,h,&found);
     if(found){ d->ent[d->idx[slot]].val=val; return; }
@@ -441,8 +508,8 @@ void mp_dict_set(DictObj *d, Value key, Value val){
     d->idx[slot]=d->nent++; d->used++;
 }
 int mp_dict_del(DictObj *d, Value key){
+    uint64_t h=hash_as(key,"dict key"); int found;
     if(!d->used) return 0;
-    uint64_t h=mp_hash(key); int found;
     int64_t slot=dict_lookup(d,key,h,&found);
     if(!found) return 0;
     int64_t ix=d->idx[slot];
@@ -531,10 +598,10 @@ static SEnt *set_find(SetObj *s, Value key, uint64_t hash){
         perturb>>=5; i=(i*5+1+perturb)&mask;
     }
 }
-void mp_set_add(SetObj *s, Value v){ set_add_hash(s,v,mp_hash(v)); }
-int mp_set_has(SetObj *s, Value v){ return set_find(s,v,mp_hash(v))!=NULL; }
+void mp_set_add(SetObj *s, Value v){ set_add_hash(s,v,hash_as(v,"set element")); }
+int mp_set_has(SetObj *s, Value v){ return set_find(s,v,hash_as(v,"set element"))!=NULL; }
 int mp_set_del(SetObj *s, Value v){
-    SEnt *e=set_find(s,v,mp_hash(v));
+    SEnt *e=set_find(s,v,hash_as(v,"set element"));
     if(!e) return 0;
     e->key=v_undef(); e->hash=(uint64_t)-1; s->used--; s->hashed=0;
     return 1;
@@ -641,13 +708,26 @@ int64_t mp_int_checked(int op, int64_t a, int64_t b){
     if(ov) mp_raise_t(E_OverflowError,"integer overflow (ints are 64-bit)");
     return r;
 }
+/* "d.ddde+XX" one unit more in its last digit (an exact tie rounded down to the even digit may not
+   read back while the one above does: 2**-24 is 5.960464477539063e-08) */
+static void float_text_up(char *out, size_t n, const char *t){
+    char dig[40]; int nd=0, neg=0; const char *p=t;
+    if(*p=='-'){ neg=1; p++; }
+    for(;*p && *p!='e' && nd<39;p++) if(*p>='0' && *p<='9') dig[nd++]=*p;
+    int ex= *p=='e' ? atoi(p+1) : 0, i=nd-1;
+    while(i>=0 && dig[i]=='9') dig[i--]='0';
+    if(i<0){ dig[0]='1'; ex++; } else dig[i]++;
+    dig[nd]=0;
+    snprintf(out,n,"%s%c%s%s%se%+03d",neg?"-":"",dig[0],nd>1?".":"",dig+1,"",ex);
+}
 /* shortest repr that reads back the same, Python's spelling (1e+16, 1.5e-07, inf, nan) */
 void mp_float_repr(char *out, size_t n, double f){
     if(isnan(f)){ snprintf(out,n,"nan"); return; }
     if(isinf(f)){ snprintf(out,n,f>0?"inf":"-inf"); return; }
     if(f==0){ snprintf(out,n,signbit(f)?"-0.0":"0.0"); return; }
     char buf[64]; int prec;
-    for(prec=1;prec<=17;prec++){ snprintf(buf,sizeof buf,"%.*e",prec-1,f); if(strtod(buf,NULL)==f) break; }
+    for(prec=1;prec<=17;prec++){ snprintf(buf,sizeof buf,"%.*e",prec-1,f); double y=strtod(buf,NULL); if(y==f) break;
+        if(prec<17 && fabs(y)<fabs(f)){ char up[64]; float_text_up(up,sizeof up,buf); if(strtod(up,NULL)==f){ strcpy(buf,up); break; } } }
     /* digits and exponent of the %e form */
     char digits[32]; int nd=0, neg=0; const char *p=buf;
     if(*p=='-'){ neg=1; p++; }

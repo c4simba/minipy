@@ -30,7 +30,13 @@ static int mpy_split_cmdline(const char *cmd,const char *exe,char *buf,int bufle
 
 /* The program's exit status for an exception that ended it (SystemExit: its code). */
 static int exit_status(Value e){
-    if(!mp_isinstance(e,E_SystemExit)){ mp_print_exception(e); return 1; }
+    if(!mp_isinstance(e,E_SystemExit)){
+        Value sysm, hook;                                         /* a sys.excepthook of the program's own */
+        if(mp_dict_get(mp_modules,mp_str("sys"),&sysm) && mp_dict_get(((ModuleObj*)sysm.u.o)->dict,mp_str("excepthook"),&hook) && !IS(hook,T_native)){
+            Catch c;
+            if(!CATCH_BEGIN(c)){ Value tb=AS_EXC(e)->tb; Value a[3]={v_obj(TYPE(e)),e,tb.k==V_UNDEF?v_none():tb}; mp_call(hook,3,a,NULL); CATCH_END(c); return 1; }
+            else { mp_catch_exc(&c); } }
+        mp_print_exception(e); return 1; }
     Value code=mp_getattr_s(e,"code");
     if(IS_NONE(code)) return 0;
     if(IS_INTLIKE(code)) return (int)code.u.i;
@@ -91,6 +97,12 @@ static int mpy_run(int argc,char **argv){
     Catch c;
     if(!CATCH_BEGIN(c)){ mp_run_main(script_path); CATCH_END(c); }
     else rc=exit_status(mp_catch_exc(&c));
+    const char *hooks[][2]={{"threading","_shutdown"},{"atexit","_run_exitfuncs"}};   /* (as CPython ends: non-daemon threads joined, then atexit) */
+    for(int k=0;k<2;k++){ Value mod;
+        if(!mp_dict_get(mp_modules,mp_str(hooks[k][0]),&mod)) continue;
+        Catch h;
+        if(!CATCH_BEGIN(h)){ mp_call0(mp_getattr_s(mod,hooks[k][1])); CATCH_END(h); }
+        else { int r=exit_status(mp_catch_exc(&h)); if(!rc) rc=r; } }
     mp_flush_stdout();
     return rc;
 }

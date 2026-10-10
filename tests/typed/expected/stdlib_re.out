@@ -1,0 +1,18 @@
+{'a': '1', 'b': 'two', 'c': '3'}
+['Hello', 'World']
+[('3', '14'), ('2', '71')] ['x1', 'Foo_bar']
+[('1', 'a'), ('2', 'b')] ['1', '2']
+ many spaces here 
+cba fed
+2024 DISK FULL
+2024 NET DOWN
+['disk full', 'net down'] 3
+['a', 'b', 'c', 'd'] ('f00 b00', 4)
+192.168.0.1 True
+1.2.3 False
+10.0.0.256 False
+['x.html', 'y.html'] [('x.html', 'X'), ('y.html', 'Y')]
+Hello Big World
+True
+x\.y <re.Match object; span=(1, 4), match='a+b'>
+123 2002

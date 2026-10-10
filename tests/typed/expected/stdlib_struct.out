@@ -1,0 +1,46 @@
+b'\x01\x00\x00\x00\x02\x00\xfd' b'\x00\x00\x00\x01\x00\x02\xfd' b'\xff\xff\xff\xff\xff\xff\xff\xfe' b'\xff\xff\xff\xff\xff\xff\xff\x7f'
+(1, 2, -3) (-2,) (-2,)
+-100000 -300 200
+b'\x00\x00\x00\x00\x00\x00\xf8?' b'\xbf\xb9\x99\x99\x99\x99\x99\x9a' b'\xc3\xf5H@' b'\x00>' b'\xff{' b'.f' b'\x01\x00' b'\x00\x00'
+b'\x00\x00\xc0\x7f' b'\x00|' b'\x00\x80' b'\x00\x00\x00\x00\x00\x00\xf0\xff' b'\x01\x00\x00\x00\x00\x00\x00\x00' b'\x01\x00\x00\x00' b'\xff\xff\x7f\x7f'
+True (1.5,) (1.5,)
+True (-0.10000000149011612,) (-0.0999755859375,)
+True (3.140000104904175,) (3.140625,)
+True (0.0,) (0.0,)
+True (0.0,) (0.0,)
+True (9.999999680285692e+37,) (60000.0,)
+True (0.0,) (0.0,)
+True (-0.0,) (-0.0,)
+True (123456.7890625,) (60000.0,)
+True (1.401298464324817e-45,) (0.0,)
+True (1.1754943508222875e-38,) (0.0,)
+(nan,) (inf,) (-inf,) (5.960464477539063e-08,) (65504.0,)
+b'A\x01hel\x02ab\x00\x00\x00' (b'A', True, b'hel', b'ab')
+b'\x01\x00\x02\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x12@' b'\x01\x02\x00\x00\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00' 16 15 8 8
+(25699,) (26213,) (24930, 25444)
+(25185, 99)
+(25956, 102)
+(26727, 105)
+error 'b' format requires -128 <= number <= 127
+error 'B' format requires 0 <= number <= 255
+error 'h' format requires -32768 <= number <= 32767
+error 'I' format requires 0 <= number <= 4294967295
+error 'i' format requires -2147483648 <= number <= 2147483647
+OverflowError float too large to pack with f format
+OverflowError float too large to pack with e format
+error unpack requires a buffer of 2 bytes
+error char format requires a bytes object of length 1
+error unpack_from requires a buffer of at least 5 bytes for unpacking 2 bytes at offset 3 (actual buffer size is 4)
+error not enough data to unpack 2 bytes at offset -1
+error offset -5 out of range for 4-byte buffer
+error unpack_from requires a buffer of at least 7 bytes for unpacking 2 bytes at offset 5 (actual buffer size is 4)
+error iterative unpacking requires a buffer of a multiple of 2 bytes
+4
+7 <IHb Struct('<IHb')
+b'\x07\x00\x00\x00\x01\x02\xfe'
+(7, 513, -2)
+7 513 -2
+1.5 -2.0
+0.25 8.0
+error unpack requires a buffer of 7 bytes
+b'\x01zabc' (False, b'q', b'xyz')

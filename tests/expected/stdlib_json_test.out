@@ -1,0 +1,93 @@
+{"a": [1, 2.5, null, true, false], "b": {"x": "\u00e9\n\t\"q\"", "y": []}, "c": "\u2603", "n": -0.0, "big": 1e+100, "small": 1e-07}
+{"a": [1, 2.5, null, true, false], "b": {"x": "é\n\t\"q\"", "y": []}, "c": "☃", "n": -0.0, "big": 1e+100, "small": 1e-07}
+{
+  "a": [
+    1,
+    2.5,
+    null,
+    true,
+    false
+  ],
+  "b": {
+    "x": "\u00e9\n\t\"q\"",
+    "y": []
+  },
+  "big": 1e+100,
+  "c": "\u2603",
+  "n": -0.0,
+  "small": 1e-07
+}
+{"a":[1,2.5,null,true,false],"b":{"x":"\u00e9\n\t\"q\"","y":[]},"c":"\u2603","n":-0.0,"big":1e+100,"small":1e-07}
+{"1": "b", "2.5": "f", "null": "n"}
+[NaN, Infinity, -Infinity]
+ValueError Out of range float values are not JSON compliant: nan
+TypeError Object of type P is not JSON serializable
+{"p": {"x": 1}}
+{"s": [1, 2, 3]} [1, 2] "x" 5
+ValueError Circular reference detected
+{'a': [1, 2.5, None, True], 'b': 'é'}
+[nan, inf, -inf] x 5
+JSONDecodeError Expecting value 6 1 7 | Expecting value: line 1 column 7 (char 6)
+JSONDecodeError Expecting ',' delimiter 5 1 6 | Expecting ',' delimiter: line 1 column 6 (char 5)
+JSONDecodeError Expecting ':' delimiter 5 1 6 | Expecting ':' delimiter: line 1 column 6 (char 5)
+JSONDecodeError Expecting value 0 1 1 | Expecting value: line 1 column 1 (char 0)
+JSONDecodeError Expecting value 0 1 1 | Expecting value: line 1 column 1 (char 0)
+JSONDecodeError Illegal trailing comma before end of object 7 1 8 | Illegal trailing comma before end of object: line 1 column 8 (char 7)
+JSONDecodeError Extra data 4 1 5 | Extra data: line 1 column 5 (char 4)
+JSONDecodeError Invalid \escape 1 1 2 | Invalid \escape: line 1 column 2 (char 1)
+OrderedDict({'b': 1, 'a': 2})
+{'x': '1.5'} {'x': 15.0}
+['z']
+{
+ "k": [
+  1,
+  2
+ ]
+}
+{'k': [1, 2]}
+{'bytes': True} [1]
+({'a': 1}, 8)
+['{', '"a"', ': ', '[1', ', ', '{', '"b"', ': ', '2', '}', ']', '}']
+{
+	"a": 1,
+	"b": [
+		1,
+		2,
+		{
+			"c": 3
+		}
+	]
+}
+[] {} [
+  []
+]
+'"abc' JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0)
+'"a\\u12"' JSONDecodeError Invalid \uXXXX escape: line 1 column 4 (char 3)
+'"a\\uzzzz"' JSONDecodeError Invalid \uXXXX escape: line 1 column 4 (char 3)
+'"\x01"' JSONDecodeError Invalid control character at: line 1 column 2 (char 1)
+'{"a": 1' JSONDecodeError Expecting ',' delimiter: line 1 column 8 (char 7)
+'{1: 2}' JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+'[1,]' JSONDecodeError Illegal trailing comma before end of array: line 1 column 3 (char 2)
+'[,]' JSONDecodeError Expecting value: line 1 column 2 (char 1)
+'{"a" : 1, }' JSONDecodeError Illegal trailing comma before end of object: line 1 column 9 (char 8)
+'tru' JSONDecodeError Expecting value: line 1 column 1 (char 0)
+'fals' JSONDecodeError Expecting value: line 1 column 1 (char 0)
+'-' JSONDecodeError Expecting value: line 1 column 1 (char 0)
+'1.' JSONDecodeError Extra data: line 1 column 2 (char 1)
+'01' JSONDecodeError Extra data: line 1 column 2 (char 1)
+'[1 2]' JSONDecodeError Expecting ',' delimiter: line 1 column 4 (char 3)
+'{"a": 1 "b": 2}' JSONDecodeError Expecting ',' delimiter: line 1 column 9 (char 8)
+'"\\ud800"' -> '\ud800'
+'"\\' JSONDecodeError Unterminated string starting at: line 1 column 1 (char 0)
+'[' JSONDecodeError Expecting value: line 1 column 2 (char 1)
+'{' JSONDecodeError Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+'  ' JSONDecodeError Expecting value: line 1 column 3 (char 2)
+'1e' JSONDecodeError Extra data: line 1 column 2 (char 1)
+'[1, 2]]' JSONDecodeError Extra data: line 1 column 7 (char 6)
+'{"a":"b"}x' JSONDecodeError Extra data: line 1 column 10 (char 9)
+'NaNx' JSONDecodeError Extra data: line 1 column 4 (char 3)
+'"a\nb"' JSONDecodeError Invalid control character at: line 1 column 3 (char 2)
+'-Infinity' -> -inf
+'- 1' JSONDecodeError Expecting value: line 1 column 1 (char 0)
+'[-]' JSONDecodeError Expecting value: line 1 column 2 (char 1)
+'{"":1}' -> {'': 1}

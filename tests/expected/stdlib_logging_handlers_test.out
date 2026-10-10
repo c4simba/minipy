@@ -1,0 +1,13 @@
+['r.log', 'r.log.1', 'r.log.2']
+['INFO message number 8', 'INFO message number 9']
+buffered 2
+w1
+w2
+e1
+after 0
+to queue arg to queue arg None WARNING
+via listener
+cfg|INFO|configured
+False 2
+watched
+D 86400 1

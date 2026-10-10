@@ -1,0 +1,31 @@
+UserWarning True
+DeprecationWarning True
+PendingDeprecationWarning True
+ImportWarning True
+ResourceWarning True
+RuntimeWarning True
+SyntaxWarning True
+FutureWarning True
+UnicodeWarning True
+BytesWarning True
+EncodingWarning True
+('deep', 'UserWarning', '<sys>', 0, None)
+('plain', 'UserWarning', 'stdlib_warnings_test.mpy', 12, None)
+('plain', 'UserWarning', 'stdlib_warnings_test.mpy', 13, None)
+('loop', 'UserWarning', 'stdlib_warnings_test.mpy', 15, None)
+('dep in main', 'DeprecationWarning', 'stdlib_warnings_test.mpy', 16, None)
+('in g', 'DeprecationWarning', 'stdlib_warnings_test.mpy', 19, None)
+('rt', 'RuntimeWarning', 'stdlib_warnings_test.mpy', 20, None)
+file.py:3: UserWarning: msg
+  code line
+3 ['rec1', 'rec1', 'fut'] FutureWarning True
+raised boom
+shown one 1
+1
+True
+1 use new DeprecationWarning use new
+TypeError category must be a Warning subclass, not 'type'
+ValueError invalid action: 'bogus'
+'f.py:9: UserWarning: to file\n  the line\n'
+True True True
+SystemExit 3

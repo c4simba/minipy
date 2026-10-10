@@ -1,0 +1,26 @@
+<b>
+inside B
+</b>
+<i>
+</i>
+caught boom
+swallowed KeyError('k')
+after swallow
+RuntimeError generator didn't stop
+using r1
+Res closed r1
+null 42
+open file rb
+n = 4
+close file
+<outer>
+<inner>
+OUTER INNER
+</inner>
+</outer>
+suppressed ok
+not suppressed idx
+[kos] current folder '/'
+/
+[kos] current folder '/tmp0/1'
+True

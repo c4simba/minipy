@@ -137,9 +137,11 @@ Value mp_format(Value v, Value specv){
     const char *spec=mp_cstr(specv);
     Type *t=TYPE(v);
     if(t->flags&TF_DUNDERS){
-        Value m=mp_type_lookup_s(t,"__format__");
-        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,v,specv); if(!IS_STR(r)) mp_raise_t(E_TypeError,"__format__ must return a str, not %s",mp_type_name(r)); return r; }
-        if(mp_is_subtype(t,T_str) || mp_is_subtype(t,T_int) || mp_is_subtype(t,T_float)){}
+        Value m=mp_type_lookup_user(t,"__format__");
+        if(m.k!=V_UNDEF){ Value r=mp_call2(m,v,specv); if(!IS_STR(r)) mp_raise_t(E_TypeError,"__format__ must return a str, not %s",mp_type_name(r)); return r; }
+        if(mp_is_subtype(t,T_str) || mp_is_subtype(t,T_int) || mp_is_subtype(t,T_float)){
+            if(!spec[0] && !mp_is_subtype(t,T_str)) return mp_tostr(v);     /* (an int subclass: its str(); else its value formatted) */
+            v=mp_unbox(v); }
         else {
             if(spec[0]) mp_raise_t(E_TypeError,"unsupported format string passed to %s.__format__",t->name->s);
             return mp_tostr(v);
@@ -185,8 +187,8 @@ Value mp_percent_format(Value fmtv, Value args){
     StrObj *fmt=AS_STR(fmtv);
     SBuf out={0};
     int64_t ai=0; int argn; Value *argv; Value one[1];
-    int is_map= args.k==V_OBJ && !IS(args,T_tuple) && !IS_STR(args) && (TYPE(args)->layout==LY_DICT || ((TYPE(args)->flags&TF_DUNDERS) && mp_type_lookup_s(TYPE(args),"__getitem__").k!=V_UNDEF));
-    if(IS(args,T_tuple)){ argv=AS_TUPLE(args)->items; argn=(int)AS_TUPLE(args)->len; }
+    int is_map= args.k==V_OBJ && !IS_TUPLE(args) && !IS_STR(args) && (TYPE(args)->layout==LY_DICT || ((TYPE(args)->flags&TF_DUNDERS) && mp_type_lookup_s(TYPE(args),"__getitem__").k!=V_UNDEF));
+    if(IS_TUPLE(args)){ argv=AS_TUPLE(args)->items; argn=(int)AS_TUPLE(args)->len; }
     else { one[0]=args; argv=one; argn=1; }
     int used_map=0;
     const char *s=fmt->s; int64_t n=fmt->len;
@@ -213,11 +215,12 @@ Value mp_percent_format(Value fmtv, Value args){
         int c=s[i];
         if(c=='%'){ sb_putc(&out,'%'); continue; }
         if(arg.k==V_UNDEF){
-            if(is_map && !IS(args,T_tuple)){ arg=args; used_map=1; }
+            if(is_map && !IS_TUPLE(args)){ arg=args; used_map=1; }
             else { if(ai>=argn) mp_raise_t(E_TypeError,"not enough arguments for format string"); arg=argv[ai++]; }
         }
         sp.align= left ? '<' : (sp.zero ? '=' : '>');
         if(sp.zero && !left) sp.fill='0';
+        if(c!='s' && c!='r' && c!='a') arg=mp_unbox(arg);          /* (an int/float subclass: its value) */
         switch(c){
             case 'd': case 'i': case 'u':{
                 if(arg.k==V_FLOAT) arg=v_int((int64_t)arg.u.f);
@@ -328,7 +331,7 @@ int mp_parse_int(const char *s, int64_t n, int base, int64_t *out){
         if(i+1<e && s[i]=='0' && strchr("xX",s[i+1])){ base=16; i+=2; }
         else if(i+1<e && s[i]=='0' && strchr("oO",s[i+1])){ base=8; i+=2; }
         else if(i+1<e && s[i]=='0' && strchr("bB",s[i+1])){ base=2; i+=2; }
-        else { base=10; for(int64_t j=i;j+1<e;j++){ if(s[j]!='0' && s[j]!='_') break; if(j>i && s[j+1]!='0' && s[j+1]!='_') return 0; } }
+        else { base=10; if(i<e && s[i]=='0') for(int64_t j=i+1;j<e;j++) if(s[j]!='0' && s[j]!='_') return 0; }   /* (010: no; 0_0: yes) */
         if(i<e && s[i]=='_') i++;
     } else if((base==16 && i+1<e && s[i]=='0' && strchr("xX",s[i+1])) || (base==8 && i+1<e && s[i]=='0' && strchr("oO",s[i+1])) || (base==2 && i+1<e && s[i]=='0' && strchr("bB",s[i+1]))){ i+=2; if(i<e && s[i]=='_') i++; }
     if(i>=e) return 0;

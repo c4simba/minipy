@@ -1,0 +1,8 @@
+1 True True True
+3 ['accepted from 127.0.0.1', 'accepted from 127.0.0.1']
+b'HELLO' b'WORLD'
+['accepted from 127.0.0.1', 'accepted from 127.0.0.1', "echoing b'hello'", "echoing b'world'", 'closing', 'closing'] 1
+3 3 True
+KeyError: already registered
+ValueError: Invalid events: 0
+False []

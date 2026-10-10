@@ -8,6 +8,7 @@
    compiled programs get. */
 
 #include "interp.h"
+#include "pystdlib.h"
 #include "fs.h"
 #include <math.h>
 #include <time.h>
@@ -72,6 +73,54 @@ static CodeObj *compile_source(const char *src, const char *file, const char *mo
     if(!co) mp_raise(syntax_error(file,line,err));
     return co;
 }
+Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
+/* compile(source, filename, mode): a code object; mode "eval": the expression's value is left in
+   __mp_eval__ (CO_EVAL marks it), "exec" / "single": statements */
+#define CO_EVAL 0x40000000
+Value mp_compile_text(Value src, const char *file, const char *mode){
+    if(IS(src,T_code)) return src;
+    const char *s;
+    if(IS_STR(src)) s=mp_cstr(src);
+    else if(IS(src,T_bytes)){ Value t=mp_callmethod(src,"decode",0,NULL); s=mp_cstr(t); }
+    else mp_raise_t(E_TypeError,"compile() arg 1 must be a string, bytes or AST object");
+    if(strlen(s)!=(size_t)AS_STR(IS_STR(src)?src:mp_str(s))->len) mp_raise_t(E_SyntaxError,"source code string cannot contain null bytes");
+    int ev=!strcmp(mode,"eval");
+    if(!ev && strcmp(mode,"exec") && strcmp(mode,"single")) mp_raise_t(E_ValueError,"compile() mode must be 'exec', 'eval' or 'single'");
+    char *text;
+    if(ev){ while(*s==' '||*s=='\t') s++;                       /* (eval: leading spaces and tabs are allowed) */
+        size_t n=strlen(s); text=(char*)xmalloc(n+32); snprintf(text,n+32,"__mp_eval__ = (\n%s\n)\n",s); }
+    else text=xstrdup2(s);
+    mp_remember_source(file,text);
+    CodeObj *co=compile_source(text,file,"__main__");
+    free(text);
+    if(ev) co->flags|=CO_EVAL;
+    return v_obj(co);
+}
+/* exec / eval of a code object (or a source) in globals and locals (NULL: the caller's) */
+Value mp_exec_code(Value code, DictObj *globals, DictObj *locals, int is_eval, int locals_given){
+    (void)locals_given;
+    Frame *f=mp_ts->frame;
+    DictObj *g= globals ? globals : f ? f->globals : mp_builtins;
+    if(!mp_dict_get_s(g,"__builtins__",NULL)){ Value bn=mp_str("builtins"); mp_dict_set_s(g,"__builtins__",mp_builtin_import(1,&bn,NULL)); }
+    DictObj *l=locals;
+    if(!l && !globals && f && !(f->code->flags&CO_MODULE)) l=AS_DICT(mp_frame_locals(f));   /* (a function's: a snapshot) */
+    if(!l && !globals && f && f->locals) l=f->locals;                                          /* (a class body's) */
+    if(l==g) l=NULL;
+    CodeObj *co=(CodeObj*)code.u.o;
+    if(is_eval && !(co->flags&CO_EVAL)) mp_raise_t(E_TypeError,"eval() of an exec code object is not supported here");
+    DictObj *run=g;                          /* separate locals: the code runs in globals + locals, its new names go to locals */
+    if(l){ run=AS_DICT(mp_dict()); int64_t pos=0; Value k,v;
+        while(mp_dict_next(g,&pos,&k,&v)) mp_dict_set(run,k,v);
+        pos=0; while(mp_dict_next(l,&pos,&k,&v)) mp_dict_set(run,k,v); }
+    Value keep=v_obj(run); (void)keep;
+    mp_run_code(co,run,NULL);
+    Value r=v_none();
+    if(co->flags&CO_EVAL){ if(!mp_dict_get_s(run,"__mp_eval__",&r)) r=v_none(); mp_dict_del(run,mp_str("__mp_eval__")); }
+    if(l){ int64_t pos=0; Value k,v;
+        while(mp_dict_next(run,&pos,&k,&v)){ Value old; int ing=mp_dict_get(g,k,&old), inl=mp_dict_get(l,k,NULL);
+            if(inl || !ing || old.k!=v.k || old.u.i!=v.u.i) mp_dict_set(l,k,v); } }
+    return is_eval ? r : v_none();
+}
 /* `from __future__ import annotations` in a module: its annotations stay strings */
 static int future_annotations(DictObj *g){
     Value fm, a, mine;
@@ -93,10 +142,12 @@ Value mp_eval_annotation(const char *text, DictObj *globals, DictObj *overlay){
     Value r; if(!mp_dict_get_s(AS_DICT(tmp),"__mp_ann__",&r)) r=v_none();
     return r;
 }
+Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
 static void exec_into(Value mod, const char *src, const char *file){
     mp_remember_source(file,src);
     CodeObj *co=compile_source(src,file,mp_cstr(v_obj(((ModuleObj*)mod.u.o)->name)));
     Value keep=v_obj(co); (void)keep;
+    if(!mp_dict_get_s(mdict(mod),"__builtins__",NULL)){ Value bn=mp_str("builtins"); mp_dict_set_s(mdict(mod),"__builtins__",mp_builtin_import(1,&bn,NULL)); }
     mp_run_code(co,mdict(mod),NULL);
 }
 
@@ -116,6 +167,8 @@ static int is_package_file(const char *path){
 static Value load_module(const char *full, DictObj *importer, int leaf){
     Value m;
     if(mp_dict_get_s(mp_modules,full,&m)) return m;
+    { const char *al=mpy_stdlib_alias(full);                          /* os.path: posixpath */
+      if(al){ m=load_module(al,importer,1); mp_dict_set_s(mp_modules,full,m); return m; } }
     const char *ps=py_source(full);
     if(ps){
         m=register_module(full);
@@ -127,13 +180,26 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
     }
     m=native_module(full);
     if(m.k!=V_UNDEF) return m;
+    { int pkg=0; const char *ss=mpy_stdlib_source(full,&pkg);         /* the standard library written in Python */
+      if(ss){
+        m=register_module(full);
+        char file[160]; snprintf(file,sizeof file,"<minipy:%s>",full);
+        mp_dict_set_s(mdict(m),"__package__",mp_str(pkg?full:""));
+        if(pkg){ char pk[160]; const char *d=strrchr(full,'.'); (void)d; snprintf(pk,sizeof pk,"<minipy:%s>",full); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(pk)); mp_dict_set_s(mdict(m),"__path__",pl); }
+        else { const char *d=strrchr(full,'.'); char pk[160]; snprintf(pk,sizeof pk,"%.*s",d?(int)(d-full):0,full); mp_dict_set_s(mdict(m),"__package__",mp_str(pk)); }
+        Catch c;
+        if(!CATCH_BEGIN(c)){ exec_into(m,ss,file); CATCH_END(c); }
+        else { Value e=mp_catch_exc(&c); mp_dict_del(mp_modules,mp_str(full)); mp_raise(e); }
+        if(!strcmp(full,"io")){ Value o; if(mp_dict_get_s(mp_builtins,"open",&o)) mp_dict_set_s(mdict(m),"open",o); }   /* io.open is open */
+        return m;
+      } }
     /* a file: inside the parent package's folder, else the importer's, the main script's, MINIPYPATH, lib */
     char *path=NULL;
     const char *dot=strrchr(full,'.');
     if(dot){
         char parent[256]; snprintf(parent,sizeof parent,"%.*s",(int)(dot-full),full);
         Value pm, pathv;
-        if(mp_dict_get_s(mp_modules,parent,&pm) && IS(pm,T_module) && mp_dict_get_s(mdict(pm),"__path__",&pathv) && IS(pathv,T_list) && AS_LIST(pathv)->len)
+        if(mp_dict_get_s(mp_modules,parent,&pm) && IS(pm,T_module) && mp_dict_get_s(mdict(pm),"__path__",&pathv) && IS_LIST(pathv) && AS_LIST(pathv)->len)
             path=mpy_fs_find_module(mp_cstr(AS_LIST(pathv)->items[0]),dot+1);
     }
     if(!path){ char *dir=dir_of_globals(importer); path=mpy_fs_find_module(dir,full); free(dir); }
@@ -142,7 +208,7 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
         if(!leaf){ m=register_module(full); return m; }        /* a namespace package */
         Value nm=mp_str(full);
         Value e=mp_exc(E_ModuleNotFoundError,"No module named '%s'",full);
-        (void)nm;
+        ExcObj *x=AS_EXC(e); if(!x->dict) x->dict=AS_DICT(mp_dict()); mp_dict_set_s(x->dict,"name",nm);
         mp_raise(e);
     }
     char *err=NULL;
@@ -206,7 +272,13 @@ Value mp_import_from(Value module, Value name){
         if(!CATCH_BEGIN(c)){ v=load_module(sub,mdict(module),1); CATCH_END(c); mp_dict_set(mdict(module),name,v); return v; }
         Value e=mp_catch_exc(&c);
         if(!mp_isinstance(e,E_ModuleNotFoundError)) mp_raise(e);
-        mp_raise_t(E_ImportError,"cannot import name '%s' from '%s'",mp_cstr(name),((ModuleObj*)module.u.o)->name->s);
+        { Value en; if(mp_getattr_opt(e,mp_str("name"),&en) && IS_STR(en) && strcmp(mp_cstr(en),sub)) mp_raise(e); }   /* (another module missing: that error) */
+        Value fl=v_none(); mp_dict_get_s(mdict(module),"__file__",&fl);
+        Value ie= IS_STR(fl) ? mp_exc(E_ImportError,"cannot import name '%s' from '%s' (%s)",mp_cstr(name),((ModuleObj*)module.u.o)->name->s,mp_cstr(fl))
+                             : mp_exc(E_ImportError,"cannot import name '%s' from '%s' (unknown location)",mp_cstr(name),((ModuleObj*)module.u.o)->name->s);
+        ExcObj *x=AS_EXC(ie); if(!x->dict) x->dict=AS_DICT(mp_dict());
+        mp_dict_set_s(x->dict,"name",v_obj(((ModuleObj*)module.u.o)->name)); mp_dict_set_s(x->dict,"name_from",name); mp_dict_set_s(x->dict,"path",fl);
+        mp_raise(ie);
     }
     mp_raise_t(E_ImportError,"cannot import name '%s'",mp_cstr(name));
 }
@@ -216,7 +288,7 @@ Value mp_builtin_import(int argc, Value *argv, TupleObj *kw){
     Value g= np>1 ? argv[1] : kwarg(argc,argv,kw,"globals",v_none());
     Value fl= np>3 ? argv[3] : kwarg(argc,argv,kw,"fromlist",v_none());
     Value lv= np>4 ? argv[4] : kwarg(argc,argv,kw,"level",v_int(0));
-    return mp_import(mp_cstr(argv[0]),IS(g,T_dict)?AS_DICT(g):NULL,(int)mp_index(lv,"level"),mp_truth(fl));
+    return mp_import(mp_cstr(argv[0]),IS_DICT(g)?AS_DICT(g):NULL,(int)mp_index(lv,"level"),mp_truth(fl));
 }
 Value mp_run_main(const char *path){
     char *err=NULL;
@@ -225,7 +297,7 @@ Value mp_run_main(const char *path){
     Value m=register_module("__main__");
     mp_dict_set_s(mdict(m),"__file__",mp_str(path));
     mp_dict_set_s(mdict(m),"__package__",v_none());
-    mp_dict_set_s(mdict(m),"__builtins__",mp_dict_get_s(mp_modules,"builtins",NULL)?mp_getattr_s(m,"__name__"):v_none());
+    { Value bn=mp_str("builtins"); mp_dict_set_s(mdict(m),"__builtins__",mp_builtin_import(1,&bn,NULL)); }
     exec_into(m,src,path);
     free(src);
     return m;
@@ -247,66 +319,40 @@ static Value sys_exception(int argc, Value *argv, TupleObj *kw){ (void)argc; (vo
 static Value sys_getrecursionlimit(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_int(1000); }
 static Value sys_setrecursionlimit(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_none(); }
 static Value sys_intern(int argc, Value *argv, TupleObj *kw){ (void)kw; nargs("intern",argc,1,1); return mp_intern(mp_cstr(argv[0])); }
+/* sys.audit(event, *args): each hook sys.addaudithook() added is called with (event, args) */
+static Value audit_hooks;
+static Value sys_addaudithook(int argc, Value *argv, TupleObj *kw){ (void)kw; nargs("addaudithook",argc,1,1);
+    if(audit_hooks.k!=V_OBJ){ audit_hooks=mp_list(0,NULL); mp_gc_add_root(&audit_hooks); }
+    mp_list_append(audit_hooks,argv[0]); return v_none(); }
+static Value sys_audit(int argc, Value *argv, TupleObj *kw){ (void)kw;
+    if(argc<1) mp_raise_t(E_TypeError,"audit() missing 1 required positional argument: 'event'");
+    if(!IS_STR(argv[0])) mp_raise_t(E_TypeError,"expected str for argument 'event', not %s",mp_type_name(argv[0]));
+    if(audit_hooks.k!=V_OBJ || !AS_LIST(audit_hooks)->len) return v_none();
+    Value a[2]={argv[0],mp_tuple(argc-1,argv+1)};
+    ListObj *h=AS_LIST(audit_hooks); for(int64_t i=0;i<h->len;i++) mp_call(h->items[i],2,a,NULL);
+    return v_none(); }
+/* sys._getframemodulename(depth=0): the __name__ of the module of the function depth calls up */
+static Value sys_getframemodulename(int argc, Value *argv, TupleObj *kw){
+    int64_t depth=0;
+    for(int i=0;i<argc;i++) depth=mp_index(argv[i],"depth");
+    (void)kw;
+    Frame *f=mp_ts?mp_ts->frame:NULL;
+    for(int64_t i=0;i<depth && f;i++) f=f->back;
+    Value n;
+    if(f && f->globals && mp_dict_get_s(f->globals,"__name__",&n)) return n;
+    return v_none();
+}
 /* syscalls and raw memory: the platform's gateway. KolibriOS: int 0x40. Elsewhere
    the i386 Linux system calls (int 0x80) a compiled program for Linux makes, done
    with the host's calls as the macos target's programs do them: the same numbers,
    flags and results (-errno) on every host. */
 #if !defined(MPY_KOLIBRI)
-static int lx_open_flags(intptr_t f){
-    int r=(int)(f&3);
-    if(f&0x40) r|=O_CREAT;
-    if(f&0x80) r|=O_EXCL;
-    if(f&0x100) r|=O_NOCTTY;
-    if(f&0x200) r|=O_TRUNC;
-    if(f&0x400) r|=O_APPEND;
-    if(f&0x800) r|=O_NONBLOCK;
-    if(f&0x10000) r|=O_DIRECTORY;
-    if(f&0x80000) r|=O_CLOEXEC;
-    return r;
-}
-static void lx_put32(intptr_t at, uint32_t v){ if(at) memcpy((void*)at,&v,4); }
-static int64_t lx_syscall(const intptr_t *r){
-    #define P(i) ((void*)r[i])
-    #define RET(x) do{ int64_t x_=(int64_t)(x); return x_<0 ? -errno : x_; }while(0)
-    switch(r[0]){
-        case 1: case 252: mp_flush_stdout(); exit((int)r[1]);
-        case 3:{ Thread *self=mp_ts; ssize_t n; mp_gil_release(); n=read((int)r[1],P(2),(size_t)r[3]); mp_gil_acquire(self); RET(n); }
-        case 4: if(r[1]==1||r[1]==2) mp_flush_stdout(); RET(write((int)r[1],P(2),(size_t)r[3]));
-        case 5: RET(open((const char*)P(1),lx_open_flags(r[2]),(int)r[3]));
-        case 6: RET(close((int)r[1]));
-        case 10: RET(unlink((const char*)P(1)));
-        case 12: RET(chdir((const char*)P(1)));
-        case 13:{ uint32_t t=(uint32_t)time(NULL); lx_put32(r[1],t); return t; }
-        case 19: RET(lseek((int)r[1],(off_t)(int32_t)r[2],(int)r[3]));
-        case 20: return getpid();
-        case 33: RET(access((const char*)P(1),(int)r[2]));
-        case 37: return 0;                              /* kill */
-        case 38: RET(rename((const char*)P(1),(const char*)P(2)));
-        case 39: RET(mkdir((const char*)P(1),(mode_t)r[2]));
-        case 40: RET(rmdir((const char*)P(1)));
-        case 41: RET(dup((int)r[1]));
-        case 54: return -25;                            /* ioctl: ENOTTY */
-        case 63: RET(dup2((int)r[1],(int)r[2]));
-        case 78:{ struct timeval tv; gettimeofday(&tv,NULL);
-            lx_put32(r[1],(uint32_t)tv.tv_sec); if(r[1]) lx_put32(r[1]+4,(uint32_t)tv.tv_usec);
-            lx_put32(r[2],0); if(r[2]) lx_put32(r[2]+4,0);
-            return 0; }
-        case 125: case 174: case 175: return 0;        /* mprotect, rt_sigaction, rt_sigprocmask */
-        case 162:{ int32_t q[2]; memcpy(q,P(1),8); struct timespec ts, rem; ts.tv_sec=q[0]; ts.tv_nsec=q[1];
-            Thread *self=mp_ts; int rc; mp_gil_release(); rc=nanosleep(&ts,&rem); mp_gil_acquire(self);
-            if(rc){ int e=errno; lx_put32(r[2],(uint32_t)rem.tv_sec); if(r[2]) lx_put32(r[2]+4,(uint32_t)rem.tv_nsec); return -e; }
-            return 0; }
-        case 183: if(!getcwd((char*)P(1),(size_t)r[2])) return -errno; return (int64_t)strlen((char*)P(1))+1;
-        case 265:{ struct timespec ts; clock_gettime(r[1]==1?CLOCK_MONOTONIC:CLOCK_REALTIME,&ts);
-            lx_put32(r[2],(uint32_t)ts.tv_sec); lx_put32(r[2]+4,(uint32_t)ts.tv_nsec); return 0; }
-        default:
-            mp_flush_stdout();
-            fprintf(stderr,"minipy: Linux system call %ld is not supported\n",(long)r[0]);
-            return -38;                                 /* ENOSYS */
-    }
-    #undef P
-    #undef RET
-}
+#define LX_WORD intptr_t
+#define LX_PTR(a) ((void*)(a))
+#define LX_BLOCKING_BEGIN Thread *lx_self_=mp_ts; mp_gil_release()
+#define LX_BLOCKING_END mp_gil_acquire(lx_self_)
+#define LX_FLUSH() mp_flush_stdout()
+#include "lx_emul.c"
 #endif
 static Value sys_syscall(int argc, Value *argv, TupleObj *kw){
     no_kw("syscall",kw);
@@ -316,8 +362,9 @@ static Value sys_syscall(int argc, Value *argv, TupleObj *kw){
         Value a=argv[i];
         if(IS_INTLIKE(a)) in[i]=(intptr_t)a.u.i;
         else if(IS_STR(a)) in[i]=(intptr_t)AS_STR(a)->s;
-        else if(IS(a,T_bytes)) in[i]=(intptr_t)AS_BYTES(a)->s;
+        else if(IS_BYTES(a)) in[i]=(intptr_t)AS_BYTES(a)->s;
         else if(IS(a,T_buffer)) in[i]=(intptr_t)((BufferObj*)a.u.o)->data;
+        else if(IS_BA(a)) in[i]=(intptr_t)((ByteArrayObj*)a.u.o)->data;
         else if(IS_NONE(a)) in[i]=0;
         else mp_raise_t(E_TypeError,"syscall() arguments must be int, str, buffer or None");
     }
@@ -339,7 +386,7 @@ static Value sys_buffer(int argc, Value *argv, TupleObj *kw){
     Value a=argv[0]; BufferObj *b=(BufferObj*)mp_alloc(T_buffer,sizeof(BufferObj));
     if(IS_INTLIKE(a)){ if(a.u.i<0||a.u.i>(1<<26)) mp_raise_t(E_ValueError,"buffer() size out of range"); b->len=a.u.i; b->data=(unsigned char*)xmalloc((size_t)b->len+1); memset(b->data,0,(size_t)b->len+1); return v_obj(b); }
     if(IS_STR(a)){ b->len=AS_STR(a)->len; b->data=(unsigned char*)xmalloc((size_t)b->len+1); memcpy(b->data,AS_STR(a)->s,(size_t)b->len+1); return v_obj(b); }
-    if(IS(a,T_bytes)){ b->len=AS_BYTES(a)->len; b->data=(unsigned char*)xmalloc((size_t)b->len+1); memcpy(b->data,AS_BYTES(a)->s,(size_t)b->len+1); return v_obj(b); }
+    if(IS_BYTES(a)){ b->len=AS_BYTES(a)->len; b->data=(unsigned char*)xmalloc((size_t)b->len+1); memcpy(b->data,AS_BYTES(a)->s,(size_t)b->len+1); return v_obj(b); }
     mp_raise_t(E_TypeError,"buffer() expects an int size or a str");
 }
 static int nbytes(Value v, const char *who){ int64_t n=mp_index(v,who); if(n!=1&&n!=2&&n!=4) mp_raise_t(E_ValueError,"%s nbytes must be 1, 2, or 4",who); return (int)n; }
@@ -363,6 +410,28 @@ static Value sys_peek_str(int argc, Value *argv, TupleObj *kw){ no_kw("peek_str"
     BufferObj *b=buf_arg(argv[0],"peek_str()"); int64_t off=mp_index(argv[1],"peek_str"), n=mp_index(argv[2],"peek_str");
     if(off<0||n<0||off+n>b->len) mp_raise_t(E_IndexError,"peek_str() range out of bounds");
     return mp_strn((const char*)b->data+off,n); }
+static Value sys_peek_bytes(int argc, Value *argv, TupleObj *kw){ no_kw("peek_bytes",kw); nargs("peek_bytes",argc,3,3);
+    BufferObj *b=buf_arg(argv[0],"peek_bytes()"); int64_t off=mp_index(argv[1],"peek_bytes"), n=mp_index(argv[2],"peek_bytes");
+    if(off<0||n<0||off+n>b->len) mp_raise_t(E_IndexError,"buffer offset out of range");
+    return mp_bytes((const char*)b->data+off,n); }
+static Value sys_poke_bytes(int argc, Value *argv, TupleObj *kw){ no_kw("poke_bytes",kw); nargs("poke_bytes",argc,3,3);
+    BufferObj *b=buf_arg(argv[0],"poke_bytes()"); int64_t off=mp_index(argv[1],"poke_bytes");
+    if(!IS_BYTES(argv[2])) mp_raise_t(E_TypeError,"poke_bytes() third argument must be bytes");
+    int64_t n=AS_BYTES(argv[2])->len;
+    if(off<0||off+n>b->len) mp_raise_t(E_IndexError,"buffer offset out of range");
+    memcpy(b->data+off,AS_BYTES(argv[2])->s,(size_t)n); return v_none(); }
+#if !defined(MPY_KOLIBRI)
+extern char **environ;
+#endif
+/* sys._rawargs(0): the arguments; (1): the environment as "NAME=value" strings (os.environ) */
+static Value ti_sleep(int argc, Value *argv, TupleObj *kw);
+static Value sys_rawargs(int argc, Value *argv, TupleObj *kw){ no_kw("_rawargs",kw); nargs("_rawargs",argc,1,1);
+    Value l=mp_list(0,NULL);
+    if(mp_index(argv[0],"_rawargs")==0){ if(argv_list.k==V_OBJ) for(int64_t i=0;i<AS_LIST(argv_list)->len;i++) mp_list_append(l,AS_LIST(argv_list)->items[i]); return l; }
+#if !defined(MPY_KOLIBRI)
+    for(char **e=environ;e && *e;e++) mp_list_append(l,mp_str(*e));
+#endif
+    return l; }
 static Value sys_addr(int argc, Value *argv, TupleObj *kw){ no_kw("addr",kw); nargs("addr",argc,1,1); return v_int((int64_t)(uintptr_t)buf_arg(argv[0],"addr()")->data); }
 static unsigned char *addr_of(Value v){ return (unsigned char*)(uintptr_t)(uint64_t)mp_index(v,"address"); }
 static Value sys_peek_at(int argc, Value *argv, TupleObj *kw){ no_kw("peek_at",kw); nargs("peek_at",argc,2,2);
@@ -381,6 +450,47 @@ void mp_set_argv(int argc, char **argv){
     argv_list=mp_list(0,NULL); mp_gc_add_root(&argv_list);
     for(int i=0;i<argc;i++) mp_list_append(argv_list,mp_str(argv[i]));
 }
+static Value sys_format_exception(int argc, Value *argv, TupleObj *kw){ no_kw("_format_exception",kw); nargs("_format_exception",argc,1,1); return mp_format_exception(argv[0]); }
+static Value sys_excepthook(int argc, Value *argv, TupleObj *kw){ no_kw("excepthook",kw); nargs("excepthook",argc,3,3); mp_print_exception(argv[1]); return v_none(); }
+static Value sys_stack(int argc, Value *argv, TupleObj *kw){ (void)argv; no_kw("_stack",kw); nargs("_stack",argc,0,0); return mp_stack_list(); }
+static Value sys_getline(int argc, Value *argv, TupleObj *kw){ no_kw("_getline",kw); nargs("_getline",argc,2,2);
+    if(!IS_STR(argv[0])) return mp_str(""); return mp_source_getline(mp_cstr(argv[0]),(int)mp_index(argv[1],"_getline")); }
+/* sys._getframe(depth): a snapshot of the running frames (f_code, f_lineno, f_back, f_globals, f_locals ...) */
+static Type *T_frame;
+static Value sys_getframe(int argc, Value *argv, TupleObj *kw){
+    no_kw("_getframe",kw); nargs("_getframe",argc,0,1);
+    int64_t depth= argc ? mp_index(argv[0],"_getframe") : 0;
+    Frame *f=mp_ts->frame;
+    for(int64_t i=0;i<depth && f;i++) f=f->back;
+    if(!f || depth<0) mp_raise_t(E_ValueError,"call stack is not deep enough");
+    if(!T_frame) T_frame=AS_TYPE(mp_new_type("frame",T_object,LY_INSTANCE,0));
+    int n=0; for(Frame *g=f;g;g=g->back) n++;
+    Frame **fs=(Frame**)xmalloc(sizeof(Frame*)*(size_t)n); n=0; for(Frame *g=f;g;g=g->back) fs[n++]=g;
+    Value back=v_none();
+    for(int i=n-1;i>=0;i--){ Frame *g=fs[i];
+        InstObj *o=(InstObj*)mp_alloc(T_frame,sizeof(InstObj)); o->dict=AS_DICT(mp_dict()); Value fo=v_obj(o);
+        int ip= g->ip>0 ? g->ip-1 : 0;
+        int line= g->code->ncode ? g->code->lines[ip<g->code->ncode?ip:g->code->ncode-1] : g->code->firstline;
+        mp_dict_set_s(o->dict,"f_code",v_obj(g->code)); mp_dict_set_s(o->dict,"f_lineno",v_int(line)); mp_dict_set_s(o->dict,"f_lasti",v_int(ip*2));
+        mp_dict_set_s(o->dict,"f_globals",v_obj(g->globals)); mp_dict_set_s(o->dict,"f_builtins",v_obj(g->builtins?g->builtins:mp_builtins));
+        mp_dict_set_s(o->dict,"f_locals",mp_frame_locals(g)); mp_dict_set_s(o->dict,"f_back",back); mp_dict_set_s(o->dict,"f_trace",v_none());
+        mp_dict_set_s(o->dict,"f_generator",v_none());
+        back=fo; }
+    free(fs);
+    return back;
+}
+static Value sys_suggestion(int argc, Value *argv, TupleObj *kw){ no_kw("_suggestion",kw); nargs("_suggestion",argc,2,2);
+    if(!mp_isinstance(argv[0],E_BaseException)) return mp_str(""); return mp_exc_suggestion(argv[0],mp_truth(argv[1])); }
+/* sys._builtin(f): f stands for a C function of CPython's (not bound as a method; its repr) */
+static Value sys_builtin(int argc, Value *argv, TupleObj *kw){ no_kw("_builtin",kw); nargs("_builtin",argc,1,1);
+    if(IS(argv[0],T_function)) ((FuncObj*)argv[0].u.o)->builtin=1;
+    return argv[0]; }
+static Value sys_frame_source(int argc, Value *argv, TupleObj *kw){ no_kw("_frame_source",kw); nargs("_frame_source",argc,4,4);
+    if(!IS_STR(argv[0])) return mp_str(""); return mp_frame_source(mp_cstr(argv[0]),(int)mp_index(argv[1],"line"),argv[2],(int)mp_index(argv[3],"ip")); }
+static Value sys_eval_annotation(int argc, Value *argv, TupleObj *kw){ no_kw("_eval_annotation",kw); nargs("_eval_annotation",argc,2,3);
+    if(!IS_STR(argv[0]) || !IS_DICT(argv[1])) mp_raise_t(E_TypeError,"_eval_annotation(text, globals[, locals])");
+    return mp_eval_annotation(mp_cstr(argv[0]),AS_DICT(argv[1]),argc>2&&IS_DICT(argv[2])?AS_DICT(argv[2]):NULL); }
+static Value sys_getdefaultencoding(int argc, Value *argv, TupleObj *kw){ (void)argv; (void)argc; (void)kw; return mp_str("utf-8"); }
 static Value make_sys(void){
     Value m=register_module("sys");
 #if defined(__APPLE__)
@@ -396,17 +506,25 @@ static Value make_sys(void){
     mp_dict_set_s(mdict(m),"argv",argv_list.k==V_OBJ?argv_list:mp_list(0,NULL));
     mp_dict_set_s(mdict(m),"modules",v_obj(mp_modules));
     mp_dict_set_s(mdict(m),"path",mp_list(0,NULL));
+    mp_dict_set_s(mdict(m),"warnoptions",mp_list(0,NULL));
     mp_dict_set_s(mdict(m),"maxsize",v_int(INT64_MAX));
     mp_dict_set_s(mdict(m),"byteorder",mp_str("little"));
+    mp_dict_set_s(mdict(m),"_compiled",v_bool(0));          /* (compiled programs: True, folded by the compiler) */
     mp_dict_set_s(mdict(m),"version",mp_str("3.14.0 (minipy)"));
     { Value vi[5]={v_int(3),v_int(14),v_int(0),mp_str("final"),v_int(0)}; mp_dict_set_s(mdict(m),"version_info",mp_tuple(5,vi)); }
     mp_dict_set_s(mdict(m),"stdout",mp_std_stream(0)); mp_dict_set_s(mdict(m),"stderr",mp_std_stream(1));
     mp_dict_set_s(mdict(m),"__stdout__",mp_std_stream(0)); mp_dict_set_s(mdict(m),"__stderr__",mp_std_stream(1));
     set_fn(m,"exit",sys_exit); set_fn(m,"exc_info",sys_exc_info); set_fn(m,"exception",sys_exception);
-    set_fn(m,"getrecursionlimit",sys_getrecursionlimit); set_fn(m,"setrecursionlimit",sys_setrecursionlimit); set_fn(m,"intern",sys_intern);
+    set_fn(m,"getrecursionlimit",sys_getrecursionlimit); set_fn(m,"setrecursionlimit",sys_setrecursionlimit); set_fn(m,"intern",sys_intern); set_fn(m,"_getframemodulename",sys_getframemodulename);
+    set_fn(m,"audit",sys_audit); set_fn(m,"addaudithook",sys_addaudithook);
     set_fn(m,"syscall",sys_syscall); set_fn(m,"buffer",sys_buffer); set_fn(m,"poke",sys_poke); set_fn(m,"peek",sys_peek);
-    set_fn(m,"poke_str",sys_poke_str); set_fn(m,"peek_str",sys_peek_str); set_fn(m,"addr",sys_addr); set_fn(m,"peek_at",sys_peek_at);
+    set_fn(m,"poke_str",sys_poke_str); set_fn(m,"peek_str",sys_peek_str); set_fn(m,"peek_bytes",sys_peek_bytes); set_fn(m,"poke_bytes",sys_poke_bytes); set_fn(m,"_rawargs",sys_rawargs); set_fn(m,"_sleep",ti_sleep); set_fn(m,"addr",sys_addr); set_fn(m,"peek_at",sys_peek_at);
     set_fn(m,"poke_at",sys_poke_at); set_fn(m,"peek_str_at",sys_peek_str_at); set_fn(m,"poke_str_at",sys_poke_str_at); set_fn(m,"cstr_at",sys_cstr_at);
+    set_fn(m,"_format_exception",sys_format_exception); set_fn(m,"excepthook",sys_excepthook); set_fn(m,"_stack",sys_stack); set_fn(m,"_getline",sys_getline); set_fn(m,"_suggestion",sys_suggestion); set_fn(m,"_frame_source",sys_frame_source); set_fn(m,"_eval_annotation",sys_eval_annotation); set_fn(m,"_getframe",sys_getframe); set_fn(m,"_builtin",sys_builtin);
+    mp_dict_set_s(mdict(m),"__excepthook__",mp_dict_get_s(mdict(m),"excepthook",NULL)?mp_native("excepthook",sys_excepthook):v_none());
+    set_fn(m,"getdefaultencoding",sys_getdefaultencoding); set_fn(m,"getfilesystemencoding",sys_getdefaultencoding);
+    mp_dict_set_s(mdict(m),"maxunicode",v_int(0x10FFFF)); mp_dict_set_s(mdict(m),"hexversion",v_int(0x030E00F0));
+    mp_dict_set_s(mdict(m),"executable",mp_str(mpy_platform_exe_path()?mpy_platform_exe_path():"minipy"));
     return m;
 }
 
@@ -425,7 +543,78 @@ static Value ma_acos(int argc, Value *argv, TupleObj *kw){ no_kw("acos",kw); nar
 static Value ma_exp(int argc, Value *argv, TupleObj *kw){ no_kw("exp",kw); nargs("exp",argc,1,1); double r=exp(farg(argv[0])); if(isinf(r) && isfinite(farg(argv[0]))) mp_raise_t(E_OverflowError,"math range error"); return v_float(r); }
 M1(sin,sin(x)) M1(cos,cos(x)) M1(tan,tan(x)) M1(atan,atan(x)) M1(sinh,sinh(x)) M1(cosh,cosh(x)) M1(tanh,tanh(x))
 M1(asinh,asinh(x)) M1(fabs,fabs(x)) M1(expm1,expm1(x)) M1(degrees,x*(180.0/M_PI)) M1(radians,x*(M_PI/180.0)) M1(erf,erf(x)) M1(erfc,erfc(x))
-M1(cbrt,cbrt(x)) M1(exp2,exp2(x)) M1(lgamma,lgamma(x)) M1(gamma,tgamma(x))
+M1(cbrt,cbrt(x)) M1(exp2,exp2(x))
+/* gamma and lgamma: CPython's own (Lanczos, N=13, g=6.0246...), not the C library's */
+static const double ma_lanczos_g=6.024680040776729583740234375, ma_lanczos_gmh=5.524680040776729583740234375;
+static const double ma_lanczos_num[13]={23531376880.410759688572007674451636754734846804940,42919803642.649098768957899047001988850926355848959,
+    35711959237.355668049440185451547166705960488635843,17921034426.037209699919755754458931112671403265390,6039542586.3520280050642916443072979210699388420708,
+    1439720407.3117216736632230727949123939715485786772,248874557.86205415651146038641322942321632125127801,31426415.585400194380614231628318205362874684987640,
+    2876370.6289353724412254090516208496135991145378768,186056.26539522349504029498971604569928220784236328,8071.6720023658162106380029022722506138218516325024,
+    210.82427775157934587250973392071336271166969580291,2.5066282746310002701649081771338373386264310793408};
+static const double ma_lanczos_den[13]={0.0,39916800.0,120543840.0,150917976.0,105258076.0,45995730.0,13339535.0,2637558.0,357423.0,32670.0,1925.0,66.0,1.0};
+static const double ma_gamma_int[23]={1.0,1.0,2.0,6.0,24.0,120.0,720.0,5040.0,40320.0,362880.0,3628800.0,39916800.0,479001600.0,6227020800.0,87178291200.0,
+    1307674368000.0,20922789888000.0,355687428096000.0,6402373705728000.0,121645100408832000.0,2432902008176640000.0,51090942171709440000.0,1124000727777607680000.0};
+static double ma_sinpi(double x){
+    double y=fmod(fabs(x),2.0), r; int n=(int)round(2.0*y);
+    switch(n){ case 0: r=sin(M_PI*y); break; case 1: r=cos(M_PI*(y-0.5)); break; case 2: r=sin(M_PI*(1.0-y)); break; case 3: r=-cos(M_PI*(y-1.5)); break; default: r=sin(M_PI*(y-2.0)); }
+    return copysign(1.0,x)*r;
+}
+static double ma_lanczos_sum(double x){
+    double num=0.0, den=0.0;
+    if(x<5.0) for(int i=13;--i>=0;){ num=num*x+ma_lanczos_num[i]; den=den*x+ma_lanczos_den[i]; }
+    else for(int i=0;i<13;i++){ num=num/x+ma_lanczos_num[i]; den=den/x+ma_lanczos_den[i]; }
+    return num/den;
+}
+static Value ma_gamma(int argc, Value *argv, TupleObj *kw){ no_kw("gamma",kw); nargs("gamma",argc,1,1); double x=farg(argv[0]), absx, r, y, z, sqrtpow;
+    if(!isfinite(x)){ if(isnan(x) || x>0.0) return v_float(x); mp_raise_t(E_ValueError,"math domain error"); }
+    if(x==0.0 || (x==floor(x) && x<0.0)) mp_raise_t(E_ValueError,"expected a noninteger or positive integer, got %s",AS_STR(mp_repr(argv[0]))->s);
+    if(x==floor(x) && x<=23) return v_float(ma_gamma_int[(int)x-1]);
+    absx=fabs(x);
+    if(absx<1e-20){ r=1.0/x; if(isinf(r)) mp_raise_t(E_OverflowError,"math range error"); return v_float(r); }
+    if(absx>200.0){ if(x<0.0) return v_float(0.0/ma_sinpi(x)); mp_raise_t(E_OverflowError,"math range error"); }
+    y=absx+ma_lanczos_gmh;
+    if(absx>ma_lanczos_gmh){ volatile double q=y-absx; z=q-ma_lanczos_gmh; } else { volatile double q=y-ma_lanczos_gmh; z=q-absx; }
+    z=z*ma_lanczos_g/y;
+    if(x<0.0){ r=-M_PI/ma_sinpi(absx)/absx*exp(y)/ma_lanczos_sum(absx); r-=z*r;
+        if(absx<140.0) r/=pow(y,absx-0.5); else { sqrtpow=pow(y,absx/2.0-0.25); r/=sqrtpow; r/=sqrtpow; } }
+    else { r=ma_lanczos_sum(absx)/exp(y); r+=z*r;
+        if(absx<140.0) r*=pow(y,absx-0.5); else { sqrtpow=pow(y,absx/2.0-0.25); r*=sqrtpow; r*=sqrtpow; } }
+    if(isinf(r)) mp_raise_t(E_OverflowError,"math range error");
+    return v_float(r);
+}
+static Value ma_lgamma(int argc, Value *argv, TupleObj *kw){ no_kw("lgamma",kw); nargs("lgamma",argc,1,1); double x=farg(argv[0]), r, absx;
+    if(!isfinite(x)) return v_float(isnan(x)?x:INFINITY);
+    if(x==floor(x) && x<=2.0){ if(x<=0.0) mp_raise_t(E_ValueError,"math domain error"); return v_float(0.0); }
+    absx=fabs(x);
+    if(absx<1e-20) return v_float(-log(absx));
+    r=log(ma_lanczos_sum(absx))-ma_lanczos_g;
+    r+=(absx-0.5)*(log(absx+ma_lanczos_g-0.5)-1);
+    if(x<0.0) r=1.144729885849400174143427351353058711647-log(fabs(ma_sinpi(absx)))-log(absx)-r;
+    if(isinf(r)) mp_raise_t(E_OverflowError,"math range error");
+    return v_float(r);
+}
+static Value ma_nextafter(int argc, Value *argv, TupleObj *kw){
+    int np=argc-(kw?(int)kw->len:0); double x=farg(argv[0]), y=farg(argv[1]);
+    if(np<2) mp_raise_t(E_TypeError,"nextafter expected 2 arguments, got %d",np);
+    if(kw && kw->len){ int64_t steps=mp_index(argv[np],"steps"); if(steps<0) mp_raise_t(E_ValueError,"steps must be a non-negative integer");
+        for(int64_t i=0;i<steps && x!=y;i++) x=nextafter(x,y); return v_float(x); }
+    return v_float(nextafter(x,y)); }
+static Value ma_ulp(int argc, Value *argv, TupleObj *kw){ no_kw("ulp",kw); nargs("ulp",argc,1,1); double x=farg(argv[0]);
+    if(isnan(x)) return v_float(x); x=fabs(x); if(isinf(x)) return v_float(x);
+    double x2=nextafter(x,INFINITY); if(isinf(x2)){ x2=nextafter(x,-INFINITY); return v_float(x-x2); } return v_float(x2-x); }
+static Value ma_fma(int argc, Value *argv, TupleObj *kw){ no_kw("fma",kw); nargs("fma",argc,3,3);
+    double x=farg(argv[0]), y=farg(argv[1]), z=farg(argv[2]), r=fma(x,y,z);
+    if(isfinite(r)) return v_float(r);
+    if(isnan(r)){ if(!isnan(x) && !isnan(y) && !isnan(z)) mp_raise_t(E_ValueError,"invalid operation in fma"); return v_float(r); }
+    if(isfinite(x) && isfinite(y) && isfinite(z)) mp_raise_t(E_OverflowError,"overflow in fma");
+    return v_float(r); }
+static Value ma_sumprod(int argc, Value *argv, TupleObj *kw){ no_kw("sumprod",kw); nargs("sumprod",argc,2,2);
+    Value ip=mp_iter(argv[0]), iq=mp_iter(argv[1]), a, b, total=v_int(0);
+    for(;;){ int ha=mp_next(ip,&a), hb=mp_next(iq,&b);
+        if(ha!=hb) mp_raise_t(E_ValueError,"Inputs are not the same length");
+        if(!ha) break;
+        total=mp_binop(OP_Add,total,mp_binop(OP_Mult,a,b)); }
+    return total; }
 static Value ma_acosh(int argc, Value *argv, TupleObj *kw){ no_kw("acosh",kw); nargs("acosh",argc,1,1); double x=farg(argv[0]); domain(x<1); return v_float(acosh(x)); }
 static Value ma_atanh(int argc, Value *argv, TupleObj *kw){ no_kw("atanh",kw); nargs("atanh",argc,1,1); double x=farg(argv[0]); domain(x<=-1||x>=1); return v_float(atanh(x)); }
 static Value ma_atan2(int argc, Value *argv, TupleObj *kw){ no_kw("atan2",kw); nargs("atan2",argc,2,2); return v_float(atan2(farg(argv[0]),farg(argv[1]))); }
@@ -434,7 +623,9 @@ static Value ma_pow(int argc, Value *argv, TupleObj *kw){ no_kw("pow",kw); nargs
 static Value ma_fmod(int argc, Value *argv, TupleObj *kw){ no_kw("fmod",kw); nargs("fmod",argc,2,2); double x=farg(argv[0]), y=farg(argv[1]); domain(y==0 && !isnan(x)); return v_float(fmod(x,y)); }
 static Value ma_remainder(int argc, Value *argv, TupleObj *kw){ no_kw("remainder",kw); nargs("remainder",argc,2,2); double y=farg(argv[1]); domain(y==0); return v_float(remainder(farg(argv[0]),y)); }
 static Value ma_copysign(int argc, Value *argv, TupleObj *kw){ no_kw("copysign",kw); nargs("copysign",argc,2,2); return v_float(copysign(farg(argv[0]),farg(argv[1]))); }
-static Value ma_ldexp(int argc, Value *argv, TupleObj *kw){ no_kw("ldexp",kw); nargs("ldexp",argc,2,2); return v_float(ldexp(farg(argv[0]),(int)mp_index(argv[1],"ldexp"))); }
+static Value ma_ldexp(int argc, Value *argv, TupleObj *kw){ no_kw("ldexp",kw); nargs("ldexp",argc,2,2); double x=farg(argv[0]); int64_t i=mp_index(argv[1],"ldexp");
+    if(i>100000) i=100000; if(i<-100000) i=-100000;
+    double r=ldexp(x,(int)i); if(isinf(r) && isfinite(x)) mp_raise_t(E_OverflowError,"math range error"); return v_float(r); }
 static Value ma_frexp(int argc, Value *argv, TupleObj *kw){ no_kw("frexp",kw); nargs("frexp",argc,1,1); int e; double m=frexp(farg(argv[0]),&e); Value r[2]={v_float(m),v_int(e)}; return mp_tuple(2,r); }
 static Value ma_modf(int argc, Value *argv, TupleObj *kw){ no_kw("modf",kw); nargs("modf",argc,1,1); double ip; double fp=modf(farg(argv[0]),&ip); Value r[2]={v_float(fp),v_float(ip)}; return mp_tuple(2,r); }
 static Value ma_hypot(int argc, Value *argv, TupleObj *kw){ no_kw("hypot",kw); double s=0; double mx=0;
@@ -452,7 +643,8 @@ static Value ma_floor(int argc, Value *argv, TupleObj *kw){ no_kw("floor",kw); n
     if(TYPE(argv[0])->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(argv[0]),"__floor__"); if(m.k!=V_UNDEF) return mp_call1(m,argv[0]); } return int_result(floor(farg(argv[0]))); }
 static Value ma_ceil(int argc, Value *argv, TupleObj *kw){ no_kw("ceil",kw); nargs("ceil",argc,1,1); if(IS_INTLIKE(argv[0])) return v_int(argv[0].u.i);
     if(TYPE(argv[0])->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(argv[0]),"__ceil__"); if(m.k!=V_UNDEF) return mp_call1(m,argv[0]); } return int_result(ceil(farg(argv[0]))); }
-static Value ma_trunc(int argc, Value *argv, TupleObj *kw){ no_kw("trunc",kw); nargs("trunc",argc,1,1); if(IS_INTLIKE(argv[0])) return v_int(argv[0].u.i); return int_result(trunc(farg(argv[0]))); }
+static Value ma_trunc(int argc, Value *argv, TupleObj *kw){ no_kw("trunc",kw); nargs("trunc",argc,1,1); if(IS_INTLIKE(argv[0])) return v_int(argv[0].u.i);
+    if(TYPE(argv[0])->flags&TF_DUNDERS){ Value m=mp_type_lookup_s(TYPE(argv[0]),"__trunc__"); if(m.k!=V_UNDEF) return mp_call1(m,argv[0]); } return int_result(trunc(farg(argv[0]))); }
 static int64_t gcd2(int64_t a, int64_t b){ if(a<0) a=-a; if(b<0) b=-b; while(b){ int64_t t=a%b; a=b; b=t; } return a; }
 static Value ma_gcd(int argc, Value *argv, TupleObj *kw){ no_kw("gcd",kw); int64_t g=0; for(int i=0;i<argc;i++) g=gcd2(g,mp_index(argv[i],"gcd")); return v_int(g); }
 static Value ma_lcm(int argc, Value *argv, TupleObj *kw){ no_kw("lcm",kw); int64_t l=1; if(!argc) return v_int(1);
@@ -515,29 +707,13 @@ static Value make_math(void){
         {"copysign",ma_copysign},{"ldexp",ma_ldexp},{"frexp",ma_frexp},{"modf",ma_modf},{"hypot",ma_hypot},{"floor",ma_floor},{"ceil",ma_ceil},{"trunc",ma_trunc},
         {"gcd",ma_gcd},{"lcm",ma_lcm},{"isqrt",ma_isqrt},{"factorial",ma_factorial},{"comb",ma_comb},{"perm",ma_perm},{"prod",ma_prod},{"fsum",ma_fsum},
         {"isfinite",ma_isfinite},{"isinf",ma_isinf},{"isnan",ma_isnan},{"isclose",ma_isclose},{"degrees",ma_degrees},{"radians",ma_radians},{"erf",ma_erf},
-        {"erfc",ma_erfc},{"cbrt",ma_cbrt},{"exp2",ma_exp2},{"gamma",ma_gamma},{"lgamma",ma_lgamma},{"dist",ma_dist},{NULL,NULL}};
+        {"erfc",ma_erfc},{"cbrt",ma_cbrt},{"exp2",ma_exp2},{"gamma",ma_gamma},{"lgamma",ma_lgamma},{"dist",ma_dist},
+        {"nextafter",ma_nextafter},{"ulp",ma_ulp},{"fma",ma_fma},{"sumprod",ma_sumprod},{NULL,NULL}};
     for(int i=0;fs[i].n;i++) set_fn(m,fs[i].n,fs[i].f);
     return m;
 }
 
 /* ---------------------------------------------------------------- time */
-static double now_wall(void){
-#if defined(MPY_KOLIBRI)
-    uint32_t in[7]={26,9,0,0,0,0,0}, out[6]={0}; mpy_platform_syscall(in,out); return out[0]/100.0;
-#else
-    struct timeval tv; gettimeofday(&tv,NULL); return (double)tv.tv_sec+tv.tv_usec/1e6;
-#endif
-}
-static double now_mono(void){
-#if defined(MPY_KOLIBRI)
-    return now_wall();
-#else
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return (double)ts.tv_sec+ts.tv_nsec/1e9;
-#endif
-}
-static Value ti_time(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("time",kw); return v_float(now_wall()); }
-static Value ti_monotonic(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("monotonic",kw); return v_float(now_mono()); }
-static Value ti_ns(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("time_ns",kw); return v_int((int64_t)(now_mono()*1e9)); }
 static Value ti_sleep(int argc, Value *argv, TupleObj *kw){
     no_kw("sleep",kw); nargs("sleep",argc,1,1);
     double s=farg(argv[0]);
@@ -546,66 +722,6 @@ static Value ti_sleep(int argc, Value *argv, TupleObj *kw){
     mpy_thread_sleep_ms((int)(s*1000+0.5));
     mp_gil_acquire(self);
     return v_none();
-}
-static Value make_time(void){
-    Value m=register_module("time");
-    set_fn(m,"time",ti_time); set_fn(m,"monotonic",ti_monotonic); set_fn(m,"perf_counter",ti_monotonic); set_fn(m,"process_time",ti_monotonic);
-    set_fn(m,"time_ns",ti_ns); set_fn(m,"monotonic_ns",ti_ns); set_fn(m,"perf_counter_ns",ti_ns); set_fn(m,"sleep",ti_sleep);
-    return m;
-}
-
-/* ---------------------------------------------------------------- random: xorshift32 (compiled programs' numbers) */
-static uint32_t rand_state;
-static uint32_t rand_next(void){
-    uint32_t x=rand_state;
-    if(!x){ x=(uint32_t)(int64_t)(now_wall()*1000) ^ 0x9E3779B9u; x|=1; }
-    x^=x<<13; x^=x>>17; x^=x<<5;
-    rand_state=x; return x;
-}
-int64_t mp_rand_bits(void){ return rand_next(); }
-static double rand_float(void){ return (double)(rand_next()>>1)/2147483648.0; }
-/* [lo, hi): a range of 2**32 or more takes two draws (as compiled programs do) */
-static int64_t rand_range(int64_t lo, int64_t hi, const char *what, int64_t a, int64_t b){
-    int64_t span;
-    if(hi<=lo || __builtin_sub_overflow(hi,lo,&span)){
-        if(!what) mp_raise_t(E_ValueError,"empty range for randrange()");
-        mp_raise_t(E_ValueError,"empty range in %s(%lld, %lld)",what,(long long)a,(long long)b);
-    }
-    if(span<=(int64_t)0xFFFFFFFF) return lo+(int64_t)(rand_next()%(uint32_t)span);
-    uint64_t r=(uint64_t)rand_next()<<32; r|=rand_next();
-    return lo+(int64_t)(r%(uint64_t)span);
-}
-static Value ra_seed(int argc, Value *argv, TupleObj *kw){ no_kw("seed",kw); nargs("seed",argc,0,1);
-    if(!argc || IS_NONE(argv[0])){ rand_state=0; return v_none(); }
-    uint32_t s= IS_INTLIKE(argv[0]) ? (uint32_t)argv[0].u.i : (uint32_t)mp_hash(argv[0]);
-    rand_state=(s*0x9E3779B1u ^ 0x5DEECE66u) | 1u; return v_none(); }
-static Value ra_random(int argc, Value *argv, TupleObj *kw){ (void)argv; no_kw("random",kw); nargs("random",argc,0,0); return v_float(rand_float()); }
-static Value ra_uniform(int argc, Value *argv, TupleObj *kw){ no_kw("uniform",kw); nargs("uniform",argc,2,2); double a=farg(argv[0]), b=farg(argv[1]); return v_float(a+(b-a)*rand_float()); }
-static Value ra_randint(int argc, Value *argv, TupleObj *kw){ no_kw("randint",kw); nargs("randint",argc,2,2); int64_t a=mp_index(argv[0],"randint"), b=mp_index(argv[1],"randint");
-    return v_int(rand_range(a,b==INT64_MAX?b:b+1,"randint",a,b)); }
-static Value ra_randrange(int argc, Value *argv, TupleObj *kw){ no_kw("randrange",kw); nargs("randrange",argc,1,3);
-    if(argc==1) return v_int(rand_range(0,mp_index(argv[0],"randrange"),NULL,0,0));
-    int64_t a=mp_index(argv[0],"randrange"), b=mp_index(argv[1],"randrange");
-    if(argc==3){ int64_t st=mp_index(argv[2],"randrange"); if(st==0) mp_raise_t(E_ValueError,"zero step for randrange()"); int64_t n=(b-a+st+(st>0?-1:1))/st; if(n<=0) mp_raise_t(E_ValueError,"empty range in randrange(%lld, %lld, %lld)",(long long)a,(long long)b,(long long)st); return v_int(a+st*rand_range(0,n,NULL,0,0)); }
-    return v_int(rand_range(a,b,"randrange",a,b)); }
-static Value ra_choice(int argc, Value *argv, TupleObj *kw){ no_kw("choice",kw); nargs("choice",argc,1,1); int64_t n=mp_len(argv[0]);
-    if(!n) mp_raise_t(E_IndexError,"Cannot choose from an empty sequence"); return mp_getitem(argv[0],v_int(rand_range(0,n,NULL,0,0))); }
-static Value ra_shuffle(int argc, Value *argv, TupleObj *kw){ no_kw("shuffle",kw); nargs("shuffle",argc,1,1);
-    if(!IS(argv[0],T_list)) mp_raise_t(E_TypeError,"shuffle() needs a list");
-    ListObj *l=AS_LIST(argv[0]);
-    for(int64_t i=l->len;i>1;i--){ int64_t j=rand_range(0,i,NULL,0,0); Value t=l->items[i-1]; l->items[i-1]=l->items[j]; l->items[j]=t; }
-    return v_none(); }
-static Value ra_sample(int argc, Value *argv, TupleObj *kw){ no_kw("sample",kw); nargs("sample",argc,2,2);
-    Value pool=mp_list_of(argv[0]); int64_t k=mp_index(argv[1],"sample"), n=AS_LIST(pool)->len;
-    if(k<0||k>n) mp_raise_t(E_ValueError,"Sample larger than population or is negative");
-    Value r=mp_list(0,NULL);
-    for(int64_t i=0;i<k;i++){ int64_t j=rand_range(0,n-i,NULL,0,0); mp_list_append(r,AS_LIST(pool)->items[j]); AS_LIST(pool)->items[j]=AS_LIST(pool)->items[n-i-1]; }
-    return r; }
-static Value make_random(void){
-    Value m=register_module("random");
-    set_fn(m,"seed",ra_seed); set_fn(m,"random",ra_random); set_fn(m,"uniform",ra_uniform); set_fn(m,"randint",ra_randint);
-    set_fn(m,"randrange",ra_randrange); set_fn(m,"choice",ra_choice); set_fn(m,"shuffle",ra_shuffle); set_fn(m,"sample",ra_sample);
-    return m;
 }
 
 /* ---------------------------------------------------------------- json */
@@ -618,7 +734,7 @@ static void j_string(SBuf *b, const char *s, int64_t len, int ascii){
         if(ch=='"'){ sb_puts(b,"\\\""); i++; continue; }
         if(ch=='\\'){ sb_puts(b,"\\\\"); i++; continue; }
         if(ch<0x20){ const char *e= ch=='\n'?"\\n":ch=='\r'?"\\r":ch=='\t'?"\\t":ch=='\b'?"\\b":ch=='\f'?"\\f":NULL; if(e) sb_puts(b,e); else sb_printf(b,"\\u%04x",ch); i++; continue; }
-        if(ch<0x80 || !ascii){ sb_putc(b,(char)ch); i++; continue; }
+        if(ch<0x7f || !ascii){ sb_putc(b,(char)ch); i++; continue; }      /* (ensure_ascii: DEL too, as \u007f) */
         int64_t p=i; uint32_t cp=(uint32_t)mp_utf8_decode(s,len,&p); i=p;
         if(cp>=0x10000){ cp-=0x10000; sb_printf(b,"\\u%04x\\u%04x",0xD800+(cp>>10),0xDC00+(cp&0x3FF)); }
         else sb_printf(b,"\\u%04x",cp);
@@ -631,6 +747,7 @@ static void j_newline(SBuf *b, JOpt *o, int depth){
     for(int i=0;i<depth;i++){ if(IS_STR(o->indent)) sb_puts(b,mp_cstr(o->indent)); else for(int64_t k=0;k<o->indent.u.i;k++) sb_putc(b,' '); }
 }
 static void j_key(SBuf *b, Value k, JOpt *o){
+    k=mp_unbox(k);
     if(IS_STR(k)){ j_string(b,AS_STR(k)->s,AS_STR(k)->len,o->ascii); return; }
     if(k.k==V_BOOL){ sb_puts(b,k.u.i?"\"true\"":"\"false\""); return; }
     if(k.k==V_NONE){ sb_puts(b,"\"null\""); return; }
@@ -640,6 +757,7 @@ static void j_key(SBuf *b, Value k, JOpt *o){
 }
 static void j_write(SBuf *b, Value v, JOpt *o, int depth){
     if(depth>400) mp_raise_t(E_ValueError,"Circular reference detected");
+    v=mp_unbox(v);                                         /* (an int/float subclass: its value) */
     switch(v.k){
         case V_NONE: sb_puts(b,"null"); return;
         case V_BOOL: sb_puts(b,v.u.i?"true":"false"); return;
@@ -648,11 +766,11 @@ static void j_write(SBuf *b, Value v, JOpt *o, int depth){
         default: break;
     }
     if(IS_STR(v)){ j_string(b,AS_STR(v)->s,AS_STR(v)->len,o->ascii); return; }
-    if(IS(v,T_list)||IS(v,T_tuple)){
-        int64_t n= IS(v,T_list)?AS_LIST(v)->len:AS_TUPLE(v)->len;
+    if(IS_LIST(v)||IS_TUPLE(v)){
+        int64_t n= IS_LIST(v)?AS_LIST(v)->len:AS_TUPLE(v)->len;
         sb_putc(b,'[');
         if(n){
-            for(int64_t i=0;i<n;i++){ if(i) sb_puts(b,o->isep); j_newline(b,o,depth+1); j_write(b,IS(v,T_list)?AS_LIST(v)->items[i]:AS_TUPLE(v)->items[i],o,depth+1); }
+            for(int64_t i=0;i<n;i++){ if(i) sb_puts(b,o->isep); j_newline(b,o,depth+1); j_write(b,IS_LIST(v)?AS_LIST(v)->items[i]:AS_TUPLE(v)->items[i],o,depth+1); }
             j_newline(b,o,depth);
         }
         sb_putc(b,']'); return;
@@ -687,7 +805,7 @@ static Value js_dumps(int argc, Value *argv, TupleObj *kw){
     o.isep= IS_NONE(o.indent) ? ", " : ","; o.ksep=": ";
     if(IS_INTLIKE(o.indent) && o.indent.u.i<0) o.indent=v_int(0);
     if(!IS_NONE(seps)){
-        if(!IS(seps,T_tuple) || AS_TUPLE(seps)->len!=2 || !IS_STR(AS_TUPLE(seps)->items[0]) || !IS_STR(AS_TUPLE(seps)->items[1])) mp_raise_t(E_TypeError,"separators must be a tuple of two strings");
+        if(!IS_TUPLE(seps) || AS_TUPLE(seps)->len!=2 || !IS_STR(AS_TUPLE(seps)->items[0]) || !IS_STR(AS_TUPLE(seps)->items[1])) mp_raise_t(E_TypeError,"separators must be a tuple of two strings");
         o.isep=mp_cstr(AS_TUPLE(seps)->items[0]); o.ksep=mp_cstr(AS_TUPLE(seps)->items[1]);
     }
     SBuf b={0};
@@ -786,7 +904,7 @@ static Value j_value(JIn *in, int depth){
 static Value js_loads(int argc, Value *argv, TupleObj *kw){
     (void)kw; nargs("loads",npos(argc,kw),1,1);
     Value s=argv[0];
-    if(IS(s,T_bytes)) s=mp_strn((const char*)AS_BYTES(s)->s,AS_BYTES(s)->len);
+    if(IS_BYTES(s)) s=mp_strn((const char*)AS_BYTES(s)->s,AS_BYTES(s)->len);
     if(!IS_STR(s)) mp_raise_t(E_TypeError,"the JSON object must be str, bytes or bytearray, not %s",mp_type_name(s));
     JIn in={AS_STR(s)->s,0,AS_STR(s)->len};
     Value v=j_value(&in,0);
@@ -795,7 +913,7 @@ static Value js_loads(int argc, Value *argv, TupleObj *kw){
     return v;
 }
 static Value make_json(void){
-    Value m=register_module("json");
+    Value m=register_module("_mpy_json");
     set_fn(m,"dumps",js_dumps); set_fn(m,"loads",js_loads);
     Value err=mp_dict_get_s(mp_builtins,"ValueError",NULL) ? v_obj(E_ValueError) : v_none();
     mp_dict_set_s(mdict(m),"JSONDecodeError",err);
@@ -814,7 +932,7 @@ static void thread_entry(void *p){
     Catch c;
     if(!CATCH_BEGIN(c)){
         Value a=pt->args;
-        if(IS(a,T_tuple)) mp_call(pt->fn,(int)AS_TUPLE(a)->len,AS_TUPLE(a)->items,NULL);
+        if(IS_TUPLE(a)) mp_call(pt->fn,(int)AS_TUPLE(a)->len,AS_TUPLE(a)->items,NULL);
         else mp_call0(pt->fn);
         CATCH_END(c);
     } else {
@@ -828,7 +946,7 @@ static void thread_entry(void *p){
 }
 static Value th_start(int argc, Value *argv, TupleObj *kw){
     no_kw("start",kw); nargs("start",argc,1,2);
-    if(argc==2 && !IS(argv[1],T_tuple)) mp_raise_t(E_TypeError,"thread.start args must be a tuple");
+    if(argc==2 && !IS_TUPLE(argv[1])) mp_raise_t(E_TypeError,"thread.start args must be a tuple");
     int h=-1; for(int i=0;i<MP_MAX_THREADS;i++) if(!pthreads[i] || pthreads[i]->done){ h=i; break; }
     if(h<0) mp_raise_t(E_RuntimeError,"too many threads");
     PyThread *pt=(PyThread*)xmalloc(sizeof(PyThread)); memset(pt,0,sizeof *pt);
@@ -861,10 +979,121 @@ static Value th_acquire(int argc, Value *argv, TupleObj *kw){ no_kw("acquire",kw
 static Value th_release(int argc, Value *argv, TupleObj *kw){ no_kw("release",kw); nargs("release",argc,1,1);
     int64_t i=mp_index(argv[0],"release"); if(i<0||i>=256||!lock_used[i]) mp_raise_t(E_ValueError,"no such lock");
     mpy_lock_release(&user_locks[i]); return v_none(); }
+/* ---------------------------------------------------------------- _thread: locks any thread may release, threads (threading.py's) */
+typedef struct { Obj h; volatile int locked; } LockObj;
+static Type *T_lock;
+static double mono_now(void){
+#if defined(MPY_KOLIBRI)
+    uint32_t in[7]={26,10,0,0,0,0,0}, out[6]={0}; mpy_platform_syscall(in,out); return ((double)out[1]*4294967296.0+(double)out[0])/1e9;
+#else
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return (double)ts.tv_sec+ts.tv_nsec/1e9;
+#endif
+}
+/* takes the lock (a flag the GIL guards): waiting with the GIL released; 0 when timeout runs out */
+static int lock_take(LockObj *l, int blocking, double timeout){
+    if(!l->locked){ l->locked=1; return 1; }
+    if(!blocking) return 0;
+    double deadline= timeout>=0 ? mono_now()+timeout : 0;
+    Thread *self=mp_ts; int spins=0;
+    for(;;){
+        mp_gil_release();
+        if(spins<20){ mpy_thread_yield(); spins++; } else mpy_thread_sleep_ms(1);
+        mp_gil_acquire(self);
+        if(!l->locked){ l->locked=1; return 1; }
+        if(timeout>=0 && mono_now()>=deadline) return 0;
+    }
+}
+static Value lk_acquire(int argc, Value *argv, TupleObj *kw){
+    int np=npos(argc,kw);
+    Value b= np>1 ? argv[1] : kwarg(argc,argv,kw,"blocking",v_bool(1));
+    Value t= np>2 ? argv[2] : kwarg(argc,argv,kw,"timeout",v_int(-1));
+    int blocking=mp_truth(b); double timeout= IS_INTLIKE(t) ? (double)t.u.i : farg(t);
+    if(!blocking && timeout!=-1) mp_raise_t(E_ValueError,"can't specify a timeout for a non-blocking call");
+    if(timeout<0 && timeout!=-1) mp_raise_t(E_ValueError,"timeout value must be a non-negative number");
+    return v_bool(lock_take((LockObj*)argv[0].u.o,blocking,timeout));
+}
+static Value lk_release(int argc, Value *argv, TupleObj *kw){ no_kw("release",kw); nargs("release",argc,1,1);
+    LockObj *l=(LockObj*)argv[0].u.o; if(!l->locked) mp_raise_t(E_RuntimeError,"release unlocked lock"); l->locked=0; return v_none(); }
+static Value lk_locked(int argc, Value *argv, TupleObj *kw){ no_kw("locked",kw); nargs("locked",argc,1,1); return v_bool(((LockObj*)argv[0].u.o)->locked); }
+static Value lk_enter(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; lock_take((LockObj*)argv[0].u.o,1,-1); return v_bool(1); }
+static Value lk_exit(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; ((LockObj*)argv[0].u.o)->locked=0; return v_none(); }
+static Value lk_repr(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; char b[96];
+    snprintf(b,sizeof b,"<%s _thread.lock object at %p>",((LockObj*)argv[0].u.o)->locked?"locked":"unlocked",(void*)argv[0].u.o); return mp_str(b); }
+/* _thread.RLock: the holder may take it again (count), only it may release it */
+typedef struct { Obj h; volatile int locked; int64_t owner, count; } RLockObj;
+static Type *T_rlock;
+static Value rl_acquire(int argc, Value *argv, TupleObj *kw){
+    RLockObj *l=(RLockObj*)argv[0].u.o; int64_t me=mp_ts->id;
+    if(l->count && l->owner==me){ l->count++; return v_bool(1); }
+    Value r=lk_acquire(argc,argv,kw);
+    if(mp_truth(r)){ l->owner=me; l->count=1; }
+    return r; }
+static Value rl_release(int argc, Value *argv, TupleObj *kw){ no_kw("release",kw); nargs("release",argc,1,1);
+    RLockObj *l=(RLockObj*)argv[0].u.o;
+    if(!l->count || l->owner!=mp_ts->id) mp_raise_t(E_RuntimeError,"cannot release un-acquired lock");
+    if(--l->count==0){ l->owner=-1; l->locked=0; }
+    return v_none(); }
+static Value rl_enter(int argc, Value *argv, TupleObj *kw){ (void)kw; Value a[1]={argv[0]}; (void)argc; return rl_acquire(1,a,NULL); }
+static Value rl_exit(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; Value a[1]={argv[0]}; return rl_release(1,a,NULL); }
+static Value rl_is_owned(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; RLockObj *l=(RLockObj*)argv[0].u.o; return v_bool(l->count && l->owner==mp_ts->id); }
+static Value rl_count(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; RLockObj *l=(RLockObj*)argv[0].u.o; return v_int(l->owner==mp_ts->id ? l->count : 0); }
+static Value rl_release_save(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; RLockObj *l=(RLockObj*)argv[0].u.o;
+    if(!l->count) mp_raise_t(E_RuntimeError,"cannot release un-acquired lock");
+    Value st[2]={v_int(l->count),v_int(l->owner)}; l->count=0; l->owner=-1; l->locked=0; return mp_tuple(2,st); }
+static Value rl_acquire_restore(int argc, Value *argv, TupleObj *kw){ (void)kw; nargs("_acquire_restore",argc,1,1); RLockObj *l=(RLockObj*)argv[0].u.o;
+    Value a[1]={argv[0]}; lk_acquire(1,a,NULL);
+    if(IS_TUPLE(argv[1]) && AS_TUPLE(argv[1])->len==2){ l->count=AS_TUPLE(argv[1])->items[0].u.i; l->owner=AS_TUPLE(argv[1])->items[1].u.i; }
+    return v_none(); }
+static Value rl_repr(int argc, Value *argv, TupleObj *kw){ (void)kw; (void)argc; RLockObj *l=(RLockObj*)argv[0].u.o; char b[160];
+    snprintf(b,sizeof b,"<%s _thread.RLock object owner=%lld count=%lld at %p>",l->locked?"locked":"unlocked",(long long)(l->count?l->owner:0),(long long)l->count,(void*)l); return mp_str(b); }
+static Value make_rlock(Type *t, int argc, Value *argv, TupleObj *kw){ (void)t; (void)argc; (void)argv; (void)kw;
+    RLockObj *l=(RLockObj*)mp_alloc(T_rlock,sizeof(RLockObj)); l->locked=0; l->owner=-1; l->count=0; return v_obj(l); }
+static Value tl_allocate(int argc, Value *argv, TupleObj *kw){ (void)argv; no_kw("allocate_lock",kw); nargs("allocate_lock",argc,0,0);
+    LockObj *l=(LockObj*)mp_alloc(T_lock,sizeof(LockObj)); l->locked=0; return v_obj(l); }
+static Value make_lock_type(Type *t, int argc, Value *argv, TupleObj *kw){ (void)t; return tl_allocate(argc,argv,kw); }
+static Value tl_start(int argc, Value *argv, TupleObj *kw){
+    no_kw("start_new_thread",kw); nargs("start_new_thread",argc,2,3);
+    if(!IS_TUPLE(argv[1])) mp_raise_t(E_TypeError,"2nd arg must be a tuple");
+    Value fn=argv[0], args=argv[1];
+    if(argc==3 && !IS_NONE(argv[2])){
+        if(!IS_DICT(argv[2])) mp_raise_t(E_TypeError,"optional 3rd arg must be a dictionary");
+        if(AS_DICT(argv[2])->used){                                   /* (keywords: functools.partial does the call) */
+            Value ft=mp_str("functools"); Value fm=mp_builtin_import(1,&ft,NULL);
+            Value pa[1]={fn}; Value names=mp_tuple(AS_DICT(argv[2])->used,NULL); Value *vals=(Value*)xmalloc(sizeof(Value)*(size_t)(AS_DICT(argv[2])->used+1));
+            int64_t pos=0, i=0; Value k, v; vals[0]=fn;
+            while(mp_dict_next(AS_DICT(argv[2]),&pos,&k,&v)){ AS_TUPLE(names)->items[i]=k; vals[1+i]=v; i++; }
+            (void)pa; fn=mp_call(mp_getattr_s(fm,"partial"),(int)(1+i),vals,AS_TUPLE(names)); free(vals); } }
+    Value a[2]={fn,args};
+    Value h=th_start(2,a,NULL);
+    return v_int(h.u.i+1);                                           /* (the thread's id) */
+}
+static Value tl_get_ident(int argc, Value *argv, TupleObj *kw){ (void)argv; (void)argc; (void)kw; return v_int(mp_ts->id); }
+static Value tl_count(int argc, Value *argv, TupleObj *kw){ (void)argv; (void)argc; (void)kw;
+    int n=0; for(int i=0;i<MP_MAX_THREADS;i++) if(pthreads[i] && !pthreads[i]->done) n++; return v_int(n); }
+static Value tl_stack_size(int argc, Value *argv, TupleObj *kw){ (void)argv; (void)argc; (void)kw; return v_int(0); }
+static Value make__thread(void){
+    Value m=register_module("_thread");
+    if(!T_lock){ T_lock=AS_TYPE(mp_new_type("lock",T_object,LY_OBJECT,0)); T_lock->make=make_lock_type;
+        mp_type_add(T_lock,"acquire",lk_acquire); mp_type_add(T_lock,"release",lk_release); mp_type_add(T_lock,"locked",lk_locked);
+        mp_type_add(T_lock,"__enter__",lk_enter); mp_type_add(T_lock,"__exit__",lk_exit); mp_type_add(T_lock,"__repr__",lk_repr);
+        mp_type_add(T_lock,"acquire_lock",lk_acquire); mp_type_add(T_lock,"release_lock",lk_release); mp_type_add(T_lock,"locked_lock",lk_locked); }
+    set_fn(m,"allocate_lock",tl_allocate); set_fn(m,"allocate",tl_allocate); set_fn(m,"start_new_thread",tl_start); set_fn(m,"start_new",tl_start);
+    set_fn(m,"get_ident",tl_get_ident); set_fn(m,"get_native_id",tl_get_ident); set_fn(m,"_count",tl_count); set_fn(m,"stack_size",tl_stack_size);
+    if(!T_rlock){ T_rlock=AS_TYPE(mp_new_type("RLock",T_object,LY_OBJECT,0)); T_rlock->make=make_rlock;
+        mp_type_add(T_rlock,"acquire",rl_acquire); mp_type_add(T_rlock,"release",rl_release); mp_type_add(T_rlock,"__enter__",rl_enter);
+        mp_type_add(T_rlock,"__exit__",rl_exit); mp_type_add(T_rlock,"_is_owned",rl_is_owned); mp_type_add(T_rlock,"_recursion_count",rl_count);
+        mp_type_add(T_rlock,"_release_save",rl_release_save); mp_type_add(T_rlock,"_acquire_restore",rl_acquire_restore);
+        mp_type_add(T_rlock,"locked",lk_locked); mp_type_add(T_rlock,"__repr__",rl_repr); }
+    mp_dict_set_s(mdict(m),"RLock",v_obj(T_rlock));
+    mp_dict_set_s(mdict(m),"LockType",v_obj(T_lock));
+    mp_dict_set_s(mdict(m),"error",v_obj(E_RuntimeError));
+    mp_dict_set_s(mdict(m),"TIMEOUT_MAX",v_float(4294967.0));
+    return m;
+}
 static Value make_thread(void){
     Value m=register_module("thread");
     set_fn(m,"start",th_start); set_fn(m,"join",th_join); set_fn(m,"sleep",ti_sleep); set_fn(m,"lock",th_lock);
-    set_fn(m,"acquire",th_acquire); set_fn(m,"release",th_release);
+    set_fn(m,"acquire",th_acquire); set_fn(m,"release",th_release); set_fn(m,"current",tl_get_ident);
     return m;
 }
 
@@ -918,8 +1147,9 @@ static Value ct_call(int argc, Value *argv, TupleObj *kw){
         if(IS_INTLIKE(v)) a[i]=(intptr_t)v.u.i;
         else if(IS_NONE(v)) a[i]=0;
         else if(IS_STR(v)) a[i]=(intptr_t)AS_STR(v)->s;
-        else if(IS(v,T_bytes)) a[i]=(intptr_t)AS_BYTES(v)->s;
+        else if(IS_BYTES(v)) a[i]=(intptr_t)AS_BYTES(v)->s;
         else if(IS(v,T_buffer)) a[i]=(intptr_t)((BufferObj*)v.u.o)->data;
+        else if(IS_BA(v)) a[i]=(intptr_t)((ByteArrayObj*)v.u.o)->data;
         else mp_raise_t(E_TypeError,"a C function takes int, str, bytes, buffers or None");
     }
     if(fixed>=0 && fixed<n && (fixed<1 || fixed>4)) mp_raise_t(E_TypeError,"a variadic C function takes 1 to 4 fixed arguments in the interpreter");
@@ -1115,7 +1345,7 @@ static const char SRC_ASYNCIO[]=
 "    def get_nowait(self):\n        return self._items.pop(0)\n";
 
 static const char SRC_MINIPY[]=
-"import json as _json\n"
+"import _mpy_json as _json\n"
 "import asyncio as _asyncio\n"
 "Endpoint = 'minipy.Endpoint'\n"
 "_YES = ('1', 'true', 't', 'yes', 'y', 'on')\n"
@@ -1155,271 +1385,6 @@ static const char SRC_MINIPY[]=
 "    adapter.__name__ = fn.__name__\n"
 "    return adapter\n";
 
-static const char SRC_FUNCTOOLS[]=
-"WRAPPER_ASSIGNMENTS = ('__module__', '__name__', '__qualname__', '__doc__')\n"
-"def reduce(function, iterable, *initial):\n"
-"    it = iter(iterable)\n"
-"    if initial:\n        acc = initial[0]\n"
-"    else:\n"
-"        try:\n            acc = next(it)\n"
-"        except StopIteration:\n            raise TypeError('reduce() of empty iterable with no initial value') from None\n"
-"    for x in it:\n        acc = function(acc, x)\n"
-"    return acc\n"
-"def update_wrapper(wrapper, wrapped, assigned=WRAPPER_ASSIGNMENTS, updated=('__dict__',)):\n"
-"    for a in assigned:\n"
-"        try:\n            v = getattr(wrapped, a)\n"
-"        except AttributeError:\n            continue\n"
-"        try:\n            setattr(wrapper, a, v)\n"
-"        except (AttributeError, TypeError):\n            pass\n"
-"    wrapper.__wrapped__ = wrapped\n"
-"    return wrapper\n"
-"def wraps(wrapped, assigned=WRAPPER_ASSIGNMENTS, updated=('__dict__',)):\n"
-"    def deco(wrapper):\n        return update_wrapper(wrapper, wrapped, assigned, updated)\n"
-"    return deco\n"
-"class partial:\n"
-"    def __init__(self, func, *args, **keywords):\n"
-"        self.func = func\n        self.args = args\n        self.keywords = keywords\n"
-"    def __call__(self, *args, **keywords):\n"
-"        kw = dict(self.keywords)\n        kw.update(keywords)\n"
-"        return self.func(*self.args, *args, **kw)\n"
-"def lru_cache(maxsize=128, typed=False):\n"
-"    def deco(fn):\n"
-"        cache = {}\n"
-"        def wrapper(*args, **kw):\n"
-"            key = args + tuple(sorted(kw.items())) if kw else args\n"
-"            if key in cache:\n"
-"                r = cache.pop(key)\n                cache[key] = r\n                return r\n"
-"            r = fn(*args, **kw)\n"
-"            if maxsize is None or maxsize > 0:\n"
-"                cache[key] = r\n"
-"                if maxsize is not None and len(cache) > maxsize:\n"
-"                    del cache[next(iter(cache))]\n"
-"            return r\n"
-"        wrapper.cache_clear = cache.clear\n"
-"        return update_wrapper(wrapper, fn)\n"
-"    if callable(maxsize) and not isinstance(maxsize, int):\n        return deco(maxsize)\n"
-"    return deco\n"
-"def cache(fn):\n    return lru_cache(None)(fn)\n"
-"def cmp_to_key(mycmp):\n"
-"    class K:\n"
-"        __slots__ = ['obj']\n"
-"        def __init__(self, obj):\n            self.obj = obj\n"
-"        def __lt__(self, other):\n            return mycmp(self.obj, other.obj) < 0\n"
-"        def __gt__(self, other):\n            return mycmp(self.obj, other.obj) > 0\n"
-"        def __eq__(self, other):\n            return mycmp(self.obj, other.obj) == 0\n"
-"        def __le__(self, other):\n            return mycmp(self.obj, other.obj) <= 0\n"
-"        def __ge__(self, other):\n            return mycmp(self.obj, other.obj) >= 0\n"
-"    return K\n"
-"def total_ordering(cls):\n"
-"    d = cls.__dict__\n"
-"    if '__lt__' in d:\n"
-"        if '__gt__' not in d:\n            cls.__gt__ = lambda a, b: b < a\n"
-"        if '__le__' not in d:\n            cls.__le__ = lambda a, b: not b < a\n"
-"        if '__ge__' not in d:\n            cls.__ge__ = lambda a, b: not a < b\n"
-"    elif '__gt__' in d:\n"
-"        if '__lt__' not in d:\n            cls.__lt__ = lambda a, b: b > a\n"
-"        if '__ge__' not in d:\n            cls.__ge__ = lambda a, b: not b > a\n"
-"        if '__le__' not in d:\n            cls.__le__ = lambda a, b: not a > b\n"
-"    return cls\n"
-"class cached_property:\n"
-"    def __init__(self, func):\n        self.func = func\n        self.attrname = func.__name__\n"
-"    def __set_name__(self, owner, name):\n        self.attrname = name\n"
-"    def __get__(self, instance, owner=None):\n"
-"        if instance is None:\n            return self\n"
-"        v = self.func(instance)\n"
-"        instance.__dict__[self.attrname] = v\n"
-"        return v\n";
-
-static const char SRC_TYPING[]=
-"class _Special:\n"
-"    def __init__(self, name):\n"
-"        self._name = name\n"
-"    def __getitem__(self, params):\n"
-"        if self._name == 'Optional':\n"
-"            return _union(params, None)\n"
-"        return _SpecialAlias(self, params)\n"
-"    def __call__(self, *a, **k):\n"
-"        raise TypeError('Cannot instantiate typing.' + self._name)\n"
-"    def __repr__(self):\n"
-"        return 'typing.' + self._name\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"class ForwardRef:\n"
-"    def __init__(self, arg):\n"
-"        self.__forward_arg__ = arg\n"
-"    def __repr__(self):\n"
-"        return 'ForwardRef(' + repr(self.__forward_arg__) + ')'\n"
-"    def __eq__(self, other):\n"
-"        return isinstance(other, ForwardRef) and other.__forward_arg__ == self.__forward_arg__\n"
-"    def __hash__(self):\n"
-"        return hash(self.__forward_arg__)\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"def _ref(a):\n"
-"    if isinstance(a, str):\n"
-"        return ForwardRef(a)\n"
-"    if a is None:\n"
-"        return type(None)\n"
-"    return a\n"
-"class Union:\n"
-"    def __init__(self, args):\n"
-"        self.__args__ = args\n"
-"    def __class_getitem__(cls, params):\n"
-"        if isinstance(params, tuple):\n"
-"            return _union(*params)\n"
-"        return _union(params)\n"
-"    def __repr__(self):\n"
-"        return ' | '.join([_type_repr(a) for a in self.__args__])\n"
-"    def __eq__(self, other):\n"
-"        return isinstance(other, Union) and set(self.__args__) == set(other.__args__)\n"
-"    def __hash__(self):\n"
-"        return hash(frozenset(self.__args__))\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"    def __instancecheck__(self, obj):\n"
-"        return isinstance(obj, self.__args__)\n"
-"    def __subclasscheck__(self, cls):\n"
-"        return issubclass(cls, self.__args__)\n"
-"def _union(*params):\n"
-"    args = []\n"
-"    for p in params:\n"
-"        p = _ref(p)\n"
-"        for a in (p.__args__ if isinstance(p, Union) else (p,)):\n"
-"            if a not in args:\n"
-"                args.append(a)\n"
-"    if len(args) == 1:\n"
-"        return args[0]\n"
-"    return Union(tuple(args))\n"
-"def _union2(a, b):\n"
-"    return _union(a, b)\n"
-"class _SpecialAlias:\n"
-"    def __init__(self, origin, params):\n"
-"        self.__origin__ = origin\n"
-"        ps = params if isinstance(params, tuple) else (params,)\n"
-"        self.__args__ = ps if origin._name in ('Literal', 'Annotated') else tuple([_ref(p) if not isinstance(p, list) else [_ref(x) for x in p] for p in ps])\n"
-"    def __repr__(self):\n"
-"        return repr(self.__origin__) + '[' + ', '.join([_type_repr(a) for a in self.__args__]) + ']'\n"
-"    def __getitem__(self, params):\n"
-"        return self\n"
-"    def __call__(self, *a, **k):\n"
-"        raise TypeError('Cannot instantiate ' + repr(self))\n"
-"    def __eq__(self, other):\n"
-"        return isinstance(other, _SpecialAlias) and self.__origin__ is other.__origin__ and self.__args__ == other.__args__\n"
-"    def __hash__(self):\n"
-"        return hash((self.__origin__._name, self.__args__))\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"for _n in ('Any', 'Optional', 'List', 'Dict', 'Set', 'FrozenSet', 'Tuple', 'Callable', 'Iterable', 'Iterator',\n"
-"           'Generator', 'Sequence', 'MutableSequence', 'Mapping', 'MutableMapping', 'AbstractSet', 'MutableSet', 'Type',\n"
-"           'ClassVar', 'Final', 'Literal', 'Awaitable', 'Coroutine', 'AsyncIterator', 'AsyncIterable', 'AsyncGenerator',\n"
-"           'NoReturn', 'Never', 'Self', 'Annotated', 'TypeAlias', 'Deque', 'DefaultDict', 'Counter', 'OrderedDict',\n"
-"           'Collection', 'Container', 'Hashable', 'Sized', 'Reversible', 'SupportsInt', 'SupportsFloat', 'IO', 'TextIO',\n"
-"           'BinaryIO', 'Pattern', 'Match', 'Required', 'NotRequired', 'LiteralString', 'TypeGuard', 'Unpack', 'Concatenate'):\n"
-"    globals()[_n] = _Special(_n)\n"
-"TYPE_CHECKING = False\n"
-"def cast(typ, val):\n"
-"    return val\n"
-"def overload(f):\n"
-"    return f\n"
-"def final(f):\n"
-"    return f\n"
-"def override(f):\n"
-"    return f\n"
-"def no_type_check(f):\n"
-"    return f\n"
-"def runtime_checkable(c):\n"
-"    return c\n"
-"def get_type_hints(obj, globalns=None, localns=None):\n"
-"    return dict(getattr(obj, '__annotations__', {}))\n"
-"def get_origin(tp):\n"
-"    if isinstance(tp, (GenericAlias, _SpecialAlias)):\n"
-"        return tp.__origin__\n"
-"    if isinstance(tp, Union):\n"
-"        return Union\n"
-"    return None\n"
-"def get_args(tp):\n"
-"    if isinstance(tp, (GenericAlias, _SpecialAlias, Union)):\n"
-"        return tp.__args__\n"
-"    return ()\n"
-"class TypeVar(_Special):\n"
-"    def __init__(self, name, *constraints, bound=None, covariant=False, contravariant=False, infer_variance=False, default=None):\n"
-"        _Special.__init__(self, name)\n"
-"        self.__name__ = name\n"
-"        self._prefix = '' if infer_variance else '+' if covariant else '-' if contravariant else '~'\n"
-"    def __repr__(self):\n"
-"        return self._prefix + self._name\n"
-"class ParamSpec(TypeVar):\n"
-"    pass\n"
-"class TypeVarTuple(TypeVar):\n"
-"    pass\n"
-"def NewType(name, tp):\n"
-"    def new_type(x):\n"
-"        return x\n"
-"    new_type.__name__ = name\n"
-"    return new_type\n"
-"def _type_repr(t):\n"
-"    if isinstance(t, list):\n"
-"        return '[' + ', '.join([_type_repr(a) for a in t]) + ']'\n"
-"    if t is type(None) or t is None:\n"
-"        return 'None'\n"
-"    if isinstance(t, type):\n"
-"        if t.__module__ == 'builtins':\n"
-"            return t.__qualname__\n"
-"        return t.__module__ + '.' + t.__qualname__\n"
-"    if t is ...:\n"
-"        return '...'\n"
-"    return repr(t)\n"
-"class GenericAlias:\n"
-"    def __init__(self, origin, args):\n"
-"        self.__origin__ = origin\n"
-"        self.__args__ = args if isinstance(args, tuple) else (args,)\n"
-"    def __repr__(self):\n"
-"        return _type_repr(self.__origin__) + '[' + ', '.join([_type_repr(a) for a in self.__args__]) + ']'\n"
-"    def __call__(self, *a, **k):\n"
-"        return self.__origin__(*a, **k)\n"
-"    def __getattr__(self, name):\n"
-"        return getattr(self.__origin__, name)\n"
-"    def __eq__(self, other):\n"
-"        return isinstance(other, GenericAlias) and self.__origin__ is other.__origin__ and self.__args__ == other.__args__\n"
-"    def __hash__(self):\n"
-"        return hash((self.__origin__, self.__args__))\n"
-"    def __getitem__(self, params):\n"
-"        return self\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"class TypeAliasType:\n"
-"    def __init__(self, name, value, type_params=()):\n"
-"        self.__name__ = name\n"
-"        self.__qualname__ = name\n"
-"        self._value = value\n"
-"        self.__type_params__ = tuple(TypeVar(p, infer_variance=True) for p in type_params)\n"
-"    @property\n"
-"    def __value__(self):\n"
-"        return self._value(*self.__type_params__)\n"
-"    def __getitem__(self, params):\n"
-"        return self\n"
-"    def __repr__(self):\n"
-"        return self.__name__\n"
-"    def __or__(self, other):\n"
-"        return _union(self, other)\n"
-"    def __ror__(self, other):\n"
-"        return _union(other, self)\n"
-"class Generic:\n"
-"    def __class_getitem__(cls, item):\n"
-"        return cls\n"
-"class Protocol(Generic):\n"
-"    pass\n"
-"AnyStr = TypeVar('AnyStr')\n";
 
 static const char SRC_DATACLASSES[]=
 "class _MissingType:\n"
@@ -1839,19 +1804,6 @@ static const char SRC_EXCGROUP[]=
 "    return result\n";
 
 /* string and string.templatelib (t-strings) */
-static const char SRC_STRING[]=
-"__path__ = []\n"
-"whitespace = ' \\t\\n\\r\\x0b\\x0c'\n"
-"ascii_lowercase = 'abcdefghijklmnopqrstuvwxyz'\n"
-"ascii_uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'\n"
-"ascii_letters = ascii_lowercase + ascii_uppercase\n"
-"digits = '0123456789'\n"
-"hexdigits = digits + 'abcdef' + 'ABCDEF'\n"
-"octdigits = '01234567'\n"
-"punctuation = r\"\"\"!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\"\"\"\n"
-"printable = digits + ascii_letters + punctuation + whitespace\n"
-"def capwords(s, sep=None):\n"
-"    return (sep or ' ').join([w.capitalize() for w in s.split(sep)])\n";
 static const char SRC_TEMPLATELIB[]=
 "class Interpolation:\n"
 "    __match_args__ = ('value', 'expression', 'conversion', 'format_spec')\n"
@@ -1976,66 +1928,16 @@ static const char SRC_CMATH[]=
 "def isnan(z):\n"
 "    return math.isnan(z.real) or math.isnan(z.imag)\n";
 
-static const char SRC_ABC[]=
-"ABCMeta = type\n"
-"def _abstract_names(cls):\n"
-"    names = []\n"
-"    for base in cls.__mro__:\n"
-"        for name in base.__dict__:\n"
-"            if name not in names and getattr(getattr(cls, name, None), '__isabstractmethod__', False):\n"
-"                names.append(name)\n"
-"    return sorted(names)\n"
-"class ABC:\n"
-"    def __new__(cls, *args, **kwargs):\n"
-"        missing = _abstract_names(cls)\n"
-"        if missing:\n"
-"            raise TypeError(\"Can't instantiate abstract class \" + cls.__name__ + \" without an implementation for abstract method\" + (\"s \" if len(missing) > 1 else \" \") + \", \".join([\"'\" + n + \"'\" for n in missing]))\n"
-"        return object.__new__(cls)\n"
-"def abstractmethod(f):\n"
-"    try:\n        f.__isabstractmethod__ = True\n"
-"    except (AttributeError, TypeError):\n        pass\n"
-"    return f\n"
-"def abstractproperty(f):\n    return property(f)\n";
-
-static const char SRC_COLLECTIONS_ABC[]=
-"class _ABC:\n"
-"    def __class_getitem__(cls, item):\n        return cls\n"
-"class Iterable(_ABC):\n    pass\n"
-"class Iterator(Iterable):\n    pass\n"
-"class Generator(Iterator):\n    pass\n"
-"class Sized(_ABC):\n    pass\n"
-"class Container(_ABC):\n    pass\n"
-"class Collection(Sized, Iterable, Container):\n    pass\n"
-"class Sequence(Collection):\n    pass\n"
-"class MutableSequence(Sequence):\n    pass\n"
-"class Mapping(Collection):\n    pass\n"
-"class MutableMapping(Mapping):\n    pass\n"
-"class Set(Collection):\n    pass\n"
-"class MutableSet(Set):\n    pass\n"
-"class Callable(_ABC):\n    pass\n"
-"class Hashable(_ABC):\n    pass\n"
-"class Awaitable(_ABC):\n    pass\n"
-"class Coroutine(Awaitable):\n    pass\n"
-"class AsyncIterable(_ABC):\n    pass\n"
-"class AsyncIterator(AsyncIterable):\n    pass\n"
-"class AsyncGenerator(AsyncIterator):\n    pass\n"
-"class Reversible(Iterable):\n    pass\n";
-
 static const char SRC_FUTURE[]=
 "class _Feature:\n    pass\nannotations = _Feature()\ngenerator_stop = None\ndivision = None\nprint_function = None\nabsolute_import = None\nunicode_literals = None\n";
 
 static const char *py_source(const char *name){
     if(!strcmp(name,"asyncio")) return SRC_ASYNCIO;
     if(!strcmp(name,"minipy")) return SRC_MINIPY;
-    if(!strcmp(name,"functools")) return SRC_FUNCTOOLS;
-    if(!strcmp(name,"typing")) return SRC_TYPING;
     if(!strcmp(name,"dataclasses")) return SRC_DATACLASSES;
     if(!strcmp(name,"_excgroup")) return SRC_EXCGROUP;
-    if(!strcmp(name,"string")) return SRC_STRING;
     if(!strcmp(name,"cmath")) return SRC_CMATH;
     if(!strcmp(name,"string.templatelib")) return SRC_TEMPLATELIB;
-    if(!strcmp(name,"abc")) return SRC_ABC;
-    if(!strcmp(name,"collections.abc")) return SRC_COLLECTIONS_ABC;
     if(!strcmp(name,"__future__")) return SRC_FUTURE;
     return NULL;
 }
@@ -2057,15 +1959,41 @@ Value mp_excgroup(const char *fn){
     Value f; if(!fn || !mp_dict_get_s(mdict(excgroup_mod),fn,&f)) return v_none();
     return f;
 }
+/* gc: the interpreter's collector (cycles; reference counting is not used) */
+extern int mp_gc_enabled;
+int64_t mp_gc_objects(void);
+static Value gc_enable(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("enable",kw); mp_gc_enabled=1; return v_none(); }
+static Value gc_disable(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("disable",kw); mp_gc_enabled=0; return v_none(); }
+static Value gc_isenabled(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; no_kw("isenabled",kw); return v_bool(mp_gc_enabled); }
+static Value gc_collect(int argc, Value *argv, TupleObj *kw){ (void)argv; (void)kw; nargs("collect",argc,0,1);
+    int64_t before=mp_gc_objects(); mp_gc_collect(); int64_t after=mp_gc_objects(); return v_int(before>after?before-after:0); }
+static Value gc_get_count(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; Value t[3]={v_int(mp_gc_objects()%700),v_int(0),v_int(0)}; return mp_tuple(3,t); }
+static Value gc_get_threshold(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; Value t[3]={v_int(2000),v_int(10),v_int(0)}; return mp_tuple(3,t); }
+static Value gc_none(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_none(); }
+static Value gc_zero(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_int(0); }
+static Value gc_true(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_bool(1); }
+static Value gc_false(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_bool(0); }
+static Value gc_list(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return mp_list(0,NULL); }
+static Value make_gc(void){
+    Value m=register_module("gc");
+    set_fn(m,"enable",gc_enable); set_fn(m,"disable",gc_disable); set_fn(m,"isenabled",gc_isenabled); set_fn(m,"collect",gc_collect);
+    set_fn(m,"get_count",gc_get_count); set_fn(m,"get_threshold",gc_get_threshold); set_fn(m,"set_threshold",gc_none);
+    set_fn(m,"get_debug",gc_zero); set_fn(m,"set_debug",gc_none); set_fn(m,"freeze",gc_none); set_fn(m,"unfreeze",gc_none);
+    set_fn(m,"get_freeze_count",gc_zero); set_fn(m,"is_tracked",gc_true); set_fn(m,"is_finalized",gc_false);
+    set_fn(m,"get_objects",gc_list); set_fn(m,"get_referrers",gc_list); set_fn(m,"get_referents",gc_list);
+    mp_dict_set_s(mdict(m),"garbage",mp_list(0,NULL)); mp_dict_set_s(mdict(m),"callbacks",mp_list(0,NULL));
+    static const char *const dn[]={"DEBUG_STATS","DEBUG_COLLECTABLE","DEBUG_UNCOLLECTABLE","DEBUG_SAVEALL","DEBUG_LEAK"}; static const int dv[]={1,2,4,32,38};
+    for(int i=0;i<5;i++) mp_dict_set_s(mdict(m),dn[i],v_int(dv[i]));
+    return m;
+}
 static Value native_module(const char *name){
     if(!strcmp(name,"sys")) return make_sys();
     if(!strcmp(name,"math")) return make_math();
-    if(!strcmp(name,"time")) return make_time();
-    if(!strcmp(name,"random")) return make_random();
-    if(!strcmp(name,"json")) return make_json();
+    if(!strcmp(name,"_mpy_json")) return make_json();
     if(!strcmp(name,"thread")) return make_thread();
+    if(!strcmp(name,"_thread")) return make__thread();
+    if(!strcmp(name,"gc")) return make_gc();
     if(!strcmp(name,"_ctypes")) return make_ctypes_native();
-    if(!strcmp(name,"collections")){ Value m=register_module("collections"); mp_dict_set_s(mdict(m),"__path__",mp_list(0,NULL)); return m; }
     if(!strcmp(name,"builtins")){ Value m=register_module("builtins"); ((ModuleObj*)m.u.o)->dict=mp_builtins; return m; }
     return v_undef();
 }

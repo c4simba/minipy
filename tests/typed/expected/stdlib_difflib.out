@@ -1,0 +1,58 @@
+0.8888888888888888 0.8888888888888888 0.8888888888888888 [Match(a=0, b=0, size=2), Match(a=3, b=2, size=2), Match(a=5, b=4, size=0)]
+[('equal', 0, 2, 0, 2), ('delete', 2, 3, 2, 2), ('equal', 3, 5, 2, 4)]
+Match(a=0, b=0, size=2)
+--- a.txt
++++ b.txt
+@@ -1,5 +1,6 @@
++zero
+ one
+-two
+-three
++tree
+ four
+ five
++six
+
+*** a.txt
+--- b.txt
+***************
+*** 1,5 ****
+  one
+! two
+! three
+  four
+  five
+--- 1,6 ----
++ zero
+  one
+! tree
+  four
+  five
++ six
+
++ zero
+  one
+- two
+- three
+?  -
++ tree
+  four
+  five
++ six
+
+['apple', 'ape']
+['wheels', 'while']
+- abcDefghiJkl
+?    ^  ^  ^
++ abcdefGhijkl
+?    ^  ^  ^
+
+zero
+one
+tree
+four
+five
+six
+
+0.866 [[('equal', 7, 8, 7, 8), ('insert', 8, 8, 8, 17), ('equal', 8, 9, 17, 18)]]
+True True False

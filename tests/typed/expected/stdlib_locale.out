@@ -1,0 +1,6 @@
+UTF-8 C C UTF-8
+. '' 127
+3.5 42 1.25 0.333333333333 5 items 0.67
+-1 1 0 abc C
+Error: unsupported locale setting
+ValueError: Currency formatting is not possible using the 'C' locale.

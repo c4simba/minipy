@@ -228,62 +228,28 @@ static void *x2c_resolve(X2cImport *im){
 /* ---- Linux system calls (i386 numbers and structures) */
 typedef struct { u32 eax, ebx, ecx, edx, esi, edi, ebp; } X2cRegs;
 static u32 x2c_err(void){ return (u32)-errno; }
-static int x2c_open_flags(u32 f){
-    int r=(int)(f&3);
-    if(f&0x40) r|=O_CREAT;
-    if(f&0x80) r|=O_EXCL;
-    if(f&0x100) r|=O_NOCTTY;
-    if(f&0x200) r|=O_TRUNC;
-    if(f&0x400) r|=O_APPEND;
-    if(f&0x800) r|=O_NONBLOCK;
-    if(f&0x10000) r|=O_DIRECTORY;
-    if(f&0x80000) r|=O_CLOEXEC;
-    return r;
-}
+#define LX_WORD u32
+#define LX_PTR(a) x2c_ptr((u32)(a))
+#define LX_BLOCKING_BEGIN ((void)0)
+#define LX_BLOCKING_END ((void)0)
+#define LX_FLUSH() ((void)0)
+#include "lx_emul.c"
 static u32 x2c_syscall(u8 *m, X2cRegs *r){
     switch(r->eax){
-        case 1: case 252: exit((int)r->ebx);
-        case 3:{ ssize_t n=read((int)r->ebx,x2c_ptr(r->ecx),r->edx); return n<0?x2c_err():(u32)n; }
-        case 4:{ ssize_t n=write((int)r->ebx,x2c_ptr(r->ecx),r->edx); return n<0?x2c_err():(u32)n; }
-        case 5:{ int fd=open((const char*)x2c_ptr(r->ebx),x2c_open_flags(r->ecx),(int)r->edx); return fd<0?x2c_err():(u32)fd; }
-        case 6: return close((int)r->ebx)?x2c_err():0;
-        case 10: return unlink((const char*)x2c_ptr(r->ebx))?x2c_err():0;
-        case 12: return chdir((const char*)x2c_ptr(r->ebx))?x2c_err():0;
-        case 13:{ u32 t=(u32)time(NULL); if(r->ebx) D(r->ebx)=t; return t; }
-        case 19:{ off_t o=lseek((int)r->ebx,(off_t)(i32)r->ecx,(int)r->edx); return o<0?x2c_err():(u32)o; }
-        case 20: return (u32)getpid();
-        case 33: return access((const char*)x2c_ptr(r->ebx),(int)r->ecx)?x2c_err():0;
-        case 37: return 0;                              /* kill */
-        case 38: return rename((const char*)x2c_ptr(r->ebx),(const char*)x2c_ptr(r->ecx))?x2c_err():0;
-        case 39: return mkdir((const char*)x2c_ptr(r->ebx),(mode_t)r->ecx)?x2c_err():0;
-        case 40: return rmdir((const char*)x2c_ptr(r->ebx))?x2c_err():0;
-        case 41:{ int fd=dup((int)r->ebx); return fd<0?x2c_err():(u32)fd; }
         case 45:{                                       /* brk */
             u32 want=r->ebx;
             if(want>=x2c_brk_start && want<X2C_MMAP_BASE){ if(want<x2c_brk) memset(M+want,0,x2c_brk-want); x2c_brk=want; }
             return x2c_brk; }
-        case 54: return (u32)-25;                       /* ioctl: ENOTTY */
-        case 63:{ int fd=dup2((int)r->ebx,(int)r->ecx); return fd<0?x2c_err():(u32)fd; }
-        case 78:{ struct timeval tv; gettimeofday(&tv,NULL);
-            if(r->ebx){ D(r->ebx)=(u32)tv.tv_sec; D(r->ebx+4)=(u32)tv.tv_usec; }
-            if(r->ecx){ D(r->ecx)=0; D(r->ecx+4)=0; }
-            return 0; }
         case 91: return x2c_munmap(r->ebx,r->ecx);
-        case 125: return 0;                             /* mprotect */
-        case 162:{ struct timespec ts, rem; ts.tv_sec=(time_t)(i32)D(r->ebx); ts.tv_nsec=(long)(i32)D(r->ebx+4);
-            if(nanosleep(&ts,&rem)){ if(r->ecx){ D(r->ecx)=(u32)rem.tv_sec; D(r->ecx+4)=(u32)rem.tv_nsec; } return x2c_err(); }
-            return 0; }
-        case 174: case 175: return 0;                   /* rt_sigaction, rt_sigprocmask */
-        case 183:{ if(!getcwd((char*)x2c_ptr(r->ebx),r->ecx)) return x2c_err(); return (u32)strlen((char*)x2c_ptr(r->ebx))+1; }
         case 192:                                       /* mmap2: anonymous memory only */
             if(!(r->esi&0x20)) return (u32)-19;         /* ENODEV */
             return x2c_mmap(r->ecx);
-        case 265:{ struct timespec ts; clock_gettime(r->ebx==1?CLOCK_MONOTONIC:CLOCK_REALTIME,&ts);
-            D(r->ecx)=(u32)ts.tv_sec; D(r->ecx+4)=(u32)ts.tv_nsec; return 0; }
-        default:
-            fprintf(stderr,"minipy (native code): Linux system call %u is not supported\n",r->eax);
-            return (u32)-38;                            /* ENOSYS */
     }
+    u32 regs[7]={r->eax,r->ebx,r->ecx,r->edx,r->esi,r->edi,r->ebp};
+    int64_t v=lx_syscall(regs);
+    if(v==-ENOSYS) fprintf(stderr,"minipy (native code): Linux system call %u is not supported\n",r->eax);
+    (void)m;
+    return (u32)v;
 }
 
 /* ---- the runtime routines done natively (they compute in 64-bit precision on the x87) */
@@ -301,6 +267,7 @@ static u32 x2c_fmt_gen(char *out, double v, u32 P, u32 flags){
     char dig[24]; int nd=0; const char *p=t;
     for(;*p && *p!='e';p++) if(*p>='0'&&*p<='9') dig[nd++]=*p;
     int e=atoi(p+1), n=nd;
+    if(flags&8){ int i=nd-1; while(i>=0 && dig[i]=='9') dig[i--]='0'; if(i<0){ dig[0]='1'; e++; } else dig[i]++; }   /* one unit more in the last digit */
     if(!(flags&4)) while(n>1 && dig[n-1]=='0') n--;
     int lim=(flags&2)?16:(int)P, dotzero=0;
     if((flags&4) || e<-4 || e>=lim){                    /* d[.ddd]e+XX */

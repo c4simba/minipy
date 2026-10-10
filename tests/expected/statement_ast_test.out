@@ -10,4 +10,5 @@ while else
 Traceback (most recent call last):
   File "tests/statement_ast_test.mpy", line 43, in <module>
     with "ctx" as c:
+         ^^^^^
 TypeError: 'str' object does not support the context manager protocol (missed __exit__ method)

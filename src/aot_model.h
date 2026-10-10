@@ -35,7 +35,8 @@ struct Ty { TyKind k; Ty *elem; AClass *cls; Ty *link; int id; Ty **elems; int n
                                reserved value). A type variable with opt makes what it gets bound to optional. */
             char **names;   /* TY_TUPLE: a record - a dict literal with fixed str keys and values of different types;
                                TY_FUNC: the parameters' names (a function's value: keyword arguments find them) */
-            int kwo;        /* TY_FUNC: its last kwo parameters (before **kwargs) are keyword-only */ };
+            int kwo;        /* TY_FUNC: its last kwo parameters (before **kwargs) are keyword-only */
+            int view;       /* TY_LIST: what a dict's keys() (1), values() (2), items() (3) give: printed as dict_keys([...]) ... */ };
 Ty  *ty_tuple(Ty **elems, int n);
 Ty  *ty_dict(Ty *key, Ty *val);                /* dict[key, val] */
 Ty  *ty_dkey(Ty *dict);                        /* its key type (str unless given) */
@@ -63,6 +64,7 @@ struct AVar {
     char *name;
     Ty *ty;
     int global;             /* module-level variable (static storage) */
+    int live;               /* read or assigned by code the checker went through (not only in code it left out) */
     int id;                 /* global: label G<id>; local: index in the frame */
     int offset;             /* local: ebp-relative offset (set by the code generator) */
     AModule *mod;
@@ -76,6 +78,7 @@ struct AVar {
     int capoff;             /* capture: byte offset in the closure object */
     int nbind;              /* binding statements (assignments, loops, def, ...) */
     int bind_top;           /* the top-level statement index of its only binding (-1: nested or several) */
+    int re_groups;          /* only ever bound to re.compile(literal): its number of groups + 1 (-1: something else) */
     int first_use_top;      /* the first top-level statement where a closure captures it */
     AFunc *fn_const;        /* bound only by `def name(...)` of this nested function */
     int borrowed;           /* code generator: a loop variable holding the item without a reference of its own */
@@ -111,7 +114,8 @@ typedef struct AField { char *name; Ty *ty; int offset; Expr *init; AModule *mod
                         int inst_set;        /* some instance assigns it (obj.name = ...): a field of its own then */
                         struct AField *over; /* a class attribute redefined in a subclass: the base's field (same slot) */
                         int overridden;      /* (of that base field) some subclass redefines it */
-                        int setoff;          /* a class attribute some objects set: the offset of the object's "set" flag */ } AField;
+                        int setoff;          /* a class attribute some objects set: the offset of the object's "set" flag */
+                        int re_groups;       /* only ever set to re.compile(literal): its number of groups + 1 (-1: something else) */ } AField;
 AField *aot_field_root(AField *fd);             /* the field whose slot fd uses */
 int aot_field_shared(AField *fd);               /* reads through an object give the class-level value */
 
@@ -132,12 +136,22 @@ struct AFunc {
     AVar **vars; int nvars, vcap;   /* every local (parameters first) */
     char **globals_decl; int nglobals_decl;
     int is_static;          /* @staticmethod */
+    int is_clsm;            /* @classmethod (a static method here: its cls the class) */
+    unsigned made_for_none; /* a generic copy made for calls giving these parameters a literal None */
+    int packargs;           /* (index + 1) its *args: sys._PackArgs - a plain parameter, the tuple of a call's extra arguments */
     int is_async;           /* async def: runs on a task's stack; await = a plain call */
     int calls_coroutines;   /* may call async functions without await (an endpoint adapter: it runs on a task) */
     struct AFunc *ep_adapter; /* minipy.Endpoint: the adapter made for this function (dict of str -> JSON) */
     int is_property;        /* @property: obj.name calls it */
     int is_abstract;        /* @abstractmethod: a class without an implementation cannot be instantiated */
-    int ncalls;             /* call sites seen by the checker */
+    int ncalls;
+    int direct;             /* a generic function (pristine) itself called, not only its instances */
+    int cm;                 /* @contextlib.contextmanager: its calls are wrapped in contextlib._GeneratorCM */
+    unsigned defaults_mismatch;   /* generic copies: parameters whose constant default is of another type (not in the function object) */
+    int none_calls;         /* generic module function / copy: calls of it seen (by pick_instance) */
+    unsigned none_omit, none_fn, none_given, none_folded;   /* generic copies: parameters with a default None that calls leave out / give a function / give;
+                                                 `p is None` decided when compiling (key=None: sorted(xs) or sorted(xs, key=key)) */
+    const char *shown;      /* how its value prints when not as a function (a type made a function: "<class 'list'>") */             /* call sites seen by the checker */
     int unused;             /* a module function nothing calls whose types are unknown: not compiled */
     int star, dstar;        /* parameter index of *args / **kwargs, else -1 */
     int ndeco;              /* decorators (other than @staticmethod/@property/@wraps): name = d1(d2(function)) */
@@ -174,7 +188,8 @@ struct AClass {
     AClass *base;
     Stmt *def;
     AField **fields; int nfields, fcap;   /* own fields; layout includes the base's */
-    int filled;             /* fields and methods collected */
+    int filled;
+    int bare;               /* a generic class's instance made for a construction without arguments (its own) */             /* fields and methods collected */
     int size;               /* instance size in bytes (header included) */
     AFunc **methods; int nmethods, mcap; /* own methods */
     AFunc **vt; int nvt;    /* vtable: inherited + own */
@@ -195,6 +210,9 @@ struct AClass {
     struct AFunc *encl;     /* defined in that function (its body sees the class by name) */
     struct DcInfo *dc;      /* @dataclass: its fields and options (aot_types.c) */
     int dc_frozen;          /* @dataclass(frozen=True) (or a subclass of one) */
+    struct AFunc *eq_inst, *lt_inst;   /* generic __eq__ / __lt__: their copies for an object of this class (containers, sort) */
+    int is_enum;            /* a subclass of enum.Enum with members (2: of enum.Flag): Color(v), Color["N"], iterating it (aot_types.c) */
+    int enum_int;           /* an IntEnum / IntFlag: its members are their values where ints are wanted */
 };
 int aot_is_exception(AClass *c);              /* derives from BaseException */
 
@@ -248,10 +266,12 @@ typedef struct XInfo {
     AField *field;
     const char *name;       /* builtin / type method name */
     int argmap[16];         /* call: parameter index -> argument index (-1: default) */
+    int packed;             /* call: its extra positional arguments made one tuple (*args: sys._PackArgs) */
     AVar **cvars;           /* comprehension: variables of clause i at [2*i], [2*i+1] */
     Expr *key, *rev;        /* sorted/sort/min/max: key= and reverse= (lambda: its parameter in xinfo(key)->var) */
     AFunc **cmpfn;          /* comparison: the method for items[i] (__eq__, __lt__, __contains__ ...) or NULL */
     int cmpneg;             /* a != b done as not a.__eq__(b) (bit i) */
+    int cmpswap;            /* 1 < obj done as obj.__gt__(1): the right operand's method (bit i) */
     int *xargs; int nxargs; /* call: arguments collected by *args (positional) */
     int *kwargs; int nkwargs; /* call: keyword arguments collected by **kwargs */
     int splat, dsplat;      /* call: index+1 of the f(*xs) / f(**d) argument feeding *args / **kwargs, else 0 */
@@ -283,6 +303,7 @@ typedef struct AProg {
     AVar **globals; int nglobals, gcap;
     ACLib **clibs; int nclibs;           /* ctypes libraries and functions */
     ACFunc **cfuncs; int ncfuncs;
+    AFunc *uncaught_fn;     /* _mpy_exit.__mpy_uncaught: what an uncaught exception ends the program with */
 } AProg;
 AClass *aot_nested_class(AProg *p, AClass *cls, const char *name);   /* Outer.Inner, or NULL */
 int aot_tuple_prefix(Ty *x, Ty *y);
@@ -309,7 +330,7 @@ typedef struct AAssign {
 } AAssign;
 typedef struct AWith { Expr *e[8]; char *as[8]; int n; } AWith;
 typedef struct ADel { Expr *t[16]; int n; } ADel;
-typedef struct APrint { Expr *args[32]; char star[32]; int n; Expr *sep, *end; } APrint;
+typedef struct APrint { Expr *args[32]; char star[32]; int n; Expr *sep, *end, *file, *flush; int fd; } APrint;   /* fd: 2 for file=sys.stderr */
 
 Expr    *aot_expr(AotUnit *u, Expr **slot);          /* the expression in *slot */
 AAssign *aot_assign(AotUnit *u, Stmt *s);

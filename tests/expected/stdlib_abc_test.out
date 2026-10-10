@@ -1,0 +1,18 @@
+True True True False
+True True True False
+True True True True False
+True True True True
+True True False True
+1 0 True ['a', 'b'] [('a', 1), ('b', 2)] True {'a': 1, 'b': 2}
+Can't instantiate abstract class Base without an implementation for abstract methods 'f', 'g'
+1 True True frozenset()
+True True
+True True False
+[1, 2, 3] 1 1 True [3, 2, 1]
+[2] True True
+collections.abc abc
+7 P doc of v
+K K
+BA(b'xyz') 3 True b'xyz'
+['make', 'size']
+['Impl'] True

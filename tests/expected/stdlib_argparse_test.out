@@ -1,0 +1,79 @@
+Namespace(files=['a.txt', 'b.txt'], verbose=True, count=5, mode='slow', output='out', tag=['x', 'y'], q=2, json=True, xml=False)
+['a.txt', 'b.txt'] True 5 slow out ['x', 'y'] 2 True False
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+
+A test tool.
+
+positional arguments:
+  files               input files
+
+options:
+  -h, --help          show this help message and exit
+  -v, --verbose       talk more
+  -n, --count COUNT   how many (default: 3)
+  --mode {fast,slow}
+  -o FILE
+  --tag TAG
+  -q
+  --json
+  --xml
+
+Bye.
+
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+tool: error: argument -n/--count: invalid int value: 'x'
+exit 2
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+tool: error: argument --mode: invalid choice: 'medium' (choose from 'fast', 'slow')
+exit 2
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+tool: error: argument --xml: not allowed with argument --json
+exit 2
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+tool: error: unrecognized arguments: --unknown
+exit 2
+usage: tool [-h] [-v] [-n COUNT] [--mode {fast,slow}] [-o FILE] [--tag TAG]
+            [-q] [--json | --xml]
+            [files ...]
+tool: error: argument -n/--count: expected one argument
+exit 2
+['f'] ['--zzz', '1']
+Namespace(cmd='commit', m='msg') Namespace(cmd='push', remote='origin')
+usage: git [-h] {commit,push} ...
+git: error: the following arguments are required: cmd
+exit 2
+usage: git [-h] {commit,push} ...
+
+positional arguments:
+  {commit,push}
+    commit       record changes
+
+options:
+  -h, --help     show this help message and exit
+
+Namespace(x=2.5, op='add', flag=False)
+usage: calc [-h] [--op OP] [--flag | --no-flag] x
+
+positional arguments:
+  x
+
+options:
+  -h, --help         show this help message and exit
+  --op OP            operation (default: add)
+  --flag, --no-flag
+
+v 1.0
+exit 0

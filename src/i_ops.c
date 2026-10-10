@@ -18,6 +18,7 @@ Value mp_list_slice(Value l, int64_t start, int64_t stop, int64_t step);
 
 static int is_set(Value v){ return v.k==V_OBJ && v.u.o->type->layout==LY_SET; }
 static int user(Value v){ return v.k==V_OBJ && (v.u.o->type->flags&TF_DUNDERS); }
+Obj *mp_raw_obj;      /* the object a built-in type's own method works on (super().__getitem__ ...): its class's methods skipped */
 const char *mp_type_name(Value v){ return TYPE(v)->name->s; }
 
 /* ---------------------------------------------------------------- repr / str */
@@ -101,9 +102,9 @@ static void repr_into(SBuf *b, Value v){
         default: break;
     }
     Obj *o=v.u.o; Type *t=o->type;
-    if((t->flags&TF_DUNDERS)){
-        Value r=mp_type_lookup_s(t,"__repr__");
-        if(r.k!=V_UNDEF && !IS(r,T_native)){
+    if((t->flags&TF_DUNDERS) && o!=mp_raw_obj){
+        Value r=mp_type_lookup_user(t,"__repr__");
+        if(r.k!=V_UNDEF){
             Value s=mp_call1(r,v);
             if(!IS_STR(s)) mp_raise_t(E_TypeError,"__repr__ returned non-string (type %s)",mp_type_name(s));
             sb_put(b,AS_STR(s)->s,AS_STR(s)->len); return;
@@ -112,6 +113,7 @@ static void repr_into(SBuf *b, Value v){
     switch(t->layout){
         case LY_STR: mp_str_repr_into(b,(StrObj*)o); return;
         case LY_BYTES: bytes_repr_into(b,((BytesObj*)o)->s,((BytesObj*)o)->len); return;
+        case LY_BYTEARRAY: sb_puts(b,t->name->s); sb_putc(b,'('); bytes_repr_into(b,((ByteArrayObj*)o)->data,((ByteArrayObj*)o)->len); sb_putc(b,')'); return;
         case LY_TUPLE:{ TupleObj *tp=(TupleObj*)o;
             if(!repr_enter(o)){ sb_puts(b,"(...)"); return; }
             sb_putc(b,'('); seq_into(b,tp->items,tp->len); if(tp->len==1) sb_putc(b,','); sb_putc(b,')'); repr_leave(); return; }
@@ -144,7 +146,9 @@ static void repr_into(SBuf *b, Value v){
             if(c->im>=0 || isnan(c->im)) sb_putc(b,'+');
             complex_part(b,c->im); sb_puts(b,"j)"); return; }
         case LY_TYPE: type_repr_into(b,(Type*)o); return;
-        case LY_FUNC: sb_printf(b,"<function %s at %p>",((FuncObj*)o)->qualname->s,(void*)o); return;
+        case LY_NUM: repr_into(b,((NumObj*)o)->v); return;
+        case LY_FUNC: if(((FuncObj*)o)->builtin){ sb_printf(b,"<built-in function %s>",((FuncObj*)o)->name->s); return; }
+            sb_printf(b,"<function %s at %p>",((FuncObj*)o)->qualname->s,(void*)o); return;
         case LY_NATIVE:{ NativeObj *n=(NativeObj*)o;
             if(n->self.k!=V_UNDEF) sb_printf(b,"<built-in method %s of %s object at %p>",n->name,mp_type_name(n->self),(void*)n->self.u.o);
             else sb_printf(b,"<built-in function %s>",n->name);
@@ -158,7 +162,7 @@ static void repr_into(SBuf *b, Value v){
         case LY_GEN:{ GenObj *g=(GenObj*)o; sb_printf(b,"<%s object %s at %p>",g->kind==G_CORO?"coroutine":g->kind==G_ASYNCGEN?"async_generator":"generator",g->qualname?g->qualname->s:"?",(void*)o); return; }
         case LY_EXC:{ ExcObj *e=(ExcObj*)o;
             sb_puts(b,t->name->s); sb_putc(b,'(');
-            if(IS(e->args,T_tuple)) seq_into(b,AS_TUPLE(e->args)->items,AS_TUPLE(e->args)->len);
+            if(IS_TUPLE(e->args)) seq_into(b,AS_TUPLE(e->args)->items,AS_TUPLE(e->args)->len);
             sb_putc(b,')'); return; }
         case LY_CODE: sb_printf(b,"<code object %s at %p>",((CodeObj*)o)->name->s,(void*)o); return;
         case LY_FILE:{ FileObj *f=(FileObj*)o; sb_puts(b,"<_io.TextIOWrapper name="); repr_into(b,f->name); sb_printf(b," mode='%c'>",f->mode); return; }
@@ -186,13 +190,36 @@ void mp_repr_into(SBuf *b, Value v){ repr_into(b,v); }
 
 Value mp_exc_str(Value e){
     ExcObj *x=AS_EXC(e);
-    if(!IS(x->args,T_tuple)) return mp_str("");
+    if(!IS_TUPLE(x->args)) return mp_str("");
     TupleObj *a=AS_TUPLE(x->args);
     if(a->len==0) return mp_str("");
-    if(a->len>=2 && a->len<=3 && mp_is_subtype(TYPE(e),E_OSError) && IS_INTLIKE(a->items[0])){   /* [Errno 2] text: 'file' */
-        SBuf b={0}; Value t=mp_tostr(a->items[1]);
+    if(a->len==2 && mp_is_subtype(TYPE(e),E_OSError) && IS_INTLIKE(a->items[0])){   /* [Errno 2] text: 'file' -> 'file2' */
+        SBuf b={0}; Value t=mp_tostr(a->items[1]), fn;
         sb_printf(&b,"[Errno %lld] ",(long long)a->items[0].u.i); sb_put(&b,AS_STR(t)->s,AS_STR(t)->len);
-        if(a->len==3){ Value r=mp_repr(a->items[2]); sb_puts(&b,": "); sb_put(&b,AS_STR(r)->s,AS_STR(r)->len); }
+        if(x->dict && mp_dict_get_s(x->dict,"filename",&fn) && !IS_NONE(fn)){ Value r=mp_repr(fn); sb_puts(&b,": "); sb_put(&b,AS_STR(r)->s,AS_STR(r)->len);
+            if(mp_dict_get_s(x->dict,"filename2",&fn) && !IS_NONE(fn)){ r=mp_repr(fn); sb_puts(&b," -> "); sb_put(&b,AS_STR(r)->s,AS_STR(r)->len); } }
+        return sb_value(&b);
+    }
+    if(a->len==2 && mp_is_subtype(TYPE(e),E_SyntaxError) && IS_TUPLE(a->items[1]) && AS_TUPLE(a->items[1])->len>=2){   /* msg (file, line N) */
+        TupleObj *d=AS_TUPLE(a->items[1]); Value m=mp_tostr(a->items[0]); SBuf b={0}; sb_put(&b,AS_STR(m)->s,AS_STR(m)->len);
+        int hasf=IS_STR(d->items[0]), hasl=IS_INTLIKE(d->items[1]);
+        if(hasf){ const char *fn=AS_STR(d->items[0])->s, *base=strrchr(fn,'/'); base=base?base+1:fn;
+            if(hasl) sb_printf(&b," (%s, line %lld)",base,(long long)d->items[1].u.i); else sb_printf(&b," (%s)",base); }
+        else if(hasl) sb_printf(&b," (line %lld)",(long long)d->items[1].u.i);
+        return sb_value(&b); }
+    if(a->len==5 && (mp_is_subtype(TYPE(e),E_UnicodeDecodeError)||mp_is_subtype(TYPE(e),E_UnicodeEncodeError)) && IS_STR(a->items[0])
+       && IS_INTLIKE(a->items[2]) && IS_INTLIKE(a->items[3]) && IS_STR(a->items[4])){      /* 'utf-8' codec can't decode byte 0xff in position 0: ... */
+        SBuf b={0}; int64_t st=a->items[2].u.i, en=a->items[3].u.i; int dec=mp_is_subtype(TYPE(e),E_UnicodeDecodeError);
+        sb_printf(&b,"'%s' codec can't %s ",AS_STR(a->items[0])->s,dec?"decode":"encode");
+        if(dec && IS_BYTES(a->items[1]) && en==st+1 && st>=0 && st<AS_BYTES(a->items[1])->len) sb_printf(&b,"byte 0x%02x in position %lld",(unsigned char)AS_BYTES(a->items[1])->s[st],(long long)st);
+        else if(!dec && IS_STR(a->items[1]) && en==st+1 && st>=0 && st<AS_STR(a->items[1])->cplen){
+            int64_t p=0; uint32_t cp=0; StrObj *s=AS_STR(a->items[1]);
+            for(int64_t i=0;i<=st;i++) cp=mp_utf8_decode(s->s,s->len,&p);
+            if(cp<=0xff) sb_printf(&b,"character '\\x%02x' in position %lld",cp,(long long)st);
+            else if(cp<=0xffff) sb_printf(&b,"character '\\u%04x' in position %lld",cp,(long long)st);
+            else sb_printf(&b,"character '\\U%08x' in position %lld",cp,(long long)st); }
+        else sb_printf(&b,"%s in position %lld-%lld",dec?"bytes":"characters",(long long)st,(long long)(en-1));
+        sb_printf(&b,": %s",AS_STR(a->items[4])->s);
         return sb_value(&b);
     }
     if(a->len==1){
@@ -206,8 +233,8 @@ Value mp_tostr(Value v){
         Type *t=v.u.o->type;
         if(t==T_str) return v;
         if(t->flags&TF_DUNDERS){
-            Value s=mp_type_lookup_s(t,"__str__");
-            if(s.k!=V_UNDEF && !IS(s,T_native)){
+            Value s=mp_type_lookup_user(t,"__str__");
+            if(s.k!=V_UNDEF){
                 Value r=mp_call1(s,v);
                 if(!IS_STR(r)) mp_raise_t(E_TypeError,"__str__ returned non-string (type %s)",mp_type_name(r));
                 return r;
@@ -233,11 +260,13 @@ int mp_truth(Value v){
         if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); if(r.k!=V_BOOL) mp_raise_t(E_TypeError,"__bool__ should return bool, returned %s",mp_type_name(r)); return (int)r.u.i; }
         m=mp_type_lookup_s(t,"__len__");
         if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); return mp_index(r,"__len__")!=0; }
-        return 1;
+        if(!(t->flags&TF_SUBVAL)) return 1;
     }
     switch(t->layout){
+        case LY_NUM: return mp_truth(((NumObj*)o)->v);
         case LY_STR: return AS_STR(v)->len!=0;
         case LY_BYTES: return AS_BYTES(v)->len!=0;
+        case LY_BYTEARRAY: return ((ByteArrayObj*)v.u.o)->len!=0;
         case LY_TUPLE: return AS_TUPLE(v)->len!=0;
         case LY_LIST: return AS_LIST(v)->len!=0;
         case LY_DICT: return AS_DICT(v)->used!=0;
@@ -256,12 +285,14 @@ static int is_num(Value v){ return v.k==V_INT || v.k==V_BOOL || v.k==V_FLOAT || 
 double mp_float_of(Value v){
     if(v.k==V_FLOAT) return v.u.f;
     if(v.k==V_INT || v.k==V_BOOL) return (double)v.u.i;
-    if(user(v)){ Value m=mp_type_lookup_s(TYPE(v),"__float__"); if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); if(r.k==V_FLOAT) return r.u.f; } }
+    if(user(v)){ Value m=mp_type_lookup_user(TYPE(v),"__float__"); if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); if(r.k==V_FLOAT) return r.u.f; } }
+    if(v.k==V_OBJ && v.u.o->type->layout==LY_NUM) return mp_float_of(mp_unbox(v));
     mp_raise_t(E_TypeError,"must be real number, not %s",mp_type_name(v));
 }
 int64_t mp_index(Value v, const char *what){
     if(v.k==V_INT || v.k==V_BOOL) return v.u.i;
-    if(user(v)){ Value m=mp_type_lookup_s(TYPE(v),"__index__"); if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); if(IS_INTLIKE(r)) return r.u.i; } }
+    if(user(v)){ Value m=mp_type_lookup_user(TYPE(v),"__index__"); if(m.k!=V_UNDEF){ Value r=mp_call1(m,v); if(IS_INTLIKE(r)) return r.u.i; } }
+    { Value u=mp_unbox(v); if(IS_INTLIKE(u)) return u.u.i; }
     (void)what;
     mp_raise_t(E_TypeError,"'%s' object cannot be interpreted as an integer",mp_type_name(v));
 }
@@ -398,15 +429,16 @@ static const char *op_dunder(int op, int kind){   /* kind 0 normal, 1 reflected,
 }
 static Value seq_repeat(Value s, int64_t n){
     if(n<0) n=0;
+    if(IS_BA(s)) return mp_ba_repeat(s,n);
     if(IS_STR(s)){ StrObj *x=AS_STR(s); if(x->len && n>INT64_MAX/x->len) mp_raise_t(E_OverflowError,"repeated string is too long");
         SBuf b={0}; for(int64_t i=0;i<n;i++) sb_put(&b,x->s,x->len); return sb_value(&b); }
-    if(IS(s,T_bytes)){ BytesObj *x=AS_BYTES(s); SBuf b={0}; for(int64_t i=0;i<n;i++) sb_put(&b,(const char*)x->s,x->len); Value r=mp_bytes(b.s?b.s:"",b.n); free(b.s); return r; }
-    if(IS(s,T_list)){ ListObj *x=AS_LIST(s); Value r=mp_list(0,NULL); for(int64_t i=0;i<n;i++) for(int64_t j=0;j<x->len;j++) mp_list_append(r,x->items[j]); return r; }
+    if(IS_BYTES(s)){ BytesObj *x=AS_BYTES(s); SBuf b={0}; for(int64_t i=0;i<n;i++) sb_put(&b,(const char*)x->s,x->len); Value r=mp_bytes(b.s?b.s:"",b.n); free(b.s); return r; }
+    if(IS_LIST(s)){ ListObj *x=AS_LIST(s); Value r=mp_list(0,NULL); for(int64_t i=0;i<n;i++) for(int64_t j=0;j<x->len;j++) mp_list_append(r,x->items[j]); return r; }
     TupleObj *x=AS_TUPLE(s); int64_t len=x->len*n; Value r=mp_tuple(len,NULL);
     for(int64_t i=0;i<n;i++) memcpy(AS_TUPLE(r)->items+i*x->len,x->items,sizeof(Value)*(size_t)x->len);
     return r;
 }
-static int is_seq(Value v){ return IS_STR(v) || IS(v,T_bytes) || IS(v,T_list) || IS(v,T_tuple); }
+static int is_seq(Value v){ return IS_STR(v) || IS_BYTES(v) || IS_LIST(v) || IS_TUPLE(v) || IS_BA(v); }
 static Value builtin_binop(int op, Value a, Value b){
     Value r=num_op(op,a,b);
     if(r.k!=V_UNDEF) return r;
@@ -416,15 +448,17 @@ static Value builtin_binop(int op, Value a, Value b){
             if(IS_STR(a)){
                 if(!IS_STR(b)) mp_raise_t(E_TypeError,"can only concatenate str (not \"%s\") to str",tb->name->s);
                 StrObj *x=AS_STR(a), *y=AS_STR(b); SBuf s={0}; sb_put(&s,x->s,x->len); sb_put(&s,y->s,y->len); return sb_value(&s); }
-            if(IS(a,T_list)){
-                if(!IS(b,T_list)) mp_raise_t(E_TypeError,"can only concatenate list (not \"%s\") to list",tb->name->s);
+            if(IS_LIST(a)){
+                if(!IS_LIST(b)) mp_raise_t(E_TypeError,"can only concatenate list (not \"%s\") to list",tb->name->s);
                 ListObj *x=AS_LIST(a), *y=AS_LIST(b); Value l=mp_list(x->len+y->len,NULL);
                 memcpy(AS_LIST(l)->items,x->items,sizeof(Value)*(size_t)x->len); memcpy(AS_LIST(l)->items+x->len,y->items,sizeof(Value)*(size_t)y->len); return l; }
-            if(IS(a,T_tuple)){
-                if(!IS(b,T_tuple)) mp_raise_t(E_TypeError,"can only concatenate tuple (not \"%s\") to tuple",tb->name->s);
+            if(IS_TUPLE(a)){
+                if(!IS_TUPLE(b)) mp_raise_t(E_TypeError,"can only concatenate tuple (not \"%s\") to tuple",tb->name->s);
                 TupleObj *x=AS_TUPLE(a), *y=AS_TUPLE(b); Value t=mp_tuple(x->len+y->len,NULL);
                 memcpy(AS_TUPLE(t)->items,x->items,sizeof(Value)*(size_t)x->len); memcpy(AS_TUPLE(t)->items+x->len,y->items,sizeof(Value)*(size_t)y->len); return t; }
-            if(IS(a,T_bytes) && IS(b,T_bytes)){ BytesObj *x=AS_BYTES(a), *y=AS_BYTES(b); SBuf s={0}; sb_put(&s,(const char*)x->s,x->len); sb_put(&s,(const char*)y->s,y->len); Value v=mp_bytes(s.s,s.n); free(s.s); return v; }
+            if(IS_BYTES(a) && IS_BYTES(b)){ BytesObj *x=AS_BYTES(a), *y=AS_BYTES(b); SBuf s={0}; sb_put(&s,(const char*)x->s,x->len); sb_put(&s,(const char*)y->s,y->len); Value v=mp_bytes(s.s,s.n); free(s.s); return v; }
+            if(IS_BA(a)) return mp_ba_concat(a,b);
+            if(IS_BYTES(a) && IS_BA(b)){ BytesObj *x=AS_BYTES(a); ByteArrayObj *y=(ByteArrayObj*)b.u.o; SBuf s={0}; sb_put(&s,(const char*)x->s,x->len); sb_put(&s,(const char*)y->data,y->len); Value v=mp_bytes(s.s?s.s:"",s.n); free(s.s); return v; }
             break;
         case OP_Mult:
             if(is_seq(a) && IS_INTLIKE(b)) return seq_repeat(a,b.u.i);
@@ -454,7 +488,7 @@ static Value builtin_binop(int op, Value a, Value b){
                 Value r2=mp_set_copy(y,rt); mp_set_xor_update((SetObj*)r2.u.o,a);
                 return r2;
             }
-            if(op==OP_BitOr && IS(a,T_dict) && IS(b,T_dict)){
+            if(op==OP_BitOr && IS_DICT(a) && IS_DICT(b)){
                 Value d=mp_dict(); int64_t pos=0; Value k, val;
                 while(mp_dict_next(AS_DICT(a),&pos,&k,&val)) mp_dict_set(AS_DICT(d),k,val);
                 pos=0; while(mp_dict_next(AS_DICT(b),&pos,&k,&val)) mp_dict_set(AS_DICT(d),k,val);
@@ -480,12 +514,12 @@ static Value binop_ex(int op, Value a, Value b, int inplace){
         if(sub){ Value r=try_dunder(b,rn,a); if(r.u.o!=mp_NotImplemented.u.o || r.k!=V_OBJ) return r; }
         if(user(a)){ Value r=try_dunder(a,n,b); if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; }
         if(!sub && user(b) && ta!=tb){ Value r=try_dunder(b,rn,a); if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; }
-        if(!user(a)){ Value r=builtin_binop(op,a,b); if(r.k!=V_UNDEF) return r; }
+        if(!user(a) || IS_SUBVAL(a) || IS_SUBVAL(b)){ Value r=builtin_binop(op,mp_unbox(a),mp_unbox(b)); if(r.k!=V_UNDEF) return r; }   /* (str, list, int ... subclasses: the built-in's) */
     } else {
         Value r=builtin_binop(op,a,b);
         if(r.k!=V_UNDEF) return r;
     }
-    if(op==OP_BitOr && (IS(a,T_type)||a.k==V_NONE) && (IS(b,T_type)||b.k==V_NONE) && !(a.k==V_NONE && b.k==V_NONE)){   /* int | None: a union type */
+    if(op==OP_BitOr && (IS_TYPE(a)||a.k==V_NONE) && (IS_TYPE(b)||b.k==V_NONE) && !(a.k==V_NONE && b.k==V_NONE)){   /* int | None: a union type */
         Value nm=mp_str("typing"); Value mod=mp_builtin_import(1,&nm,NULL);
         return mp_call2(mp_getattr_s(mod,"_union2"),a,b); }
     if(inplace){ const char *sy=op==OP_Pow?"**":op_sym(op);
@@ -494,16 +528,17 @@ static Value binop_ex(int op, Value a, Value b, int inplace){
 }
 Value mp_inplace(int op, Value a, Value b){
     if(user(a)){
-        Value m=mp_type_lookup_s(TYPE(a),op_dunder(op,2));
+        Value m=mp_type_lookup_user(TYPE(a),op_dunder(op,2));
         if(m.k!=V_UNDEF){ Value r=mp_call2(m,a,b); if(!(r.k==V_OBJ && r.u.o==mp_NotImplemented.u.o)) return r; }
-        return binop_ex(op,a,b,1);
+        if(!IS_SUBVAL(a) || mp_type_lookup_user(TYPE(a),op_dunder(op,0)).k!=V_UNDEF) return binop_ex(op,a,b,1);   /* (a list subclass: += in place) */
     }
-    if(IS(a,T_list)){
+    if(IS_BA(a) && (op==OP_Add || (op==OP_Mult && IS_INTLIKE(b)))){ if(op==OP_Add) mp_ba_extend_bytes(a,b); else mp_ba_repeat_inplace(a,b.u.i); return a; }
+    if(IS_LIST(a)){
         if(op==OP_Add){ Value l=mp_list_of(b); ListObj *y=AS_LIST(l); for(int64_t i=0;i<y->len;i++) mp_list_append(a,y->items[i]); return a; }
         if(op==OP_Mult && IS_INTLIKE(b)){ ListObj *x=AS_LIST(a); int64_t n0=x->len, n=b.u.i; if(n<=0){ x->len=0; return a; }
             for(int64_t r=1;r<n;r++) for(int64_t j=0;j<n0;j++) mp_list_append(a,AS_LIST(a)->items[j]); return a; }
     }
-    if(IS(a,T_set) && is_set(b)){
+    if(a.k==V_OBJ && a.u.o->type->layout==LY_SET && !mp_is_subtype(a.u.o->type,T_frozenset) && is_set(b)){
         SetObj *x=(SetObj*)a.u.o, *y=(SetObj*)b.u.o;
         if(op==OP_BitOr){ mp_set_merge(x,y); return a; }
         if(op==OP_Sub){ mp_set_diff_update(x,b); return a; }
@@ -514,15 +549,16 @@ Value mp_inplace(int op, Value a, Value b){
             rs->table=(SEnt*)xmalloc(sizeof(SEnt)*8); memset(rs->table,0,sizeof(SEnt)*8); rs->mask=7; rs->fill=rs->used=0;
             return a; }
     }
-    if(IS(a,T_dict) && op==OP_BitOr && IS(b,T_dict)){ int64_t pos=0; Value k, v; while(mp_dict_next(AS_DICT(b),&pos,&k,&v)) mp_dict_set(AS_DICT(a),k,v); return a; }
+    if(IS_DICT(a) && op==OP_BitOr && IS_DICT(b)){ int64_t pos=0; Value k, v; while(mp_dict_next(AS_DICT(b),&pos,&k,&v)) mp_dict_set(AS_DICT(a),k,v); return a; }
     return binop_ex(op,a,b,1);
 }
 Value mp_unary(int op, Value a){
     if(op==OP_Not) return v_bool(!mp_truth(a));
     if(user(a)){
         const char *n= op==OP_USub?"__neg__":op==OP_UAdd?"__pos__":"__invert__";
-        Value m=mp_type_lookup_s(TYPE(a),n);
+        Value m=mp_type_lookup_user(TYPE(a),n);
         if(m.k!=V_UNDEF) return mp_call1(m,a);
+        a=mp_unbox(a);
     }
     switch(a.k){
         case V_INT: case V_BOOL:
@@ -568,6 +604,7 @@ static int builtin_eq(Value a, Value b){
     Layout la=a.u.o->type->layout, lb=b.u.o->type->layout;
     if(la==LY_STR && lb==LY_STR){ StrObj *x=AS_STR(a), *y=AS_STR(b); return x->len==y->len && !memcmp(x->s,y->s,(size_t)x->len); }
     if(la==LY_BYTES && lb==LY_BYTES){ BytesObj *x=AS_BYTES(a), *y=AS_BYTES(b); return x->len==y->len && !memcmp(x->s,y->s,(size_t)x->len); }
+    if((la==LY_BYTEARRAY && (lb==LY_BYTES||lb==LY_BYTEARRAY)) || (la==LY_BYTES && lb==LY_BYTEARRAY)){ const unsigned char *x, *y; int64_t nx, ny; mp_byteslike(a,&x,&nx); mp_byteslike(b,&y,&ny); return nx==ny && !memcmp(x,y,(size_t)nx); }
     if(la==LY_TUPLE && lb==LY_TUPLE) return seq_eq(AS_TUPLE(a)->items,AS_TUPLE(a)->len,AS_TUPLE(b)->items,AS_TUPLE(b)->len);
     if(la==LY_LIST && lb==LY_LIST) return seq_eq(AS_LIST(a)->items,AS_LIST(a)->len,AS_LIST(b)->items,AS_LIST(b)->len);
     if(la==LY_DICT && lb==LY_DICT){
@@ -601,27 +638,30 @@ static Value rich_dunder(int op, Value a, Value b){
     Type *ta=TYPE(a), *tb=TYPE(b);
     int swapped_first= user(b) && ta!=tb && mp_is_subtype(tb,ta);
     if(swapped_first){
-        Value m=mp_type_lookup_s(tb,cmp_dunder(cmp_swap(op)));
-        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,b,a); if(!is_notimpl(r)) return r; }
+        Value m=mp_type_lookup_user(tb,cmp_dunder(cmp_swap(op)));
+        if(m.k!=V_UNDEF){ Value r=mp_call2(m,b,a); if(!is_notimpl(r)) return r; }
     }
     if(user(a)){
-        Value m=mp_type_lookup_s(ta,cmp_dunder(op));
-        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,a,b); if(!is_notimpl(r)) return r; }
+        Value m=mp_type_lookup_user(ta,cmp_dunder(op));
+        if(m.k!=V_UNDEF){ Value r=mp_call2(m,a,b); if(!is_notimpl(r)) return r; }
     }
     if(!swapped_first && user(b)){
-        Value m=mp_type_lookup_s(tb,cmp_dunder(cmp_swap(op)));
-        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,b,a); if(!is_notimpl(r)) return r; }
+        Value m=mp_type_lookup_user(tb,cmp_dunder(cmp_swap(op)));
+        if(m.k!=V_UNDEF){ Value r=mp_call2(m,b,a); if(!is_notimpl(r)) return r; }
     }
     if(op==OP_NotEq && user(a)){                   /* != from __eq__ */
-        Value m=mp_type_lookup_s(ta,"__eq__");
-        if(m.k!=V_UNDEF && !IS(m,T_native)){ Value r=mp_call2(m,a,b); if(!is_notimpl(r)) return v_bool(!mp_truth(r)); }
+        Value m=mp_type_lookup_user(ta,"__eq__");
+        if(m.k!=V_UNDEF){ Value r=mp_call2(m,a,b); if(!is_notimpl(r)) return v_bool(!mp_truth(r)); }
     }
     return v_undef();
 }
+/* == of the built-in values themselves (dict.__eq__(od1, od2) ...: their classes' __eq__ not asked) */
+int mp_builtin_eq(Value a, Value b){ return builtin_eq(a,b); }
 int mp_eq(Value a, Value b){
     if(user(a)||user(b)){
         Value r=rich_dunder(OP_Eq,a,b);
         if(r.k!=V_UNDEF) return mp_truth(r);
+        if(IS_SUBVAL(a)||IS_SUBVAL(b)) return builtin_eq(mp_unbox(a),mp_unbox(b));
         return a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o;
     }
     return builtin_eq(a,b);
@@ -646,7 +686,8 @@ static int builtin_order(int op, Value a, Value b, Value *res){
     if(a.k!=V_OBJ || b.k!=V_OBJ) return 0;
     Layout la=a.u.o->type->layout, lb=b.u.o->type->layout;
     if(la==LY_STR && lb==LY_STR){ StrObj *x=AS_STR(a), *y=AS_STR(b); int64_t n=x->len<y->len?x->len:y->len; int c=memcmp(x->s,y->s,(size_t)n); if(!c) c=x->len<y->len?-1:x->len>y->len?1:0; *res=v_bool(order_res(op,c)); return 1; }
-    if(la==LY_BYTES && lb==LY_BYTES){ BytesObj *x=AS_BYTES(a), *y=AS_BYTES(b); int64_t n=x->len<y->len?x->len:y->len; int c=memcmp(x->s,y->s,(size_t)n); if(!c) c=x->len<y->len?-1:x->len>y->len?1:0; *res=v_bool(order_res(op,c)); return 1; }
+    if((la==LY_BYTES||la==LY_BYTEARRAY) && (lb==LY_BYTES||lb==LY_BYTEARRAY)){ const unsigned char *x, *y; int64_t nx, ny; mp_byteslike(a,&x,&nx); mp_byteslike(b,&y,&ny);
+        int64_t n=nx<ny?nx:ny; int c=n?memcmp(x,y,(size_t)n):0; if(!c) c=nx<ny?-1:nx>ny?1:0; *res=v_bool(order_res(op,c)); return 1; }
     if(la==LY_TUPLE && lb==LY_TUPLE) return seq_cmp(AS_TUPLE(a)->items,AS_TUPLE(a)->len,AS_TUPLE(b)->items,AS_TUPLE(b)->len,op,res);
     if(la==LY_LIST && lb==LY_LIST) return seq_cmp(AS_LIST(a)->items,AS_LIST(a)->len,AS_LIST(b)->items,AS_LIST(b)->len,op,res);
     if(la==LY_SET && lb==LY_SET){
@@ -671,8 +712,12 @@ Value mp_compare(int op, Value a, Value b){
     if(user(a)||user(b)){
         Value r=rich_dunder(op,a,b);
         if(r.k!=V_UNDEF) return r;
-        if(op==OP_Eq) return v_bool(a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o);
-        if(op==OP_NotEq) return v_bool(!(a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o));
+        if(IS_SUBVAL(a)||IS_SUBVAL(b)){ Value ua=mp_unbox(a), ub=mp_unbox(b);   /* (str, int ... subclasses: the built-in's) */
+            if(op==OP_Eq) return v_bool(builtin_eq(ua,ub));
+            if(op==OP_NotEq) return v_bool(!builtin_eq(ua,ub));
+            Value res; if(builtin_order(op,ua,ub,&res)) return res; }
+        else if(op==OP_Eq) return v_bool(a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o);
+        else if(op==OP_NotEq) return v_bool(!(a.k==V_OBJ && b.k==V_OBJ && a.u.o==b.u.o));
     } else {
         if(op==OP_Eq) return v_bool(builtin_eq(a,b));
         if(op==OP_NotEq) return v_bool(!builtin_eq(a,b));
@@ -687,9 +732,9 @@ Value mp_compare(int op, Value a, Value b){
 int64_t mp_len(Value v){
     if(v.k==V_OBJ){
         Obj *o=v.u.o; Type *t=o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__len__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)){
+        if((t->flags&TF_DUNDERS) && o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__len__");
+            if(m.k!=V_UNDEF){
                 Value r=mp_call1(m,v); int64_t n=mp_index(r,"len");
                 if(n<0) mp_raise_t(E_ValueError,"__len__() should return >= 0");
                 return n;
@@ -698,6 +743,7 @@ int64_t mp_len(Value v){
         switch(t->layout){
             case LY_STR: return ((StrObj*)o)->cplen;
             case LY_BYTES: return ((BytesObj*)o)->len;
+            case LY_BYTEARRAY: return ((ByteArrayObj*)o)->len;
             case LY_TUPLE: return ((TupleObj*)o)->len;
             case LY_LIST: return ((ListObj*)o)->len;
             case LY_DICT: return ((DictObj*)o)->used;
@@ -740,9 +786,9 @@ Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
 Value mp_getitem(Value o, Value key){
     if(o.k==V_OBJ){
         Type *t=o.u.o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__getitem__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)) return mp_call2(m,o,key);
+        if((t->flags&TF_DUNDERS) && o.u.o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__getitem__");
+            if(m.k!=V_UNDEF) return mp_call2(m,o,key);
         }
         int isslice=IS(key,T_slice);
         switch(t->layout){
@@ -764,6 +810,7 @@ Value mp_getitem(Value o, Value key){
                 }
                 if(!IS_INTLIKE(key) && !user(key)) mp_raise_t(E_TypeError,"string indices must be integers, not '%s'",mp_type_name(key));
                 return str_at(s,norm_index(mp_index(key,"str"),s->cplen,"string")); }
+            case LY_BYTEARRAY: return mp_ba_getitem(o,key);
             case LY_BYTES:{ BytesObj *b=AS_BYTES(o);
                 if(isslice){ int64_t a,bb,st, n=mp_slice_indices(key,b->len,&a,&bb,&st); SBuf sb={0}; for(int64_t i=0,j=a;i<n;i++,j+=st) sb_putc(&sb,(char)b->s[j]); Value r=mp_bytes(sb.s?sb.s:"",sb.n); free(sb.s); return r; }
                 return v_int(b->s[norm_index(mp_index(key,"bytes"),b->len,NULL)]); }
@@ -789,9 +836,9 @@ void mp_list_setslice(Value l, Value sl, Value v);
 void mp_setitem(Value o, Value key, Value val){
     if(o.k==V_OBJ){
         Type *t=o.u.o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__setitem__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)){ Value a[3]={o,key,val}; mp_call(m,3,a,NULL); return; }
+        if((t->flags&TF_DUNDERS) && o.u.o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__setitem__");
+            if(m.k!=V_UNDEF){ Value a[3]={o,key,val}; mp_call(m,3,a,NULL); return; }
         }
         switch(t->layout){
             case LY_LIST:{ ListObj *l=AS_LIST(o);
@@ -802,6 +849,7 @@ void mp_setitem(Value o, Value key, Value val){
                 l->items[i]=val; return; }
             case LY_DICT: mp_dict_set(AS_DICT(o),key,val); return;
             case LY_BUFFER:{ BufferObj *b=(BufferObj*)o.u.o; b->data[norm_index(mp_index(key,"buffer"),b->len,"buffer")]=(unsigned char)mp_index(val,"buffer"); return; }
+            case LY_BYTEARRAY: mp_ba_setitem(o,key,val); return;
             default: break;
         }
     }
@@ -810,9 +858,9 @@ void mp_setitem(Value o, Value key, Value val){
 void mp_delitem(Value o, Value key){
     if(o.k==V_OBJ){
         Type *t=o.u.o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__delitem__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)){ mp_call2(m,o,key); return; }
+        if((t->flags&TF_DUNDERS) && o.u.o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__delitem__");
+            if(m.k!=V_UNDEF){ mp_call2(m,o,key); return; }
         }
         switch(t->layout){
             case LY_LIST:{ ListObj *l=AS_LIST(o);
@@ -829,6 +877,7 @@ void mp_delitem(Value o, Value key){
                 if(i<0 || i>=l->len) mp_raise_t(E_IndexError,"list assignment index out of range");
                 memmove(l->items+i,l->items+i+1,sizeof(Value)*(size_t)(l->len-i-1)); l->len--; return; }
             case LY_DICT: if(!mp_dict_del(AS_DICT(o),key)) mp_raise(mp_exc_args(E_KeyError,mp_tuple(1,&key))); return;
+            case LY_BYTEARRAY: mp_ba_delitem(o,key); return;
             default: break;
         }
     }
@@ -837,9 +886,9 @@ void mp_delitem(Value o, Value key){
 int mp_contains(Value c, Value x){
     if(c.k==V_OBJ){
         Type *t=c.u.o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__contains__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)) return mp_truth(mp_call2(m,c,x));
+        if((t->flags&TF_DUNDERS) && c.u.o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__contains__");
+            if(m.k!=V_UNDEF) return mp_truth(mp_call2(m,c,x));
         }
         switch(t->layout){
             case LY_STR:{
@@ -848,13 +897,15 @@ int mp_contains(Value c, Value x){
                 if(n->len==0) return 1;
                 for(int64_t i=0;i+n->len<=h->len;i++) if(!memcmp(h->s+i,n->s,(size_t)n->len)) return 1;
                 return 0; }
+            case LY_BYTEARRAY: return mp_ba_contains(c,x);
             case LY_BYTES:{
                 BytesObj *h=AS_BYTES(c);
                 if(IS_INTLIKE(x)){ if(x.u.i<0 || x.u.i>255) mp_raise_t(E_ValueError,"byte must be in range(0, 256)");
                     for(int64_t i=0;i<h->len;i++) if(h->s[i]==x.u.i) return 1; return 0; }
-                if(!IS(x,T_bytes)) mp_raise_t(E_TypeError,"a bytes-like object is required, not '%s'",mp_type_name(x));
-                BytesObj *n=AS_BYTES(x); if(!n->len) return 1;
-                for(int64_t i=0;i+n->len<=h->len;i++) if(!memcmp(h->s+i,n->s,(size_t)n->len)) return 1;
+                const unsigned char *ns; int64_t nn;
+                if(!mp_byteslike(x,&ns,&nn)) mp_raise_t(E_TypeError,"a bytes-like object is required, not '%s'",mp_type_name(x));
+                if(!nn) return 1;
+                for(int64_t i=0;i+nn<=h->len;i++) if(!memcmp(h->s+i,ns,(size_t)nn)) return 1;
                 return 0; }
             case LY_LIST:{ ListObj *l=AS_LIST(c); for(int64_t i=0;i<l->len;i++) if(item_eq(l->items[i],x)) return 1; return 0; }
             case LY_TUPLE:{ TupleObj *tp=AS_TUPLE(c); for(int64_t i=0;i<tp->len;i++) if(item_eq(tp->items[i],x)) return 1; return 0; }
@@ -882,21 +933,22 @@ Value mp_iter_kind(int kind, Value src, Value aux, Value aux2){ Value v=new_iter
 Value mp_iter(Value v){
     if(v.k==V_OBJ){
         Obj *o=v.u.o; Type *t=o->type;
-        if(t->flags&TF_DUNDERS){
-            Value m=mp_type_lookup_s(t,"__iter__");
-            if(m.k!=V_UNDEF && !IS(m,T_native)){
+        if((t->flags&TF_DUNDERS) && o!=mp_raw_obj){
+            Value m=mp_type_lookup_user(t,"__iter__");
+            if(m.k!=V_UNDEF){
                 Value r=mp_call1(m,v);
                 if(!(TYPE(r)->flags&TF_DUNDERS) && !IS(r,T_iter) && TYPE(r)->layout!=LY_GEN && !IS(r,T_file))
                     mp_raise_t(E_TypeError,"iter() returned non-iterator of type '%s'",mp_type_name(r));
                 return r;
             }
-            if(mp_type_lookup_s(t,"__getitem__").k!=V_UNDEF) return new_iter(IT_GETITEM,v);
+            if(!(t->flags&TF_SUBVAL)){ Value gi=mp_type_lookup_user(t,"__getitem__"); if(gi.k!=V_UNDEF) return new_iter(IT_GETITEM,v); }   /* (a dict subclass's __getitem__: still its keys) */
         }
         switch(t->layout){
             case LY_LIST: return new_iter(IT_SEQ,v);
             case LY_TUPLE: return new_iter(IT_SEQ,v);
             case LY_STR: return new_iter(IT_STR,v);
             case LY_BYTES: return new_iter(IT_BYTES,v);
+            case LY_BYTEARRAY: return new_iter(IT_BYTEARRAY,v);
             case LY_DICT: return new_iter(IT_DICTK,v);
             case LY_SET: return new_iter(IT_SET,v);
             case LY_RANGE:{ RangeObj *r=(RangeObj*)o; Value it=new_iter(IT_RANGE,v); IterObj *io=(IterObj*)it.u.o; io->i=r->start; io->n=mp_len(v); return it; }
@@ -920,11 +972,12 @@ int mp_next(Value itv, Value *out){
         IterObj *it=(IterObj*)o;
         switch(it->kind){
             case IT_SEQ:
-                if(IS(it->src,T_list)){ ListObj *l=AS_LIST(it->src); if(it->i>=l->len) return 0; *out=l->items[it->i++]; return 1; }
+                if(IS_LIST(it->src)){ ListObj *l=AS_LIST(it->src); if(it->i>=l->len) return 0; *out=l->items[it->i++]; return 1; }
                 { TupleObj *tp=AS_TUPLE(it->src); if(it->i>=tp->len) return 0; *out=tp->items[it->i++]; return 1; }
             case IT_STR:{ StrObj *s=AS_STR(it->src); if(it->i>=s->len) return 0;
                 int64_t p=it->i; mp_utf8_decode(s->s,s->len,&p); *out=mp_strn(s->s+it->i,p-it->i); it->i=p; return 1; }
             case IT_BYTES:{ BytesObj *b=AS_BYTES(it->src); if(it->i>=b->len) return 0; *out=v_int(b->s[it->i++]); return 1; }
+            case IT_BYTEARRAY:{ ByteArrayObj *b=(ByteArrayObj*)it->src.u.o; if(it->i>=b->len) return 0; *out=v_int(b->data[it->i++]); return 1; }
             case IT_RANGE:{ RangeObj *r=(RangeObj*)it->src.u.o; if(it->n<=0) return 0; *out=v_int(it->i); it->i+=r->step; it->n--; return 1; }
             case IT_DICTK: case IT_DICTV: case IT_DICTI:{
                 DictObj *d=AS_DICT(it->src);
@@ -941,8 +994,8 @@ int mp_next(Value itv, Value *out){
                 return 0; }
             case IT_REVLIST:{
                 if(it->i<0) return 0;
-                if(IS(it->src,T_list)){ ListObj *l=AS_LIST(it->src); if(it->i>=l->len){ it->i=-1; return 0; } *out=l->items[it->i--]; return 1; }
-                if(IS(it->src,T_tuple)){ TupleObj *tp=AS_TUPLE(it->src); *out=tp->items[it->i--]; return 1; }
+                if(IS_LIST(it->src)){ ListObj *l=AS_LIST(it->src); if(it->i>=l->len){ it->i=-1; return 0; } *out=l->items[it->i--]; return 1; }
+                if(IS_TUPLE(it->src)){ TupleObj *tp=AS_TUPLE(it->src); *out=tp->items[it->i--]; return 1; }
                 if(IS_STR(it->src)){ *out=str_at(AS_STR(it->src),it->i--); return 1; }
                 *out=mp_getitem(it->src,v_int(it->i--)); return 1; }
             case IT_GETITEM:{
@@ -971,8 +1024,8 @@ int mp_next(Value itv, Value *out){
     mp_raise_t(E_TypeError,"'%s' object is not an iterator",t->name->s);
 }
 Value mp_list_of(Value v){
-    if(IS(v,T_list)) return mp_list(AS_LIST(v)->len,AS_LIST(v)->items);
-    if(IS(v,T_tuple)) return mp_list(AS_TUPLE(v)->len,AS_TUPLE(v)->items);
+    if(IS_LIST(v)) return mp_list(AS_LIST(v)->len,AS_LIST(v)->items);
+    if(IS_TUPLE(v)) return mp_list(AS_TUPLE(v)->len,AS_TUPLE(v)->items);
     Value l=mp_list(0,NULL), it=mp_iter(v), x;
     while(mp_next(it,&x)) mp_list_append(l,x);
     return l;

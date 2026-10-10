@@ -1,0 +1,26 @@
+f1.txt 1 1 True 'l1\n'
+f1.txt 2 2 False 'l2\n'
+f2.txt 3 1 True 'm1\n'
+['l1', 'l2']
+True False False
+(['same.txt'], ['diff.txt'], ['nothing.txt'])
+['only_a.txt'] ['only_b.txt'] ['diff.txt', 'same.txt', 'sub'] ['diff.txt', 'same.txt'] ['sub'] ['same.txt'] ['diff.txt']
+diff build/typed_ffs/a build/typed_ffs/b
+Only in build/typed_ffs/a : ['only_a.txt']
+Only in build/typed_ffs/b : ['only_b.txt']
+Identical files : ['same.txt']
+Differing files : ['diff.txt']
+Common subdirectories : ['sub']
+diff build/typed_ffs/a build/typed_ffs/b
+Only in build/typed_ffs/a : ['only_a.txt']
+Only in build/typed_ffs/b : ['only_b.txt']
+Identical files : ['same.txt']
+Differing files : ['diff.txt']
+Common subdirectories : ['sub']
+
+diff build/typed_ffs/a/sub build/typed_ffs/b/sub
+Differing files : ['x.txt']
+['sub'] ['x.txt']
+5 False [0.5, 1.0, 1.0, 1.5, 2.0]
+0.5 []
+['abs 5 at 0.5', 'high 3 at 1.0', 'low 2 at 1.0', 'late 1 at 2.0'] True

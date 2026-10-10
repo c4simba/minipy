@@ -282,7 +282,7 @@ enum { FB_FOR, FB_WHILE, FB_TRY, FB_FINALLY, FB_WITH, FB_ASYNC_WITH, FB_HANDLER,
 typedef struct { int kind, lbreak, lcont; PyList *final; const char *name; int depth; } FBlock;
 typedef struct G {
     C *c; Scope *sc;
-    uint32_t *code; int *lines; int n, cap;
+    uint32_t *code; int *lines; int *pos; int n, cap;
     Value consts; int nconsts;                        /* a list */
     char **names; int nnames, cnames;
     char **vars; int nvars, cvars;
@@ -290,15 +290,51 @@ typedef struct G {
     Label *labels; int nlabels, clabels;
     int *jumps; int njumps, cjumps;
     int depth, maxdepth, line, nblocks, maxblocks;
+    int col, eline, ecol;                             /* the place of what is compiled (CPython's instruction positions) */
+    int *anc; int nanc, canc; int anc_set, anc_rec[6];   /* carets' anchors (CodeObj.anc) */
+    PyNode *stmt;                                     /* the statement being compiled */
     FBlock fb[64]; int nfb;
     int ret_tmp;
     int star_try;                                     /* try_finally: the handlers are except* ones */
 } G;
 
+typedef struct { int line, col, eline, ecol, anc_set, anc_rec[6]; } Pos;
+static Pos getpos(G *g){ Pos p={g->line,g->col,g->eline,g->ecol,g->anc_set,{0}}; memcpy(p.anc_rec,g->anc_rec,sizeof p.anc_rec); return p; }
+static void setpos(G *g, Pos p){ g->line=p.line; g->col=p.col; g->eline=p.eline; g->ecol=p.ecol; g->anc_set=p.anc_set; memcpy(g->anc_rec,p.anc_rec,sizeof p.anc_rec); }
+static void anchors_of(G *g, PyNode *n);
+/* the place of node n: its span (and caret anchors); a compound statement: its first line, no columns */
+static void posn(G *g, PyNode *n){ if(!n || !n->line) return; g->line=n->line; g->col=n->col; g->eline=n->end_line; g->ecol=n->end_col; anchors_of(g,n); }
+static void posh(G *g, PyNode *n){ g->line=n->line; g->col=-1; g->eline=n->line; g->ecol=-1; g->anc_set=0; }
+/* the next instruction's caret anchors: CPython's ~~^~~ (binop), ~~^^^ (subscript, call) */
+static void anchor_set(G *g, int kind, int l1, int c1, int l2, int c2, int special){
+    g->anc_set=1; g->anc_rec[0]=kind; g->anc_rec[1]=l1; g->anc_rec[2]=c1; g->anc_rec[3]=l2; g->anc_rec[4]=c2; g->anc_rec[5]=special; }
+static void anchor_binop(G *g, PyNode *n){ anchor_set(g,1,n->n[0]->end_line,n->n[0]->end_col,n->n[1]->line,n->n[1]->col,-1); }
+static void anchor_sub(G *g, PyNode *t){ anchor_set(g,2,t->n[0]->end_line,t->n[0]->end_col,0,0,-1); }
+static void anchor_call(G *g, PyNode *n);
+/* (what CPython finds parsing the instruction's text: a binary operation, a subscript or a call) */
+static void anchors_of(G *g, PyNode *n){
+    g->anc_set=0;
+    if(n->kind==PK_BinOp) anchor_binop(g,n);
+    else if(n->kind==PK_Subscript) anchor_sub(g,n);
+    else if(n->kind==PK_Call) anchor_call(g,n);
+}
+static void anchor_call(G *g, PyNode *n){
+    PyNode *s=g->stmt; int sc=-1;                     /* (return f(...) / x = f(...) on its own lines: no carets, as CPython) */
+    if(s && s->line==n->line && s->end_line==n->end_line &&
+       ((s->kind==PK_Return && s->n[0]==n && n->n[0]->kind==PK_Name) ||
+        (s->kind==PK_Assign && s->L[0].n==1 && s->L[0].v[0]->kind==PK_Name && s->n[0]==n))) sc=s->col;
+    anchor_set(g,3,n->n[0]->end_line,n->n[0]->end_col,0,0,sc);
+}
 static int stack_effect(int op, int arg);
 static void emit(G *g, int op, int arg){
-    if(g->n==g->cap){ g->cap=g->cap?g->cap*2:256; g->code=(uint32_t*)xrealloc(g->code,sizeof(uint32_t)*(size_t)g->cap); g->lines=(int*)xrealloc(g->lines,sizeof(int)*(size_t)g->cap); }
-    g->code[g->n]=(uint32_t)op|((uint32_t)arg<<8); g->lines[g->n]=g->line; g->n++;
+    if(g->n==g->cap){ g->cap=g->cap?g->cap*2:256; g->code=(uint32_t*)xrealloc(g->code,sizeof(uint32_t)*(size_t)g->cap); g->lines=(int*)xrealloc(g->lines,sizeof(int)*(size_t)g->cap);
+        g->pos=(int*)xrealloc(g->pos,sizeof(int)*3*(size_t)g->cap); }
+    g->code[g->n]=(uint32_t)op|((uint32_t)arg<<8); g->lines[g->n]=g->line;
+    g->pos[3*g->n]= g->eline>=g->line ? g->eline : g->line; g->pos[3*g->n+1]=g->col; g->pos[3*g->n+2]=g->ecol;
+    if(g->anc_set){
+        if(g->nanc==g->canc){ g->canc=g->canc?g->canc*2:32; g->anc=(int*)xrealloc(g->anc,sizeof(int)*7*(size_t)g->canc); }
+        int *r=g->anc+7*g->nanc++; r[0]=g->n; for(int i=0;i<6;i++) r[1+i]=g->anc_rec[i]; }
+    g->n++;
     g->depth+=stack_effect(op,arg);
     if(g->depth>g->maxdepth) g->maxdepth=g->depth;
     if(g->depth<0) g->depth=0;
@@ -513,6 +549,7 @@ static void call(G *g, PyNode *n){
                 else { ex(g,k->n[0]); emit(g,I_DICT_UPDATE,1|0x100); }
             }
         }
+        posn(g,n);
         emit(g,I_CALL_EX,kws->n?1:0);
         return;
     }
@@ -520,18 +557,18 @@ static void call(G *g, PyNode *n){
     Value kwn=v_undef();
     if(kws->n){ kwn=mp_tuple(kws->n,NULL); for(int i=0;i<kws->n;i++) AS_TUPLE(kwn)->items[i]=mp_intern(kws->v[i]->id[0]); }
     if(f->kind==PK_Attribute){
-        ex(g,f->n[0]); int save=g->line; g->line=f->line; emit(g,I_LOAD_METHOD,name_ix(g,f->id[0])); g->line=save;
+        ex(g,f->n[0]); Pos save=getpos(g); posn(g,f); emit(g,I_LOAD_METHOD,name_ix(g,f->id[0])); setpos(g,save);
         for(int i=0;i<args->n;i++) ex(g,args->v[i]);
         for(int i=0;i<kws->n;i++) ex(g,kws->v[i]->n[0]);
         if(kws->n) load_const(g,kwn);
-        g->line=n->line;
+        posn(g,n);
         emit(g,I_CALL_METHOD,nargs|(kws->n?1<<16:0));
         return;
     }
     ex(g,f);
     for(int i=0;i<args->n;i++) ex(g,args->v[i]);
     for(int i=0;i<kws->n;i++) ex(g,kws->v[i]->n[0]);
-    g->line=n->line;
+    posn(g,n);
     if(kws->n){ load_const(g,kwn); emit(g,I_CALL_KW,nargs); }
     else emit(g,I_CALL,nargs);
 }
@@ -596,11 +633,11 @@ static void fstring_part(G *g, PyNode *v){
     else emit(g,I_FORMAT,conv);
 }
 static void ex(G *g, PyNode *n){
-    int save=g->line; if(n->line) g->line=n->line;
+    Pos save=getpos(g); posn(g,n);
     switch(n->kind){
         case PK_Constant: if(n->k->kind==PC_None) emit(g,I_NONE,0); else load_const(g,const_of(g,n)); break;
         case PK_Name: name_op(g,n->id[0],0); break;
-        case PK_BinOp: ex(g,n->n[0]); ex(g,n->n[1]); g->line=n->line; emit(g,I_BINOP,n->op); break;
+        case PK_BinOp: ex(g,n->n[0]); ex(g,n->n[1]); posn(g,n); emit(g,I_BINOP,n->op); break;
         case PK_UnaryOp: ex(g,n->n[0]); if(n->op==OP_Not) emit(g,I_NOT,0); else emit(g,I_UNARY,n->op); break;
         case PK_BoolOp:{
             int end=new_label(g);
@@ -612,7 +649,7 @@ static void ex(G *g, PyNode *n){
         case PK_Compare:{
             ex(g,n->n[0]);
             int nops=n->L[1].n;
-            if(nops==1){ ex(g,n->L[1].v[0]); g->line=n->line; emit(g,I_COMPARE,n->L[0].v[0]->op); break; }
+            if(nops==1){ ex(g,n->L[1].v[0]); posn(g,n); emit(g,I_COMPARE,n->L[0].v[0]->op); break; }
             int cleanup=new_label(g), end=new_label(g);
             for(int i=0;i<nops;i++){
                 ex(g,n->L[1].v[i]);
@@ -629,7 +666,7 @@ static void ex(G *g, PyNode *n){
             place(g,el); g->depth--; ex(g,n->n[2]);
             place(g,end); break; }
         case PK_Call: call(g,n); break;
-        case PK_Attribute: ex(g,n->n[0]); g->line=n->line; emit(g,I_LOAD_ATTR,name_ix(g,n->id[0])); break;
+        case PK_Attribute: ex(g,n->n[0]); posn(g,n); emit(g,I_LOAD_ATTR,name_ix(g,n->id[0])); break;
         case PK_Subscript:
             ex(g,n->n[0]);
             if(n->n[1]->kind==PK_Slice){ PyNode *s=n->n[1];
@@ -637,7 +674,7 @@ static void ex(G *g, PyNode *n){
                 if(s->n[1]) ex(g,s->n[1]); else emit(g,I_NONE,0);
                 if(s->n[2]){ ex(g,s->n[2]); emit(g,I_BUILD_SLICE,3); } else emit(g,I_BUILD_SLICE,2);
             } else ex(g,n->n[1]);
-            g->line=n->line; emit(g,I_SUBSCR,0); break;
+            posn(g,n); emit(g,I_SUBSCR,0); break;
         case PK_Slice:
             if(n->n[0]) ex(g,n->n[0]); else emit(g,I_NONE,0);
             if(n->n[1]) ex(g,n->n[1]); else emit(g,I_NONE,0);
@@ -698,25 +735,26 @@ static void ex(G *g, PyNode *n){
                 if(v->op>0){ char cv[2]={(char)v->op,0}; load_const(g,mp_str(cv)); } else emit(g,I_NONE,0);
                 if(v->n[1]) ex(g,v->n[1]); else load_const(g,mp_str(""));
                 emit(g,I_BUILD_TUPLE,4); }
-            g->line=n->line; emit(g,I_CALL,n->L[0].n);
+            posn(g,n); emit(g,I_CALL,n->L[0].n);
             break;
         default: cfail(g->c,n->line,"unsupported expression %s",py_kind_name(n->kind));
     }
-    g->line=save;
+    setpos(g,save);
 }
 
 /* ---------------------------------------------------------------- assignment targets */
 static void store(G *g, PyNode *t){
     switch(t->kind){
         case PK_Name: name_op(g,t->id[0],1); break;
-        case PK_Attribute: ex(g,t->n[0]); g->line=t->line; emit(g,I_STORE_ATTR,name_ix(g,t->id[0])); break;
+        case PK_Attribute: ex(g,t->n[0]); posn(g,t); emit(g,I_STORE_ATTR,name_ix(g,t->id[0])); break;
         case PK_Subscript:
             ex(g,t->n[0]);
             if(t->n[1]->kind==PK_Slice) ex(g,t->n[1]); else ex(g,t->n[1]);
-            g->line=t->line; emit(g,I_STORE_SUBSCR,0); break;
+            posn(g,t); emit(g,I_STORE_SUBSCR,0); break;
         case PK_Tuple: case PK_List:{
             PyList *l=&t->L[0]; int star=-1;
             for(int i=0;i<l->n;i++) if(l->v[i]->kind==PK_Starred){ if(star>=0) cfail(g->c,t->line,"multiple starred expressions in assignment"); star=i; }
+            posn(g,t);                                 /* (too many / too few values: at the targets) */
             if(star<0) emit(g,I_UNPACK,l->n);
             else emit(g,I_UNPACK_EX,star|((l->n-star-1)<<8));
             for(int i=0;i<l->n;i++) store(g,l->v[i]->kind==PK_Starred ? l->v[i]->n[0] : l->v[i]);
@@ -728,8 +766,8 @@ static void store(G *g, PyNode *t){
 static void delete_target(G *g, PyNode *t){
     switch(t->kind){
         case PK_Name: name_op(g,t->id[0],2); break;
-        case PK_Attribute: ex(g,t->n[0]); emit(g,I_DEL_ATTR,name_ix(g,t->id[0])); break;
-        case PK_Subscript: ex(g,t->n[0]); ex(g,t->n[1]); emit(g,I_DEL_SUBSCR,0); break;
+        case PK_Attribute: ex(g,t->n[0]); posn(g,t); emit(g,I_DEL_ATTR,name_ix(g,t->id[0])); break;
+        case PK_Subscript: ex(g,t->n[0]); ex(g,t->n[1]); posn(g,t); emit(g,I_DEL_SUBSCR,0); break;
         case PK_Tuple: case PK_List: for(int i=0;i<t->L[0].n;i++) delete_target(g,t->L[0].v[i]); break;
         default: cfail(g->c,t->line,"cannot delete %s",py_kind_name(t->kind));
     }
@@ -783,7 +821,7 @@ static void try_except(G *g, PyNode *n){
     emit(g,I_PUSH_EXC,0);
     for(int i=0;i<n->L[3].n;i++){
         PyNode *h=n->L[3].v[i];
-        g->line=h->line;
+        posh(g,h);
         int next=new_label(g);
         if(h->n[0]){
             emit(g,I_DUP,0); ex(g,h->n[0]); emit(g,I_EXC_MATCH,0);
@@ -839,7 +877,7 @@ static void try_star(G *g, PyNode *n){
     emit(g,I_CALL_INTRINSIC,1);                   /* [state] */
     for(int i=0;i<n->L[3].n;i++){
         PyNode *h=n->L[3].v[i];
-        g->line=h->line;
+        posh(g,h);
         int skip=new_label(g), raised=new_label(g), done=new_label(g);
         if(!h->n[0]) cfail(g->c,h->line,"expected one or more exception types");
         emit(g,I_DUP,0); ex(g,h->n[0]); emit(g,I_CALL_INTRINSIC,2);   /* [state, state, matched or None] */
@@ -900,7 +938,7 @@ static void with_items(G *g, PyNode *n, int item, int async){
     PyNode *w=n->L[3].v[item];
     int exc=new_label(g), end=new_label(g);
     ex(g,w->n[0]);
-    g->line=n->line;
+    posn(g,w->n[0]);                                   /* (__enter__ / __exit__: at the context expression, as CPython) */
     if(!async){
         emit_jump(g,I_WITH_ENTER,exc); g->nblocks++; if(g->nblocks>g->maxblocks) g->maxblocks=g->nblocks;
         if(w->n[1]) store(g,w->n[1]); else emit(g,I_POP,0);
@@ -913,11 +951,13 @@ static void with_items(G *g, PyNode *n, int item, int async){
     push_fb(g,async?FB_ASYNC_WITH:FB_WITH,-1,-1,NULL,NULL);
     with_items(g,n,item+1,async);
     g->nfb--;
+    posn(g,w->n[0]);                                   /* (__exit__: at the context expression too) */
     pop_block(g);
     if(!async) emit(g,I_WITH_EXIT,0);
     else { emit(g,I_WITH_EXIT,4); emit(g,I_GET_AWAITABLE,0); yield_from_loop(g); emit(g,I_POP,0); }
     emit_jump(g,I_JUMP,end);
     place(g,exc);                                 /* [exit, exc] */
+    posn(g,w->n[0]);
     emit(g,I_PUSH_EXC,0);
     if(!async) emit(g,I_WITH_EXIT,1);
     else { emit(g,I_WITH_EXIT,2); emit(g,I_GET_AWAITABLE,0); yield_from_loop(g); emit(g,I_WITH_EXIT,3); }
@@ -1059,7 +1099,7 @@ static void match_stmt(G *g, PyNode *n){
     int base=g->depth;
     for(int i=0;i<n->L[3].n;i++){
         PyNode *mc=n->L[3].v[i];
-        g->line=mc->line;
+        posn(g,mc);
         int next=new_label(g);
         int last= i==n->L[3].n-1;
         emit(g,I_DUP,0);
@@ -1076,8 +1116,23 @@ static void match_stmt(G *g, PyNode *n){
 }
 
 static char *ann_text(PyNode *a);
+/* `name: type` in a module's or class's body, also inside its if / for / while / with / try / match blocks */
+static int body_has_annotations(PyList *body){
+    for(int i=0;i<body->n;i++){ PyNode *s=body->v[i]; if(!s) continue;
+        if(s->kind==PK_AnnAssign && s->n[0]->kind==PK_Name && s->op) return 1;
+        if(s->kind==PK_If||s->kind==PK_For||s->kind==PK_AsyncFor||s->kind==PK_While||s->kind==PK_With||s->kind==PK_AsyncWith||s->kind==PK_Try||s->kind==PK_TryStar
+           ||s->kind==PK_ExceptHandler||s->kind==PK_Match||s->kind==PK_match_case)
+            for(int k=0;k<5;k++){ PyList *l=&s->L[k]; int stmts=0;
+                for(int j=0;j<l->n;j++) if(l->v[j] && (l->v[j]->kind<PK_BoolOp || l->v[j]->kind==PK_ExceptHandler || l->v[j]->kind==PK_match_case)) stmts=1;
+                if(stmts && body_has_annotations(l)) return 1; } }
+    return 0;
+}
 static void st(G *g, PyNode *n){
-    g->line=n->line;
+    g->stmt=n;
+    switch(n->kind){                                  /* (a compound statement's own instructions: its first line) */
+        case PK_For: case PK_AsyncFor: case PK_While: case PK_If: case PK_With: case PK_AsyncWith: case PK_Try: case PK_TryStar:
+        case PK_FunctionDef: case PK_AsyncFunctionDef: case PK_ClassDef: case PK_Match: posh(g,n); break;
+        default: posn(g,n); }
     switch(n->kind){
         case PK_Expr:
             if(n->n[0]->kind==PK_Constant) break;     /* (docstrings and other bare constants) */
@@ -1088,14 +1143,14 @@ static void st(G *g, PyNode *n){
             break;
         case PK_AugAssign:{
             PyNode *t=n->n[0];
-            if(t->kind==PK_Name){ name_op(g,t->id[0],0); ex(g,n->n[1]); g->line=n->line; emit(g,I_INPLACE,n->op); name_op(g,t->id[0],1); }
+            if(t->kind==PK_Name){ name_op(g,t->id[0],0); ex(g,n->n[1]); posn(g,n); emit(g,I_INPLACE,n->op); name_op(g,t->id[0],1); }
             else if(t->kind==PK_Attribute){
                 ex(g,t->n[0]); emit(g,I_DUP,0); emit(g,I_LOAD_ATTR,name_ix(g,t->id[0]));
-                ex(g,n->n[1]); g->line=n->line; emit(g,I_INPLACE,n->op);
+                ex(g,n->n[1]); posn(g,n); emit(g,I_INPLACE,n->op);
                 emit(g,I_ROT2,0); emit(g,I_STORE_ATTR,name_ix(g,t->id[0]));
             } else if(t->kind==PK_Subscript){
                 ex(g,t->n[0]); ex(g,t->n[1]); emit(g,I_DUP2,0); emit(g,I_SUBSCR,0);
-                ex(g,n->n[1]); g->line=n->line; emit(g,I_INPLACE,n->op);
+                ex(g,n->n[1]); posn(g,n); emit(g,I_INPLACE,n->op);
                 emit(g,I_ROT3,0); emit(g,I_STORE_SUBSCR,0);
             } else cfail(g->c,n->line,"illegal expression for augmented assignment");
             break; }
@@ -1133,10 +1188,11 @@ static void st(G *g, PyNode *n){
             break; }
         case PK_For:{
             int top=new_label(g), exit_=new_label(g), brk=new_label(g);
-            ex(g,n->n[1]); emit(g,I_GET_ITER,n->n[1]->kind==PK_Call);     /* (1: a generator made here belongs to the loop) */
+            ex(g,n->n[1]); posn(g,n->n[1]); emit(g,I_GET_ITER,n->n[1]->kind==PK_Call);     /* (1: a generator made here belongs to the loop) */
             place(g,top);
-            g->line=n->line;
+            posn(g,n->n[1]);                           /* (the iteration: at the iterable, as CPython) */
             emit_jump(g,I_FOR_ITER,exit_);
+            posh(g,n);
             store(g,n->n[0]);
             push_fb(g,FB_FOR,brk,top,NULL,NULL);
             stmts(g,&n->L[0]);
@@ -1148,9 +1204,9 @@ static void st(G *g, PyNode *n){
             break; }
         case PK_AsyncFor:{
             int top=new_label(g), done=new_label(g), brk=new_label(g), after=new_label(g);
-            ex(g,n->n[1]); emit(g,I_GET_AITER,0);
+            ex(g,n->n[1]); posn(g,n->n[1]); emit(g,I_GET_AITER,0);
             place(g,top);
-            g->line=n->line;
+            posn(g,n->n[1]);
             setup(g,done);                             /* StopAsyncIteration: the end */
             emit(g,I_GET_ANEXT,0); emit(g,I_GET_AWAITABLE,0); yield_from_loop(g);
             pop_block(g);
@@ -1204,7 +1260,7 @@ static void st(G *g, PyNode *n){
         case PK_Assert:{
             int ok=new_label(g);
             ex(g,n->n[0]); emit_jump(g,I_JUMP_IF_TRUE,ok);
-            if(n->n[1]){ ex(g,n->n[1]); emit(g,I_ASSERT_FAIL,1); } else emit(g,I_ASSERT_FAIL,0);
+            if(n->n[1]){ ex(g,n->n[1]); posn(g,n->n[0]); emit(g,I_ASSERT_FAIL,1); } else { posn(g,n->n[0]); emit(g,I_ASSERT_FAIL,0); }
             place(g,ok); break; }
         case PK_With: with_items(g,n,0,0); break;
         case PK_AsyncWith: with_items(g,n,0,1); break;
@@ -1232,19 +1288,19 @@ static void st(G *g, PyNode *n){
         case PK_Global: case PK_Nonlocal: break;
         case PK_FunctionDef: case PK_AsyncFunctionDef:{
             for(int i=0;i<n->L[1].n;i++) ex(g,n->L[1].v[i]);
-            g->line=n->line;
+            posh(g,n);
             make_function(g,n->n[0]);
             for(int i=0;i<n->L[1].n;i++) emit(g,I_CALL,1);
             name_op(g,n->id[0],1);
             break; }
         case PK_ClassDef:{
             for(int i=0;i<n->L[1].n;i++) ex(g,n->L[1].v[i]);
-            g->line=n->line;
+            posh(g,n);
             load_const(g,mp_str(n->id[0]));
             for(int i=0;i<n->L[3].n;i++) ex(g,n->L[3].v[i]);
             int kw=0;
             if(n->L[4].n){ for(int i=0;i<n->L[4].n;i++){ PyNode *k=n->L[4].v[i]; if(!k->id[0]) cfail(g->c,n->line,"**kwargs in a class statement is not supported"); load_const(g,mp_intern(k->id[0])); ex(g,k->n[0]); } emit(g,I_BUILD_DICT,n->L[4].n); kw=1; }
-            g->line=n->line;
+            posh(g,n);
             make_function(g,NULL);                     /* the body: [name, bases..., (keywords), body] */
             emit(g,I_MAKE_CLASS,n->L[3].n|(kw<<16));
             for(int i=0;i<n->L[1].n;i++) emit(g,I_CALL,1);
@@ -1348,7 +1404,7 @@ static Value make_code(C *c, Scope *s){
     if(s->kind==SK_MODULE) flags|=CO_MODULE;
     if(s->kind==SK_COMP) flags|=CO_COMP;
     co->doc=v_none();
-    g->line= n ? n->line : 1;
+    g->line= n ? n->line : 1; g->col=-1; g->eline=g->line; g->ecol=-1;
     /* the body */
     if(s->kind==SK_MODULE || (s->kind==SK_FUNC && n->kind!=PK_Lambda) || s->kind==SK_CLASS){
         PyList *body=&n->L[0];
@@ -1360,9 +1416,7 @@ static Value make_code(C *c, Scope *s){
             if(has_doc){ load_const(g,co->doc); emit(g,I_STORE_NAME,name_ix(g,"__doc__")); }
         }
         if(s->kind==SK_MODULE && has_doc){ load_const(g,co->doc); emit(g,I_STORE_GLOBAL,name_ix(g,"__doc__")); }
-        int anns=0;
-        for(int i=0;i<body->n;i++) if(body->v[i]->kind==PK_AnnAssign && body->v[i]->n[0]->kind==PK_Name && body->v[i]->op) anns=1;
-        if(anns && (s->kind==SK_MODULE || s->kind==SK_CLASS)) emit(g,I_SETUP_ANNOTATIONS,0);
+        if(body_has_annotations(body) && (s->kind==SK_MODULE || s->kind==SK_CLASS)) emit(g,I_SETUP_ANNOTATIONS,0);
         stmts(g,body);
         if(s->kind==SK_CLASS && s->has_class_cell){ emit(g,I_LOAD_CELL,cell_ix(g,"__class__")); emit(g,I_RETURN,0); }
         else { emit(g,I_NONE,0); emit(g,I_RETURN,0); }
@@ -1379,7 +1433,7 @@ static Value make_code(C *c, Scope *s){
     }
     /* labels -> positions */
     for(int i=0;i<g->njumps;i++){ int at=g->jumps[i]; int l=(int)(g->code[at]>>8); g->code[at]=(g->code[at]&0xff)|((uint32_t)g->labels[l].pos<<8); }
-    co->code=g->code; co->lines=g->lines; co->ncode=g->n;
+    co->code=g->code; co->lines=g->lines; co->pos=g->pos; co->anc=g->anc; co->nanc=g->nanc; co->ncode=g->n;
     ListObj *cl=AS_LIST(keep_list);
     co->nconsts=(int)cl->len; co->consts=(Value*)xmalloc(sizeof(Value)*(size_t)(cl->len+1)); memcpy(co->consts,cl->items,sizeof(Value)*(size_t)cl->len);
     co->nnames=g->nnames; co->names=(StrObj**)xmalloc(sizeof(StrObj*)*(size_t)(g->nnames+1));

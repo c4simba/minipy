@@ -7,7 +7,8 @@ rt_ucspecial blocks of src/aot_rtlib.asm), so the two agree on every
 character. Covered as CPython sees them: everything below U+0700 (Latin,
 IPA, Greek, Cyrillic, Armenian, Hebrew, Arabic), general punctuation, number
 forms, CJK symbols and kana, CJK ideographs, Hangul, fullwidth forms;
-other code points are printable and have no class or case.
+other code points have no class or case. Which code points are printable
+(repr, str.isprintable) is known for all of Unicode.
 
 usage: python3 tools/gen_unicode.py      (rewrites both files in place)
 """
@@ -19,8 +20,8 @@ import unicodedata
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BLOCKS = [(0, 0x6FF), (0x1680, 0x1680), (0x2000, 0x206F), (0x2150, 0x218F), (0x3000, 0x30FF),
           (0x4E00, 0x9FFF), (0xAC00, 0xD7A3), (0xFF00, 0xFF65)]
-# non-printable code points are looked up separately (repr needs them alone)
-NOPRINT_BLOCKS = BLOCKS + [(0xD800, 0xF8FF), (0xFEFF, 0xFEFF), (0xFFF9, 0xFFFB)]
+# non-printable code points are looked up separately (repr needs them alone): all of Unicode
+NOPRINT_BLOCKS = [(0, 0x10FFFF)]
 # Case_Ignorable beyond the categories Mn Me Cf Lm Sk (Word_Break MidLetter, MidNumLet, Single_Quote)
 IGNORABLE = {0x27, 0x2E, 0x3A, 0xB7, 0x387, 0x55F, 0x5F4, 0x2018, 0x2019, 0x2024, 0x2027,
              0xFE13, 0xFE52, 0xFE55, 0xFF07, 0xFF0E, 0xFF1A}
@@ -64,7 +65,7 @@ def ranges():
 
 def noprint():
     out = []
-    for lo, hi in NOPRINT_BLOCKS:
+    for lo, hi in sorted(NOPRINT_BLOCKS):            # (in order: the tables are searched by halves)
         for c in range(max(lo, 0x80), hi + 1):
             if not chr(c).isprintable():
                 if out and out[-1][1] == c - 1:

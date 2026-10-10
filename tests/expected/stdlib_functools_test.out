@@ -1,0 +1,15 @@
+int 1 list of 2 obj 's' int True True
+8 str other
+1024 functools.partial(<built-in function pow>, 2) {'sep': '-'}
+(3, 1)
+[1, 4, 1, 9, 1] CacheInfo(hits=2, misses=3, maxsize=2, currsize=2)
+12586269025 24 7
+named doc here named
+True True [3, 2, 1]
+computing
+42 42
+('__module__', '__name__', '__qualname__', '__doc__', '__annotate__', '__type_params__') Placeholder
+{'a': 1, 'b': 2, 'c': 3} {'a': 1, 'b': 2, 'c': 3} 3 True 0 ['a', 'b', 'c'] True {'a': 1, 'b': 2, 'c': 3, 'x': 9} {'a': 1, 'b': 2, 'c': 3}
+[1, 2, 3, 5] [1, 2, 3, 5, 7] [2, 3, 5] UserList [1, 2, 3, 5, 1, 2, 3, 5] True 2 True True
+HELLO Hello! el 5 2 True ['He', '', 'o'] 'Hello' True HelloHello HeLLo
+ABC Upper

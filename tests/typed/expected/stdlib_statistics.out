@@ -1,0 +1,15 @@
+1.6071428571428572 1.6071428571428572 2.3333333333333335 1.25 2.0 1.25 3.0
+1.5 [1.0, 2.0] 3.7
+1.16875 0.9739583333333334 1.171334200612195 1.084444746477784 1.3854166666666667
+36.000000000000014 3.6 56.0
+[2.75, 5.5, 8.25] [2.0, 3.0, 4.0] [1.6666666666666667, 2.8333333333333335]
+0.75 1.0 0.31622776601683794 LinearRegression(slope=2.0, intercept=1.0) LinearRegression(slope=2.0, intercept=0.0)
+1.0
+3.0 -2.0
+NormalDist(mu=100.0, sigma=15.0) 0.02659615202676218 0.8413447460685429 129.3994597681008 100.0 15.0 225.0 2.0 NormalDist(mu=2.716666666666667, sigma=0.5076087732365021)
+NormalDist(mu=105.0, sigma=15.0) NormalDist(mu=200.0, sigma=30.0) 0.7388826803635273 NormalDist(mu=4.0, sigma=4.47213595499958) True
+mean StatisticsError mean requires at least one data point
+median StatisticsError no median for empty data
+variance StatisticsError variance requires at least two data points
+pvariance StatisticsError pvariance requires at least one data point
+stdev StatisticsError stdev requires at least two data points

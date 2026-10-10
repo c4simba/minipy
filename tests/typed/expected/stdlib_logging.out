@@ -1,0 +1,53 @@
+INFO    |root|info x 5
+WARNING |root|100%
+ERROR   |root|42
+20 INFO 20 <RootLogger root (INFO)>
+True True True True
+True True
+WARNING |app.db|db warning
+30 False True <Logger app.db (WARNING)>
+DEBUG   |app.db.pool|deep debug [1, 2]
+ERROR   |app.db|to both
+'[app.db:40] to both\n[app.db:40] only to buf\n'
+True True 1
+INFO kept
+INFO child passes
+INFO a public message
+ERROR:division failed for 0
+ZeroDivisionError: division by zero
+ERROR:bad int
+ValueError: invalid literal for int() with base 10: 'zz'
+WARNING:again
+ValueError: invalid literal for int() with base 10: 'zz'
+ERROR:no exception here
+NoneType: None
+rec WARNING 30 from where here where stdlib_logging stdlib_logging.mpy 111 True
+True True True MainThread
+    INFO|00020|7   |fm|fn
+    INFO|00020|7   |'fmt'|m
+INFO fmt: hello $
+hello
+hello dflt
+ValueError: Invalid format 'no fields' for '%' style
+ValueError: Invalid format '%(x' for '%' style
+ValueError: invalid format: expected '}' before end of string
+ValueError: invalid format: invalid conversion: 'q'
+ValueError: invalid format: bad specifier: 'q'
+ValueError: invalid format: bare '$' not allowed
+ValueError: invalid format: no fields
+ValueError: Style must be one of: %,{,$
+True False True
+KeyError: "Attempt to overwrite 'message' in LogRecord"
+bob/10.0.0.1: login
+ann/::1: via adapter 3
+VERBOSE Level 33 15
+VERBOSE |app.db|verbose message
+ERROR   |app.db|error via log
+CRITICAL|app.db|critical passes
+ERROR   |app.db|enabled again
+'WARNING line one\nERROR line 2\n'
+True <StreamHandler (NOTSET)> <NullHandler (NOTSET)>
+ERROR   |quiet|nowhere
+10 30 50 
+ValueError: Unknown level: 'NOPE'
+[('CRITICAL', 50), ('DEBUG', 10), ('ERROR', 40)]

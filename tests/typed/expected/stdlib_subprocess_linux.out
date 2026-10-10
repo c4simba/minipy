@@ -1,0 +1,18 @@
+0 b'hello world\n' b''
+3 'out\n' 'err\n'
+CompletedProcess(args=['sh', '-c', 'echo out; echo err 1>&2; exit 3'], returncode=3, stdout='out\n', stderr='err\n')
+'42\n' None
+b'SHOUT\n'
+'text in\n'
+CalledProcessError: Command '['false']' returned non-zero exit status 1. 1
+FileNotFoundError: 2 no-such-program-xyz
+5 0
+one
+two (2, '')
+b'got data\n' None 1 1
+TimeoutExpired: Command '['sleep', '5']' timed out after 0.1 seconds
+-9
+TimeoutExpired: 0.1
+/
+bar
+"a b" c\"d e

@@ -1,0 +1,26 @@
+10 ['Look,', 'goof-ball', '-- use the', '-b option!', 'The quick', 'brown fox', 'jumps over', 'the lazy', 'dog. Self-', 'explanator', 'y well-', 'known', 'x-ray', 'e-mail foo', '--bar a-b-', 'c-d co-op', '123-456', 're-un-', 'done.']
+20 ['Look, goof-ball --', 'use the -b option!', 'The quick brown fox', 'jumps over the lazy', 'dog. Self-', 'explanatory well-', 'known x-ray e-mail', 'foo--bar a-b-c-d co-', 'op 123-456 re-un-', 'done.']
+33 ['Look, goof-ball -- use the -b', 'option! The quick brown fox jumps', 'over the lazy dog. Self-', 'explanatory well-known x-ray', 'e-mail foo--bar a-b-c-d co-op', '123-456 re-un-done.']
+70 ['Look, goof-ball -- use the -b option! The quick brown fox jumps over', 'the lazy dog. Self-explanatory well-known x-ray e-mail foo--bar a-b-', 'c-d co-op 123-456 re-un-done.']
+['Look,', ' ', 'goof-', 'ball', ' ', '--', ' ', 'use', ' ', 'the', ' ', '-b', ' ', 'option!']
+['Look,', ' ', 'goof-ball', ' ', '--', ' ', 'use', ' ', 'the', ' ', '-b', ' ', 'option!']
+* Look, goof-ball -- use
+  the -b option! The
+  quick brown fox jumps
+  over the lazy dog.
+  Self-explanatory well-
+  known x-ray e-mail foo
+  --bar a-b-c-d co-op
+  123-456 re-un-done.
+['supercalifra', 'gilisticexpi', 'alidocious', 'and-more-', 'hyphenated-', 'words']
+['supercalifragilisticexpialidocious']
+['Hello.  World.  Ok.  End?'] ['Hello.  World.  Next']
+Hello world! Hello [...] Look, goof-ball -- use the -b [...] Look, goof-ball -- use the -b option!...
+['Look, goof-ball -- use the -b', 'option! The quick brown fox', 'jumps over the lazy dog. [...]'] ['a       b       c'] ['a b c'] ['  lead  ', 'and trail', '  ']
+'hello\n  world\n\nend' '\tx\n  y' 'a\nb\n'
+'> a\n\n> b\n  \n> c' 'a\n+ b'
+ValueError invalid width 0 (must be > 0)
+[] one two
+three
+four five
+six seven

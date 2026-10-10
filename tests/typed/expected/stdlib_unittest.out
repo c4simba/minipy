@@ -1,0 +1,650 @@
+51
+| test_equal (__main__.Base.test_equal)
+| Equality of numbers. ... ok
+| test_error (__main__.Base.test_error) ... ERROR
+| test_fail_almost (__main__.Base.test_fail_almost) ... FAIL
+| test_fail_dict (__main__.Base.test_fail_dict) ... FAIL
+| test_fail_greater (__main__.Base.test_fail_greater) ... FAIL
+| test_fail_in (__main__.Base.test_fail_in) ... FAIL
+| test_fail_is (__main__.Base.test_fail_is) ... FAIL
+| test_fail_isinstance (__main__.Base.test_fail_isinstance) ... FAIL
+| test_fail_long_str (__main__.Base.test_fail_long_str) ... FAIL
+| test_fail_msg (__main__.Base.test_fail_msg) ... FAIL
+| test_fail_raises (__main__.Base.test_fail_raises) ... FAIL
+| test_fail_raises_regex (__main__.Base.test_fail_raises_regex) ... FAIL
+| test_fail_short_str (__main__.Base.test_fail_short_str) ... FAIL
+| test_fail_str (__main__.Base.test_fail_str) ... FAIL
+| test_raises (__main__.Base.test_raises) ... ok
+| test_skipif (__main__.Base.test_skipif) ... skipped 'not here'
+| test_skiptest (__main__.Base.test_skiptest) ... skipped 'later'
+| test_skipunless (__main__.Base.test_skipunless) ... skipped 'only there'
+| test_subtests (__main__.Base.test_subtests) ... 
+|   test_subtests (__main__.Base.test_subtests) (i=1) ... FAIL
+|   test_subtests (__main__.Base.test_subtests) (i=3) ... FAIL
+|   test_subtests (__main__.Base.test_subtests) [named] ... FAIL
+| test_xfail (__main__.Base.test_xfail) ... expected failure
+| test_xpass (__main__.Base.test_xpass) ... unexpected success
+| test_derived (__main__.Derived.test_derived) ... FAIL
+| test_equal (__main__.Derived.test_equal) ... ok
+| test_error (__main__.Derived.test_error) ... ERROR
+| test_fail_almost (__main__.Derived.test_fail_almost) ... FAIL
+| test_fail_dict (__main__.Derived.test_fail_dict) ... FAIL
+| test_fail_greater (__main__.Derived.test_fail_greater) ... FAIL
+| test_fail_in (__main__.Derived.test_fail_in) ... FAIL
+| test_fail_is (__main__.Derived.test_fail_is) ... FAIL
+| test_fail_isinstance (__main__.Derived.test_fail_isinstance) ... FAIL
+| test_fail_long_str (__main__.Derived.test_fail_long_str) ... FAIL
+| test_fail_msg (__main__.Derived.test_fail_msg) ... FAIL
+| test_fail_raises (__main__.Derived.test_fail_raises) ... FAIL
+| test_fail_raises_regex (__main__.Derived.test_fail_raises_regex) ... FAIL
+| test_fail_short_str (__main__.Derived.test_fail_short_str) ... FAIL
+| test_fail_str (__main__.Derived.test_fail_str) ... FAIL
+| test_raises (__main__.Derived.test_raises) ... ok
+| test_skipif (__main__.Derived.test_skipif) ... skipped 'not here'
+| test_skiptest (__main__.Derived.test_skiptest) ... skipped 'later'
+| test_skipunless (__main__.Derived.test_skipunless) ... skipped 'only there'
+| test_subtests (__main__.Derived.test_subtests) ... 
+|   test_subtests (__main__.Derived.test_subtests) (i=1) ... FAIL
+|   test_subtests (__main__.Derived.test_subtests) (i=3) ... FAIL
+|   test_subtests (__main__.Derived.test_subtests) [named] ... FAIL
+| test_xfail (__main__.Derived.test_xfail) ... expected failure
+| test_xpass (__main__.Derived.test_xpass) ... unexpected success
+| test_fail_count (__main__.Other.test_fail_count) ... FAIL
+| test_fail_list (__main__.Other.test_fail_list) ... FAIL
+| test_fail_list2 (__main__.Other.test_fail_list2) ... FAIL
+| test_fail_not_equal (__main__.Other.test_fail_not_equal) ... FAIL
+| test_fail_set (__main__.Other.test_fail_set) ... FAIL
+| test_fail_tuple (__main__.Other.test_fail_tuple) ... FAIL
+| test_list (__main__.Other.test_list) ... ok
+| test_one (__main__.Skipped.test_one) ... skipped 'whole class'
+| 
+| ======================================================================
+| ERROR: test_error (__main__.Base.test_error)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   ...
+| IndexError: list index out of range
+| 
+| ======================================================================
+| ERROR: test_error (__main__.Derived.test_error)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   ...
+| IndexError: list index out of range
+| 
+| ======================================================================
+| FAIL: test_fail_almost (__main__.Base.test_fail_almost)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_almost
+|     self.assertAlmostEqual(1.0, 1.1, places=3)
+|     ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 1.0 != 1.1 within 3 places (0.10000000000000009 difference)
+| 
+| ======================================================================
+| FAIL: test_fail_dict (__main__.Base.test_fail_dict)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_dict
+|     self.assertEqual({"a": 1, "b": 2}, {"a": 1, "b": 3})
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: {'a': 1, 'b': 2} != {'a': 1, 'b': 3}
+| - {'a': 1, 'b': 2}
+| ?               ^
+| 
+| + {'a': 1, 'b': 3}
+| ?               ^
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_greater (__main__.Base.test_fail_greater)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_greater
+|     self.assertGreater(1, 2, "not bigger")
+|     ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 1 not greater than 2 : not bigger
+| 
+| ======================================================================
+| FAIL: test_fail_in (__main__.Base.test_fail_in)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_in
+|     self.assertIn(5, [1, 2, 3])
+|     ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+| AssertionError: 5 not found in [1, 2, 3]
+| 
+| ======================================================================
+| FAIL: test_fail_is (__main__.Base.test_fail_is)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_is
+|     self.assertIsNone(7)
+|     ~~~~~~~~~~~~~~~~~^^^
+| AssertionError: 7 is not None
+| 
+| ======================================================================
+| FAIL: test_fail_isinstance (__main__.Base.test_fail_isinstance)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_isinstance
+|     self.assertIsInstance("s", int)
+|     ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 's' is not an instance of <class 'int'>
+| 
+| ======================================================================
+| FAIL: test_fail_long_str (__main__.Base.test_fail_long_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_long_str
+|     self.assertEqual("x" * 60 + "a" + "y" * 40, "x" * 60 + "b" + "y" * 40)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 'xxxx[35 chars]xxxxxxxxxxxxxxxxxxxxxayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' != 'xxxx[35 chars]xxxxxxxxxxxxxxxxxxxxxbyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'
+| - xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+| ?                                                             ^
+| + xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+| ?                                                             ^
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_msg (__main__.Base.test_fail_msg)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_msg
+|     self.assertTrue(0, "zero is false")
+|     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 0 is not true : zero is false
+| 
+| ======================================================================
+| FAIL: test_fail_raises (__main__.Base.test_fail_raises)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_raises
+|     with self.assertRaises(KeyError):
+|          ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: KeyError not raised
+| 
+| ======================================================================
+| FAIL: test_fail_raises_regex (__main__.Base.test_fail_raises_regex)
+| ----------------------------------------------------------------------
+| ValueError: invalid literal for int() with base 10: 'z'
+| 
+| During handling of the above exception, another exception occurred:
+| 
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_raises_regex
+|     with self.assertRaisesRegex(ValueError, "^nothing"):
+|          ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: "^nothing" does not match "invalid literal for int() with base 10: 'z'"
+| 
+| ======================================================================
+| FAIL: test_fail_short_str (__main__.Base.test_fail_short_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_short_str
+|     self.assertEqual("spam", "eggs")
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+| AssertionError: 'spam' != 'eggs'
+| - spam
+| + eggs
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_str (__main__.Base.test_fail_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_str
+|     self.assertEqual("line one\nline two\n", "line one\nline 2\n")
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 'line one\nline two\n' != 'line one\nline 2\n'
+|   line one
+| - line two
+| ?      ^^^
+| + line 2
+| ?      ^
+| 
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Base.test_subtests) (i=1)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertEqual(i % 2, 0)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 1 != 0
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Base.test_subtests) (i=3)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertEqual(i % 2, 0)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 1 != 0
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Base.test_subtests) [named]
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertTrue(False)
+|     ~~~~~~~~~~~~~~~^^^^^^^
+| AssertionError: False is not true
+| 
+| ======================================================================
+| FAIL: test_derived (__main__.Derived.test_derived)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_derived
+|     self.assertEqual(len(self.id()), 35)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 29 != 35
+| 
+| ======================================================================
+| FAIL: test_fail_almost (__main__.Derived.test_fail_almost)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_almost
+|     self.assertAlmostEqual(1.0, 1.1, places=3)
+|     ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 1.0 != 1.1 within 3 places (0.10000000000000009 difference)
+| 
+| ======================================================================
+| FAIL: test_fail_dict (__main__.Derived.test_fail_dict)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_dict
+|     self.assertEqual({"a": 1, "b": 2}, {"a": 1, "b": 3})
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: {'a': 1, 'b': 2} != {'a': 1, 'b': 3}
+| - {'a': 1, 'b': 2}
+| ?               ^
+| 
+| + {'a': 1, 'b': 3}
+| ?               ^
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_greater (__main__.Derived.test_fail_greater)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_greater
+|     self.assertGreater(1, 2, "not bigger")
+|     ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 1 not greater than 2 : not bigger
+| 
+| ======================================================================
+| FAIL: test_fail_in (__main__.Derived.test_fail_in)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_in
+|     self.assertIn(5, [1, 2, 3])
+|     ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+| AssertionError: 5 not found in [1, 2, 3]
+| 
+| ======================================================================
+| FAIL: test_fail_is (__main__.Derived.test_fail_is)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_is
+|     self.assertIsNone(7)
+|     ~~~~~~~~~~~~~~~~~^^^
+| AssertionError: 7 is not None
+| 
+| ======================================================================
+| FAIL: test_fail_isinstance (__main__.Derived.test_fail_isinstance)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_isinstance
+|     self.assertIsInstance("s", int)
+|     ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 's' is not an instance of <class 'int'>
+| 
+| ======================================================================
+| FAIL: test_fail_long_str (__main__.Derived.test_fail_long_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_long_str
+|     self.assertEqual("x" * 60 + "a" + "y" * 40, "x" * 60 + "b" + "y" * 40)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 'xxxx[35 chars]xxxxxxxxxxxxxxxxxxxxxayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' != 'xxxx[35 chars]xxxxxxxxxxxxxxxxxxxxxbyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'
+| - xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+| ?                                                             ^
+| + xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxbyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+| ?                                                             ^
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_msg (__main__.Derived.test_fail_msg)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_msg
+|     self.assertTrue(0, "zero is false")
+|     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 0 is not true : zero is false
+| 
+| ======================================================================
+| FAIL: test_fail_raises (__main__.Derived.test_fail_raises)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_raises
+|     with self.assertRaises(KeyError):
+|          ~~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: KeyError not raised
+| 
+| ======================================================================
+| FAIL: test_fail_raises_regex (__main__.Derived.test_fail_raises_regex)
+| ----------------------------------------------------------------------
+| ValueError: invalid literal for int() with base 10: 'z'
+| 
+| During handling of the above exception, another exception occurred:
+| 
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_raises_regex
+|     with self.assertRaisesRegex(ValueError, "^nothing"):
+|          ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: "^nothing" does not match "invalid literal for int() with base 10: 'z'"
+| 
+| ======================================================================
+| FAIL: test_fail_short_str (__main__.Derived.test_fail_short_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_short_str
+|     self.assertEqual("spam", "eggs")
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+| AssertionError: 'spam' != 'eggs'
+| - spam
+| + eggs
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_str (__main__.Derived.test_fail_str)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_str
+|     self.assertEqual("line one\nline two\n", "line one\nline 2\n")
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: 'line one\nline two\n' != 'line one\nline 2\n'
+|   line one
+| - line two
+| ?      ^^^
+| + line 2
+| ?      ^
+| 
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Derived.test_subtests) (i=1)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertEqual(i % 2, 0)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 1 != 0
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Derived.test_subtests) (i=3)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertEqual(i % 2, 0)
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 1 != 0
+| 
+| ======================================================================
+| FAIL: test_subtests (__main__.Derived.test_subtests) [named]
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_subtests
+|     self.assertTrue(False)
+|     ~~~~~~~~~~~~~~~^^^^^^^
+| AssertionError: False is not true
+| 
+| ======================================================================
+| FAIL: test_fail_count (__main__.Other.test_fail_count)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_count
+|     self.assertCountEqual([1, 1, 2], [1, 2, 2])
+|     ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: Element counts were not equal:
+| First has 2, Second has 1:  1
+| First has 1, Second has 2:  2
+| 
+| ======================================================================
+| FAIL: test_fail_list (__main__.Other.test_fail_list)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_list
+|     self.assertEqual([1, 2, 3], [1, 2])
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+| AssertionError: Lists differ: [1, 2, 3] != [1, 2]
+| 
+| First list contains 1 additional elements.
+| First extra element 2:
+| 3
+| 
+| - [1, 2, 3]
+| ?      ---
+| 
+| + [1, 2]
+| 
+| ======================================================================
+| FAIL: test_fail_list2 (__main__.Other.test_fail_list2)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_list2
+|     self.assertEqual([1, 2], [1, 2, 5])
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+| AssertionError: Lists differ: [1, 2] != [1, 2, 5]
+| 
+| Second list contains 1 additional elements.
+| First extra element 2:
+| 5
+| 
+| - [1, 2]
+| + [1, 2, 5]
+| ?      +++
+| 
+| 
+| ======================================================================
+| FAIL: test_fail_not_equal (__main__.Other.test_fail_not_equal)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_not_equal
+|     self.assertNotEqual("a", "a")
+|     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+| AssertionError: 'a' == 'a'
+| 
+| ======================================================================
+| FAIL: test_fail_set (__main__.Other.test_fail_set)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_set
+|     self.assertEqual({1, 2}, {2, 3})
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+| AssertionError: Items in the first set but not the second:
+| 1
+| Items in the second set but not the first:
+| 3
+| 
+| ======================================================================
+| FAIL: test_fail_tuple (__main__.Other.test_fail_tuple)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_tuple
+|     self.assertEqual((1, "a"), (1, "b"))
+|     ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+| AssertionError: Tuples differ: (1, 'a') != (1, 'b')
+| 
+| First differing element 1:
+| 'a'
+| 'b'
+| 
+| - (1, 'a')
+| ?      ^
+| 
+| + (1, 'b')
+| ?      ^
+| 
+| 
+| ======================================================================
+| UNEXPECTED SUCCESS: test_xpass (__main__.Base.test_xpass)
+| UNEXPECTED SUCCESS: test_xpass (__main__.Derived.test_xpass)
+| ----------------------------------------------------------------------
+| Ran 51 tests
+| 
+| FAILED (failures=37, errors=2, skipped=7, expected failures=2, unexpected successes=2)
+| 
+51 37 2 7 2 2 False
+['test_error (__main__.Base.test_error)', 'test_error (__main__.Derived.test_error)']
+[('test_skipif (__main__.Base.test_skipif)', 'not here'), ('test_skiptest (__main__.Base.test_skiptest)', 'later'), ('test_skipunless (__main__.Base.test_skipunless)', 'only there'), ('test_skipif (__main__.Derived.test_skipif)', 'not here'), ('test_skiptest (__main__.Derived.test_skiptest)', 'later'), ('test_skipunless (__main__.Derived.test_skipunless)', 'only there'), ('test_one (__main__.Skipped.test_one)', 'whole class')]
+setUpModule
+setUpClass
+setUp test_equal
+tearDown test_equal
+cleanup test_equal
+setUp test_error
+tearDown test_error
+cleanup test_error
+setUp test_fail_almost
+tearDown test_fail_almost
+cleanup test_fail_almost
+setUp test_fail_dict
+tearDown test_fail_dict
+cleanup test_fail_dict
+setUp test_fail_greater
+tearDown test_fail_greater
+cleanup test_fail_greater
+setUp test_fail_in
+tearDown test_fail_in
+cleanup test_fail_in
+setUp test_fail_is
+tearDown test_fail_is
+cleanup test_fail_is
+setUp test_fail_isinstance
+tearDown test_fail_isinstance
+cleanup test_fail_isinstance
+setUp test_fail_long_str
+tearDown test_fail_long_str
+cleanup test_fail_long_str
+setUp test_fail_msg
+tearDown test_fail_msg
+cleanup test_fail_msg
+setUp test_fail_raises
+tearDown test_fail_raises
+cleanup test_fail_raises
+setUp test_fail_raises_regex
+tearDown test_fail_raises_regex
+cleanup test_fail_raises_regex
+setUp test_fail_short_str
+tearDown test_fail_short_str
+cleanup test_fail_short_str
+setUp test_fail_str
+tearDown test_fail_str
+cleanup test_fail_str
+setUp test_raises
+tearDown test_raises
+cleanup test_raises
+setUp test_skiptest
+tearDown test_skiptest
+cleanup test_skiptest
+setUp test_subtests
+tearDown test_subtests
+cleanup test_subtests
+setUp test_xfail
+tearDown test_xfail
+cleanup test_xfail
+setUp test_xpass
+tearDown test_xpass
+cleanup test_xpass
+tearDownClass
+setUpClass
+setUp test_derived
+tearDown test_derived
+cleanup test_derived
+setUp test_equal
+tearDown test_equal
+cleanup test_equal
+setUp test_error
+tearDown test_error
+cleanup test_error
+setUp test_fail_almost
+tearDown test_fail_almost
+cleanup test_fail_almost
+setUp test_fail_dict
+tearDown test_fail_dict
+cleanup test_fail_dict
+setUp test_fail_greater
+tearDown test_fail_greater
+cleanup test_fail_greater
+setUp test_fail_in
+tearDown test_fail_in
+cleanup test_fail_in
+setUp test_fail_is
+tearDown test_fail_is
+cleanup test_fail_is
+setUp test_fail_isinstance
+tearDown test_fail_isinstance
+cleanup test_fail_isinstance
+setUp test_fail_long_str
+tearDown test_fail_long_str
+cleanup test_fail_long_str
+setUp test_fail_msg
+tearDown test_fail_msg
+cleanup test_fail_msg
+setUp test_fail_raises
+tearDown test_fail_raises
+cleanup test_fail_raises
+setUp test_fail_raises_regex
+tearDown test_fail_raises_regex
+cleanup test_fail_raises_regex
+setUp test_fail_short_str
+tearDown test_fail_short_str
+cleanup test_fail_short_str
+setUp test_fail_str
+tearDown test_fail_str
+cleanup test_fail_str
+setUp test_raises
+tearDown test_raises
+cleanup test_raises
+setUp test_skiptest
+tearDown test_skiptest
+cleanup test_skiptest
+setUp test_subtests
+tearDown test_subtests
+cleanup test_subtests
+setUp test_xfail
+tearDown test_xfail
+cleanup test_xfail
+setUp test_xpass
+tearDown test_xpass
+cleanup test_xpass
+tearDownClass
+tearDownModule
+['test_fail_count', 'test_fail_list', 'test_fail_list2', 'test_fail_not_equal', 'test_fail_set', 'test_fail_tuple', 'test_list']
+__main__.Base.test_equal Equality of numbers. <__main__.Other testMethod=test_list>
+| F
+| ======================================================================
+| FAIL: test_fail_count (__main__.Other.test_fail_count)
+| ----------------------------------------------------------------------
+| Traceback (most recent call last):
+|   File "...", line N, in test_fail_count
+|     self.assertCountEqual([1, 1, 2], [1, 2, 2])
+|     ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+| AssertionError: Element counts were not equal:
+| First has 2, Second has 1:  1
+| First has 1, Second has 2:  2
+| 
+| ----------------------------------------------------------------------
+| Ran 1 tests
+| 
+| FAILED (failures=1)
+| 
+1 True
+3 1 False <unittest.result.TestResult run=3 errors=0 failures=1>
+True
+unittest.case.FunctionTestCase (check_answer) the answer True
+['prog', 'Other.test_list'] 1 True .
+['prog', '-k', 'fail_set', 'Other'] 1 False F
+['prog', '-q', 'Derived.test_derived'] 1 False F
+['setUpModule', 'tearDownModule', 'setUpModule', 'tearDownModule', 'setUpModule', 'setUpClass', 'setUp test_derived', 'tearDown test_derived', 'cleanup test_derived', 'tearDownClass', 'tearDownModule']

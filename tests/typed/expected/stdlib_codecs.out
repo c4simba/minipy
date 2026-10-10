@@ -1,0 +1,19 @@
+utf-8 d09fd180d0b8d0b2d0b5d1822c20d0bcd0b8d180 True
+cp866 UnicodeEncodeError 'charmap' codec can't encode characters in position 13-14: character maps to <undefined> 13 15
+cp1251 UnicodeEncodeError 'charmap' codec can't encode character '\xe9' in position 13: character maps to <undefined> 13 14
+koi8-r UnicodeEncodeError 'charmap' codec can't encode characters in position 13-14: character maps to <undefined> 13 15
+utf-16 fffe1f04400438043204350442042c0020003c04 True
+utf-16-be 041f04400438043204350442002c0020043c0438 True
+utf-32-le 1f04000040040000380400003204000035040000 True
+cp1252 UnicodeEncodeError 'charmap' codec can't encode characters in position 0-5: character maps to <undefined> 0 6
+ascii UnicodeEncodeError 'ascii' codec can't encode characters in position 0-5: ordinal not in range(128) 0 6
+latin-1 UnicodeEncodeError 'latin-1' codec can't encode characters in position 0-5: ordinal not in range(256) 0 6
+mac-roman UnicodeEncodeError 'charmap' codec can't encode characters in position 0-5: character maps to <undefined> 0 6
+b'??????, ???! \xe9\x80' b'&#1055;&#1088;&#1080;&#1074;&#' b'\xf0\xd2\xc9\xd7\xc5\xd4, \xcd\xc9\xd2! \\xe9\\u20ac'
+Привет Пр b'\x8c\xa8\xe0' b'\x8c\xa8\xe0'
+'charmap' codec can't decode byte 0x98 in position 0: character maps to <undefined> 0 1 character maps to <undefined>
+'utf-8' codec can't decode byte 0xff in position 3: invalid start byte 3 4 utf-8
+LookupError: unknown encoding: nope
+a�b ab a\xffb
+cp866 utf-8 да b'\xc4\xc1'
+b'\xef\xbb\xbf' b'=\xd8\x00\xdex\x00' 😀x 8

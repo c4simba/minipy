@@ -1,0 +1,22 @@
+import pprint
+data = {"versions": [1, 2, 3], "nested": [10, 20, 30] * 6, "more": list(range(25)), "e": []}
+pprint.pprint(data)
+pprint.pprint(data, width=40)
+pprint.pprint(data, width=40, compact=True)
+pprint.pprint([list(range(12)), list(range(30))], width=50)
+print(pprint.pformat({"b": 2, "a": 1}), pprint.pformat({"b": 2, "a": 1}, sort_dicts=False))
+pprint.pprint({"long": "word " * 30}, width=60)
+pprint.pprint(["a" * 30, "b" * 30, "c" * 30])
+pprint.pprint({1: {2: {3: {4: [5]}}}}, depth=2)
+pprint.pprint(sorted({"set", "of", "words"}))
+pprint.pprint({"k": {1, 2, 3}, "e": set(), "f": {4, 5}})
+pprint.pprint({"k": frozenset({"x" * 40, "y" * 40})})
+pprint.pp([1, 2], width=5)
+print(pprint.saferepr({"x": [1, 2], "a": [3]}), pprint.isreadable([1, 2]), pprint.isreadable(["a"]))
+pprint.pprint(10 ** 10, underscore_numbers=True)
+pprint.pprint(b"bytes value " * 8, width=40)
+pprint.pprint({"t": ("x", "y"), "u": ("z", "w")})
+pp = pprint.PrettyPrinter(indent=4, width=30)
+pp.pprint({"alpha": [1, 2, 3, 4, 5, 6, 7, 8], "beta": [9, 10]})
+nested = {"level1": {"level2": {"level3": ["deep value " * 3, "other"]}}}
+pprint.pprint(nested, width=50)

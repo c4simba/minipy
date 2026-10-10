@@ -1,0 +1,14 @@
+WARNING:root:root warning 1
+app.sub 0 30 root INFO 40
+['DEBUG:app.sub:work:16:debug 5', 'INFO:app.sub:work:17:info x', 'WARNING:app.sub:work:18:warn', 'ERROR:app.sub:<module>:23:failed']
+ZeroDivisionError: division by zero
+['ERROR app.sub brace style', 'CRITICAL dollar']
+INFO keep this
+adapted u1
+True True
+30 30 20 True
+m a INFO p.py p 3 MainThread MainProcess
+adapted u1
+INFO|basic 42
+WARNING|other logger
+done

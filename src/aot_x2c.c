@@ -431,7 +431,7 @@ static void parse_lines(void){
             s=p; while(is_idc((unsigned char)*p)) p++;
         }
         size_t wn=(size_t)(p-s);
-        char w[64]; if(wn>=sizeof w) xfail("unknown statement"); memcpy(w,s,wn); w[wn]=0;
+        char w[1024]; if(wn>=sizeof w) xfail("unknown statement"); memcpy(w,s,wn); w[wn]=0;
         const char *rest=skip_ws(p);
         int unit, res;
         if(x_ieq(w,"format") || x_ieq(w,"use32") || x_ieq(w,"org")) continue;
@@ -1052,7 +1052,8 @@ static void insn(Item *it){
 
 /* ---------------------------------------------------------------- routines done natively */
 static int sym_or_fail(const char *name){ int k=sym_find(name); if(k<0 || syms[k].kind==SY_NONE) xfail("the native %s needs '%s'",name,name); return k; }
-static const char *natives[]={"rt_sb_gen_x","rt_sb_fixed_x","rt_fexp_x","rt_fpow_x","rt_float_parse_x",NULL};
+static const char *natives[]={"rt_sb_gen_x","rt_sb_fixed_x","rt_fexp_x","rt_fpow_x","rt_float_parse_x","rt_flog_x","rt_flog10_x","rt_flog2_x",
+    "rt_fatan_x","rt_fasin_x","rt_facos_x","rt_fsin_x","rt_fcos_x","rt_ftan_x","rt_fatan2_x",NULL};
 static int in_native(const char *name){ for(int i=0;natives[i];i++) if(!strcmp(natives[i],name)) return 1; return 0; }
 static void native(const char *name){
     const char *ret="pc=D(esp); esp+=4; goto dispatch;";
@@ -1062,6 +1063,10 @@ static void native(const char *name){
         xb_printf(&out,"{ double v_=ST(0); FPOP(); edx=x2c_fmt_fixed((char*)m+0x%Xu,v_,edx); eax=0x%Xu; goto L%d; }\n",scratch_addr,scratch_addr,sym_or_fail("rt_sb_bytes"));
     else if(!strcmp(name,"rt_fexp_x")) xb_printf(&out,"{ ST(0)=exp(ST(0)); %s }\n",ret);
     else if(!strcmp(name,"rt_fpow_x")) xb_printf(&out,"{ double a_=ST(0), b_=ST(1); FPOP(); ST(0)=pow(a_,b_); %s }\n",ret);
+    else if(!strcmp(name,"rt_fatan2_x")) xb_printf(&out,"{ double x_=ST(0), y_=ST(1); FPOP(); ST(0)=atan2(y_,x_); %s }\n",ret);
+    else if(!strncmp(name,"rt_f",4) && strcmp(name,"rt_float_parse_x")){   /* one-argument math: the C library's */
+        char fn[16]; snprintf(fn,sizeof fn,"%.*s",(int)(strlen(name)-6),name+4);
+        xb_printf(&out,"{ ST(0)=%s(ST(0)); %s }\n",fn,ret); }
     else if(!strcmp(name,"rt_float_parse_x")){
         int msg=sym_or_fail("rt_msg_float"), panic=sym_or_fail("rt_panic_value");
         xb_printf(&out,"{ double v_; if(!x2c_parse_float(m,eax,&v_)){ esi=0x%Xu; goto L%d; } FPUSH(v_); %s }\n",(u32)syms[msg].val,panic,ret);
@@ -1152,6 +1157,7 @@ int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
     xb_printf(&out,"0};\n        u32 i_=(pc-0x%Xu)>>2;\n        if(i_>=%du || (pc&3u)) x2c_bad_jump(pc);\n        goto *ctab[i_];\n    }\n}\n\n",CODE_BASE,nctab);
     xb_printf(&out,"int main(int argc, char **argv){\n"
                    "    x2c_argc=argc; x2c_argv=argv;\n"
+                   "    signal(SIGPIPE,SIG_IGN);\n"
                    "    x2c_map();\n"
                    "    memcpy(M+X2C_DATA_BASE,x2c_image,sizeof x2c_image-1);\n"
                    "    x2c_brk_start=x2c_brk=(X2C_DATA_END+4095u)&~4095u;\n"

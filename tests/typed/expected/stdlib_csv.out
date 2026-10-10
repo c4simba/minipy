@@ -1,0 +1,23 @@
+[['a', 'b', 'c'], ['x,y', 'he said "hi"', 'z'], ['1', ' 2', '3'], [], ['last']]
+[['a', 'b'], ['c', 'd;e']] 2 ;
+[['a', 'b ', 'c']]
+[['multiline', 'x']]
+[['multi\nline', 'x']]
+[['a,b', 'c']]
+Error unexpected end of data
+[['abc']]
+[['a"b"c']]
+[['a"b"c']]
+Error ',' expected after '"'
+[['abc']]
+'a,"b,c","d""e",,"x\ny", sp \r\n1,2\r\n3,4\r\n5\r\n1.5,2.25\r\n""\r\n"a","b"\na\\\tb\tc\r\n'
+{'name': 'bob', 'age': '30'}
+{'name': 'z', 'age': None}
+['name', 'age'] 3
+'x,y\r\n1,a b\r\n2,\r\n'
+ValueError dict contains fields not in fieldnames: 'z'
+['excel', 'excel-tab', 'unix'] 0 1 2 3 131072
+, '\r\n' " True 0
+[['a', 'b']]
+['h1', 'h2'] [['v1', 'v2']]
+[['id', 'name'], ['1', 'Ann, B']]

@@ -1,0 +1,55 @@
+0 10240 64247 b'short.txt\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' b'0' b'ustar\x0000'
+  short.txt 3 1700000000 0o640 b'0' user group True False False  0 512
+  d1/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 600 1700000000 0o640 b'0' user group True False False  1024 1536
+  adir 0 1700000001 0o755 b'5'   False True False  2560 3072
+  link 0 0 0o644 b'2'   False False True short.txt 3072 3584
+  b'abc'
+  ['adir', 'link'] True
+  via link b'abc'
+1 10240 80128 b'short.txt\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' b'0' b'ustar  \x00'
+  short.txt 3 1700000000 0o640 b'0' user group True False False  0 512
+  d1/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 600 1700000000 0o640 b'0' user group True False False  1024 2560
+  adir 0 1700000001 0o755 b'5'   False True False  3584 4096
+  link 0 0 0o644 b'2'   False False True short.txt 4096 4608
+  b'abc'
+  ['adir', 'link'] True
+  via link b'abc'
+2 10240 81074 b'short.txt\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00' b'0' b'ustar\x0000'
+  short.txt 3 1700000000 0o640 b'0' user group True False False  0 512
+  d1/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 600 1700000000 0o640 b'0' user group True False False  1024 2560
+  adir 0 1700000001 0o755 b'5'   False True False  3584 4096
+  link 0 0 0o644 b'2'   False False True short.txt 4096 4608
+  b'abc'
+  ['adir', 'link'] True
+  via link b'abc'
+10240 1 b'31 path=\xc3\xbcn\xc3\xafc\xc3\xb6d\xc3\xa9/na\xc3\xafve.txt\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+['ünïcödé/naïve.txt', 'big-uid'] {'path': 'ünïcödé/naïve.txt'}
+10240
+src 0 True False 0o755
+src/a.txt 12 False True 0o644
+src/sub 0 True False 0o755
+src/sub/b.bin 768 False True 0o644
+b'hello\n' [b'world\n'] 12
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src/a.txt' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src/a.txt' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src/sub/b.bin' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src/sub/b.bin' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src/sub' = 0x10
+[kos] attributes of '/tmp0/1/build/tarfile_test/out/src' = 0x10
+['a.txt', 'sub']
+768
+b'\x1f\x8b'
+['a.txt', 'sub']
+[kos] attributes of '/tmp0/1/build/tarfile_test/one/a.txt' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/one/a.txt' = 0x20
+'hello\nworld\n'
+True True False
+['src/sub/b.bin', 'added.txt']
+OutsideDestinationError True True
+[kos] attributes of '/tmp0/1/build/tarfile_test/evil/abs.txt' = 0x20
+[kos] attributes of '/tmp0/1/build/tarfile_test/evil/abs.txt' = 0x20
+['abs.txt']
+KeyError "filename 'nope' not found"
+ReadError file could not be opened successfully:
+CompressionError unknown compression type 'bz3'
+x 0 420 b'0' True 512 b'006125\x00 '

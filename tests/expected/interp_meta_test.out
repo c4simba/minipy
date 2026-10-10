@@ -1,0 +1,38 @@
+42 True [1, 2, 3] 3 10 True Meta
+True
+get:attr get:attr
+1 caught x
+fin
+E True
+1
+<b>
+inside B
+</b>
+<i>
+</i>
+caught boom
+swallowed KeyError('k')
+after swallow
+RuntimeError generator didn't yield
+RuntimeError generator didn't stop
+suppressed ok
+using Res
+Res closed
+null 42
+captured 'hidden\n'
+<x>
+<y>
+body
+callback ran
+</y>
+</x>
+<deco>
+in decorated
+</deco>
+True False
+push exit None
+cleanup
+zde
+closed later
+/
+True

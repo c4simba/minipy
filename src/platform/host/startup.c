@@ -1,9 +1,10 @@
-/* Host platform hooks: nothing special to do at startup/shutdown. */
+/* Host platform hooks: at startup SIGPIPE is ignored (as in CPython); nothing else to do. */
 
 #include "platform/platform.h"
+#include <signal.h>
 #include <sys/wait.h>
 
-void mpy_platform_init(void){}
+void mpy_platform_init(void){ signal(SIGPIPE,SIG_IGN); }   /* (as CPython: writing to a closed socket or pipe is an EPIPE error) */
 void mpy_platform_shutdown(void){}
 
 const char *mpy_platform_default_script(void){ return NULL; }
