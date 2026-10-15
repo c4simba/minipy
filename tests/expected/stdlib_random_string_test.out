@@ -1,0 +1,77 @@
+0 0.8444218515250481 978212965548
+1 0.13436424411240122 884107995871
+42 0.6394267984578837 811856239313
+-42 0.6394267984578837 811856239313
+1099511627783 0.6137037779936511 1034292189877
+4611686018427387904 0.21122940420330605 608627765431
+3.5 0.3039190124834461 1018895712284
+-1.5 0.7101153317194698 283471238399
+0.1 0.8062579873336703 1057155961021
+'hello' 0.3537754404730722 836072071631
+'' 0.9602256525641875 225895574272
+'héllo' 0.013203794245314593 128144099570
+b'bytes' 0.37075677971469856 1085210805742
+v1 0.09639374978773074
+v1b 0.09639374978773074
+[4, 6, 1, 3, 3, 2, 3, 5, 4, 2] 5 5 11
+2 y 4 178
+[4, 14, 7, 6, 15, 0, 19, 18, 10, 1, 3, 12, 16, 8, 9, 13, 2, 11, 5, 17]
+[3, 6, 962, 679, 891, 167, 789, 594, 183, 293] ['a', 'f', 'd'] [1, 3, 4, 2]
+['red', 'blue', 'red', 'red', 'red'] [15, 63, 27, 94, 71]
+['c', 'c', 'c', 'c', 'b', 'c', 'c', 'b'] [1, 1, 1, 1, 1, 3] ['y', 'y', 'y', 'y']
+[0, 1, 4]
+3.0757827597057075 5.009370904503268 0.3796680605887644 3.9147425966958105 5.0
+0.07985798841442958 10.003344044747633 -0.008278337912391978 5.457535581504074
+0.24633563223184832 0.5211085162451572 0.5209361907484847
+4.361741588880297 5.519610940910648 2.978606985005941
+0.04440383402834925 1.460727478629765 2.7462397109407766 0.6046571341182635
+1.0750111522053987 0.9806016460492146
+[1, 3, 4, 4, 2] 72 396 1 0 5
+b'\x1b\x85\xba\xbc\xfe\x14~' b'' b'\xbe\xd9\xfbz' 0 2445387901331352849
+True 625 3
+True 25 b 0.1382359792209653 True
+ValueError empty range for randrange()
+ValueError empty range in randrange(5, 5)
+ValueError zero step for randrange()
+ValueError empty range in randint(5, 1)
+IndexError Cannot choose from an empty sequence
+ValueError Sample larger than population or is negative
+ValueError The number of weights does not match the population
+ValueError Total of weights must be greater than zero
+ValueError Cannot convert negative int
+ValueError gammavariate: alpha and beta must be > 0.0
+ValueError n must be non-negative
+ValueError p must be in the range 0.0 <= p <= 1.0
+TypeError Population must be a sequence.  For dicts or sets, use sorted(d).
+TypeError The only supported seed types are:
+None, int, float, str, bytes, and bytearray.
+TypeError Missing a non-None stop argument
+TypeError Cannot specify both weights and cumulative weights
+6 a 1.0
+True True 5 True
+NotImplementedError System entropy source does not have state.
+abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 0123456789abcdefABCDEF 01234567 ' \t\n\r\x0b\x0c'
+!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~ 100
+Hello World Foo A-B-C X
+tim likes ham; $5 for tim ann likes 3; $5 for ann x likes ${what}; $5 for x
+['who', 'what'] True False $who likes ${what}; $$5 for $who
+1${b}c$ ${a $1x
+2 1 2 3
+ValueError Invalid placeholder in string: line 1, col 6
+ValueError Invalid placeholder in string: line 2, col 7
+ValueError Invalid placeholder in string: line 1, col 1
+ValueError Invalid placeholder in string: line 1, col 1
+KeyError 'missing'
+it costs %5 %{x}y
+1 and 2 True
+1 and 2
+ab 'c'      n b 1 2   z  
+3 v {lit} 1-2
+ValueError cannot switch from manual field specification to automatic field numbering
+ValueError cannot switch from automatic field numbering to manual field specification
+ValueError Single '{' encountered in format string
+ValueError Single '}' encountered in format string
+ValueError Unknown conversion specifier x
+ValueError Empty attribute in format string
+[('a', '0', '>5', 'r'), ('b{', None, None, None), ('c}', None, None, None)] [('x', 'a.b[c]', '>{w}', 'r'), ('y', None, None, None)]
+a [(True, 'b'), (False, 0), (False, 'key')] 13

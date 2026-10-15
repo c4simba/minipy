@@ -1,0 +1,32 @@
+Hallo | Auf Wiedersehen | missing
+['Dateien', 'Datei', 'Dateien']
+Öffnen Open
+['Eintrag', 'Einträge']
+test UTF-8 ['content-type', 'plural-forms', 'project-id-version']
+Hallo Auf Wiedersehen
+Привет
+['1 файл', '2 файла', '5 файлов', '11 файлов', '21 файл', '22 файла', '25 файлов', '101 файл', '111 файлов']
+Bonjour Auf Wiedersehen
+build/typed_gettext/de/LC_MESSAGES/app.mo None
+FileNotFoundError: 2 No translation file found for domain
+NullTranslations Hello b
+Hallo
+messages build/typed_gettext
+Hallo Dateien
+Hello xs
+n != 1 -> [1, 0, 1, 1, 1, 1]
+n > 1 -> [0, 0, 1, 1, 1, 1]
+n==1 ? 0 : n==2 ? 1 : 2 -> [2, 0, 1, 2, 2, 2]
+(n % 10 == 1) + 2 * (n > 4) -> [0, 1, 0, 0, 2, 2]
+n / 3 -> [0, 0, 0, 1, 1, 3]
+!n -> [1, 0, 0, 0, 0, 0]
+n || 7 -> [7, 1, 2, 3, 5, 9]
+n && 3 -> [0, 3, 3, 3, 3, 3]
+'n +' ValueError: unexpected end of plural form
+'x > 1' ValueError: invalid token in plural form: x
+'(n > 1' ValueError: unbalanced parenthesis in plural form
+'n > 1)' ValueError: unexpected token in plural form: )
+'n ? 1' ValueError: unexpected end of plural form
+'1 2' ValueError: unexpected token in plural form: 2
+'n >= 1 $' ValueError: invalid token in plural form: $
+OSError: Bad magic number

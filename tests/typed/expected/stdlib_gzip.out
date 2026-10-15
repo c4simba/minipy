@@ -1,0 +1,6 @@
+b'\x1f\x8b\x08\x00' True True
+b'abc'
+b'line one\n' b'line two\n' 882
+['héllo\n', 'wörld\n']
+BadGzipFile: Not a gzipped file (b'xx')
+EOFError: Compressed file ended before the end-of-stream marker was reached

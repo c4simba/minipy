@@ -1,0 +1,46 @@
+#ifndef MPY_UTIL_H
+#define MPY_UTIL_H
+
+#include "platform/platform.h"
+
+/* ========================= Small utility macros ========================= */
+
+#if defined(__GNUC__) || defined(__clang__)
+#define MPY_NORETURN __attribute__((noreturn))
+#else
+#define MPY_NORETURN
+#endif
+
+/* Debug logging: prints to stderr only in debug builds (-DMPY_DEBUG); expands
+   to nothing otherwise, so release builds stay silent and pay no cost.
+   On KolibriOS, stderr is mirrored to the console/debug board (see console.c). */
+#ifdef MPY_DEBUG
+#define MPY_LOG(...)          do{ fprintf(stderr, __VA_ARGS__); fflush(stderr); }while(0)
+#else
+#define MPY_LOG(...)          do{}while(0)
+#endif
+
+#define MPY_MIN(a,b)          ((a) < (b) ? (a) : (b))
+#define MPY_MAX(a,b)          ((a) > (b) ? (a) : (b))
+#define MPY_ARRAY_SIZE(a)     (sizeof(a) / sizeof((a)[0]))
+#define MPY_CONTAINER_OF(ptr,type,member) ((type*)((char*)(ptr) - offsetof(type,member)))
+
+/* Typed allocation wrappers over xmalloc (all die() on failure). */
+#define MPY_NEW(T)            ((T*)xmalloc(sizeof(T)))
+#define MPY_NEW0(T)           ((T*)memset(xmalloc(sizeof(T)), 0, sizeof(T)))
+#define MPY_NEW_ARR(T,n)      ((T*)xmalloc(sizeof(T) * (size_t)(n)))
+
+/* Fatal error: print message and exit(1). */
+MPY_NORETURN void die(const char *m);
+
+/* Checked allocation wrappers (die() on failure). */
+void *xmalloc(size_t n);
+void *xrealloc(void *p, size_t n);
+char *xstrndup2(const char *s, int n);
+char *xstrdup2(const char *s);
+
+/* Split a raw command-line string (KolibriOS hands over one) into argv[1..]
+   in buf; argv[0] = exe, or argv0_default without one. Returns argc. */
+int mpy_split_cmdline(const char *cmd,const char *exe,const char *argv0_default,char *buf,int buflen,char **argv,int maxargv);
+
+#endif /* MPY_UTIL_H */

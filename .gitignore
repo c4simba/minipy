@@ -1,0 +1,6 @@
+build
+minipy
+minipyc
+minipy.lib
+config.local.mk
+.DS_Store

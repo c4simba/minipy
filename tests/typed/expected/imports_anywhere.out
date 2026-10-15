@@ -1,0 +1,6 @@
+start
+before the first call
+lazymod runs
+42 10 42
+4.0
+{"a": [1, 2]}

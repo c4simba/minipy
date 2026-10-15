@@ -1,0 +1,52 @@
+defaultdict(<class 'list'>, {'a': [1, 3], 'b': [2]}) True True
+[('a', [1, 3]), ('b', [2])] 2 False None [] 3
+defaultdict [9] False
+2 {"x": {"y": 2}}
+KeyError 'missing'
+TypeError first argument must be callable or None
+defaultdict(<class 'int'>, {'a': 1, 'b': 2})
+Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1}) [('a', 5), ('b', 2), ('r', 2)] 11
+5 0 False ['a', 'a', 'a', 'a', 'a', 'b']
+Counter({'a': 7, 'r': 2, 'c': 1, 'd': 1, 'z': 1, 'b': -3})
+Counter({'a': 4, 'b': 3}) Counter({'a': 2})
+Counter({'a': 3, 'b': 2}) Counter({'a': 1, 'b': 1})
+Counter({'a': 2}) Counter({'b': 1})
+Counter({'a': 3}) True True True
+Counter() {"h": 1, "e": 1, "l": 2, "o": 1} {'a': 2, 'b': 1}
+True True True
+NotImplementedError Counter.fromkeys() is undefined.  Use Counter(iterable) instead.
+[('the', 3), ('and', 2)] 5
+OrderedDict({'z': 3}) ['y', 'z', 'x'] ('x', 1) ('y', 2) OrderedDict({'z': 3})
+OrderedDict({'v': 5, 'z': 3, 'w': 0}) ['w', 'z', 'v'] True
+False True
+OrderedDict() OrderedDict({'a': None, 'b': None}) OrderedDict({'a': 1, 'b': 2})
+Point(x=1, y=2) 1 2 1 2 (1, 2) 2 True
+3 True {'x': 1, 'y': 2} ('x', 'y') Point(x=3, y=4)
+Point(x=10, y=2) True [Point(x=1, y=5), Point(x=2, y=1)]
+Point Point(x, y) Alias for field number 0 ('x', 'y')
+P3(a=5, b=0, c=1) P3(a=5, b=6, c=7) {'b': 0, 'c': 1}
+('a', '_1', '_2')
+TypeError Point.__new__() missing 1 required positional argument: 'y'
+TypeError Point.__new__() takes 3 positional arguments but 4 were given
+TypeError Point.__new__() got multiple values for argument 'x'
+TypeError Point.__new__() got an unexpected keyword argument 'z'
+TypeError P3.__new__() missing 1 required positional argument: 'a'
+TypeError Expected 2 arguments, got 1
+ValueError Field names cannot start with an underscore: '_b'
+ValueError Encountered duplicate field name: 'a'
+ValueError Type names and field names cannot be a keyword: 'class'
+ValueError Type names and field names must be valid identifiers: '1P'
+match 1 2
+[1, 2] __main__
+5.0 Vec(x=3, y=4) Vec(x=1, y=2)
+admin red 2 ['color', 'user'] True 0
+blue red True
+{'user': 'admin', 'new': 1} True
+KeyError "Key not found in the first mapping: 'color'"
+deque([1, 2], maxlen=4) 4 4 [3, 2, 1, 4] 4 3 2
+[1, 2, 3] 5
+[9, 8, 5] [1, 2]
+['ccc', 'bb'] [1, 3] []
+[1, 2, 3, 4, 5, 6, 7, 8] ['c', 'b', 'a']
+['c', 'aa', 'b', 'ddd']
+[9, 7, 6, 5] 10 4

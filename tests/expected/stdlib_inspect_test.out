@@ -1,0 +1,33 @@
+(a, b: int = 2, *args, c, d=4, **kw) -> str (x, y=1) (self, z, *, k=3) (z, *, k=3) (q) (w)
+a POSITIONAL_OR_KEYWORD positional or keyword <class 'inspect._empty'> <class 'inspect._empty'> a
+b POSITIONAL_OR_KEYWORD positional or keyword 2 <class 'int'> b: int = 2
+args VAR_POSITIONAL variadic positional <class 'inspect._empty'> <class 'inspect._empty'> *args
+c KEYWORD_ONLY keyword-only <class 'inspect._empty'> <class 'inspect._empty'> c
+d KEYWORD_ONLY keyword-only 4 <class 'inspect._empty'> d=4
+kw VAR_KEYWORD variadic keyword <class 'inspect._empty'> <class 'inspect._empty'> **kw
+<class 'str'> <BoundArguments (a=1, b=2, args=(3,), c=5, kw={'z': 9})> {'a': 1}
+{'a': 1, 'b': 2, 'args': (), 'c': 7, 'd': 4, 'kw': {}} (1, 2) {'c': 7, 'd': 4}
+TypeError missing a required argument: 'a'
+True True True True True True True True True
+Doc of f.
+
+indented 'a\n  b\nc' A class.
+['c', 'm', 'p', 's'] (<class '__main__.C'>, <class 'object'>)
+def f(a, b: int = 2, *args, c, d=4, **kw) -> str:
+    """Doc of f.
+
+        indented
+    """
+    return "x"
+
+    def m(self, z, *, k=3):
+        return z
+
+['def gen():\n', '    yield 1\n'] 28
+True __main__ x
+<module> <module> ['<module>']
+GEN_CREATED
+GEN_SUSPENDED
+(b: int = 2, *args, c=2, d=4, **kw) -> str
+x=1 (a, /)
+int list[int] True

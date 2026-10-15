@@ -1,0 +1,87 @@
+'http://user:pw@Example.COM:8080/a/b;p?q=1&r=2#frag' SplitResult(scheme='http', netloc='user:pw@Example.COM:8080', path='/a/b;p', query='q=1&r=2', fragment='frag') p user pw example.com 8080 http://user:pw@Example.COM:8080/a/b;p?q=1&r=2#frag http://user:pw@Example.COM:8080/a/b;p?q=1&r=2#frag
+'https://[::1]:443/x' SplitResult(scheme='https', netloc='[::1]:443', path='/x', query='', fragment='')  None None ::1 443 https://[::1]:443/x https://[::1]:443/x
+'ftp://host/file.txt' SplitResult(scheme='ftp', netloc='host', path='/file.txt', query='', fragment='')  None None host None ftp://host/file.txt ftp://host/file.txt
+'mailto:joe@example.com' SplitResult(scheme='mailto', netloc='', path='joe@example.com', query='', fragment='')  None None None None mailto:joe@example.com mailto:joe@example.com
+'/rel/path?x' SplitResult(scheme='', netloc='', path='/rel/path', query='x', fragment='')  None None None None /rel/path?x /rel/path?x
+'//host/only' SplitResult(scheme='', netloc='host', path='/only', query='', fragment='')  None None host None //host/only //host/only
+'file:///etc/hosts' SplitResult(scheme='file', netloc='', path='/etc/hosts', query='', fragment='')  None None None None file:///etc/hosts file:///etc/hosts
+'http://h/p;a;b' SplitResult(scheme='http', netloc='h', path='/p;a;b', query='', fragment='') a;b None None h None http://h/p;a;b http://h/p;a;b
+'  http://h/sp ace\t\n' SplitResult(scheme='http', netloc='h', path='/sp ace', query='', fragment='')  None None h None http://h/sp ace http://h/sp ace
+'kolibri:/rd/1/x' SplitResult(scheme='kolibri', netloc='', path='/rd/1/x', query='', fragment='')  None None None None kolibri:/rd/1/x kolibri:/rd/1/x
+'http://h:/x' SplitResult(scheme='http', netloc='h:', path='/x', query='', fragment='')  None None h None http://h:/x http://h:/x
+'x:y' SplitResult(scheme='x', netloc='', path='y', query='', fragment='')  None None None None x:y x:y
+SplitResult(scheme='http', netloc='', path='x', query='', fragment='') SplitResult(scheme='', netloc='', path='a#b', query='', fragment='')
+ValueError Invalid IPv6 URL
+ValueError Port out of range 0-65535
+ValueError Port could not be cast to integer value as 'abc'
+http://h/p?q=1#f http://h/p;x?q ////p http:p
+'g:h' g:h
+'g' http://a/b/c/g
+'./g' http://a/b/c/g
+'g/' http://a/b/c/g/
+'/g' http://a/g
+'//g' http://g
+'?y' http://a/b/c/d;p?y
+'g?y' http://a/b/c/g?y
+'#s' http://a/b/c/d;p?q#s
+'g#s' http://a/b/c/g#s
+'g?y#s' http://a/b/c/g?y#s
+';x' http://a/b/c/;x
+'g;x' http://a/b/c/g;x
+'' http://a/b/c/d;p?q
+'.' http://a/b/c/
+'./' http://a/b/c/
+'..' http://a/b/
+'../' http://a/b/
+'../g' http://a/b/g
+'../..' http://a/
+'../../' http://a/
+'../../g' http://a/g
+'../../../g' http://a/g
+'/./g' http://a/g
+'/../g' http://a/g
+'g.' http://a/b/c/g.
+'.g' http://a/b/c/.g
+'g..' http://a/b/c/g..
+'..g' http://a/b/c/..g
+'./../g' http://a/b/g
+'./g/.' http://a/b/c/g/
+'g/./h' http://a/b/c/g/h
+'g/../h' http://a/b/c/h
+'http:g' http://a/b/c/g
+http://a/c http://a/b/c x http://a http://c/d
+DefragResult(url='http://a/b', fragment='c') DefragResult(url='http://a/b', fragment='') http://a/b#c
+'abc def' abc%20def abc%20def abc+def abc+def True
+'a/b?c=d&e' a/b%3Fc%3Dd%26e a%2Fb%3Fc%3Dd%26e a%2Fb%3Fc%3Dd%26e a/b%3Fc%3Dd%26e True
+'żółw' %C5%BC%C3%B3%C5%82w %C5%BC%C3%B3%C5%82w %C5%BC%C3%B3%C5%82w %C5%BC%C3%B3%C5%82w True
+'~user' ~user ~user ~user ~user True
+''     True
+'100%' 100%25 100%25 100%25 100%25 True
+a b/c%zz%4 żółw � a b+c ąę x b'a\x00\xff' %00%FFab/
+[('a', '1'), ('b', '2'), ('a', '3')] [('a', '1'), ('b', ''), ('c', '')] {'a': ['1', '3'], 'b': ['2']} {'x': ['a b c']} [('a', '1'), ('b', '2')]
+ValueError bad query field: 'a'
+a=1&b=x+y&c=%C5%BC%26 n=1&m=22 k=v1&k=v2 q=a/b q=a%20b
+k=1&k=2 x%20y
+http f 5 ['http', 'h', '/p', 'q', 'f'] http://h/new?q#f True
+b'GET /index.html?q=1 HTTP/1.1\r\nHost: 127.0.0.1:47623\r\nAccept-Encoding: identity\r\nX-Test: yes\r\n\r\n'
+200 OK 11 11 a=1, b=2 dflt
+text/html utf-8 [('Content-Type', 'text/html; charset=UTF-8'), ('Content-Length', '11'), ('Set-Cookie', 'a=1'), ('Set-Cookie', 'b=2')] 4 True
+b'hello' b' world' b'' True
+b'POST /form HTTP/1.1\r\nHost: 127.0.0.1:47623\r\nAccept-Encoding: identity\r\nContent-Length: 7\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\na=1&b=2'
+201 Created True True b'Wikipedia in \r\n\r\nchunks.' True
+404 Not Found 10 b'' True
+b'PUT /p HTTP/1.1\r\nHost: 127.0.0.1:47623\r\nAccept-Encoding: identity\r\nContent-Length: 3\r\n\r\n\x00\x01\xe9'
+204 b'' 0
+b'until the end' True
+BadStatusLine garbage
+
+RemoteDisconnected Remote end closed connection without response
+ResponseNotReady Idle
+InvalidURL nonnumeric port: 'abc'
+example.com 80 ::1 Not Found OK 80
+http://example.com:8080/a/b?x=1#frag http example.com:8080 /a/b?x=1 GET frag [('Accept', '*/*'), ('X-custom', 'v')] True */*
+POST / b'a=1'
+other /x text/plain PUT
+ValueError unknown url type: 'no-scheme'
+URLError URLError True
+True

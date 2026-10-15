@@ -1,0 +1,70 @@
+error '(' | missing ), unterminated subpattern at position 0 | missing ), unterminated subpattern 0 1 1
+error ')' | unbalanced parenthesis at position 0 | unbalanced parenthesis 0 1 1
+error 'a)' | unbalanced parenthesis at position 1 | unbalanced parenthesis 1 1 2
+error '(?P<1>a)' | bad character in group name '1' at position 4 | bad character in group name '1' 4 1 5
+error '(?P<a>a)(?P<a>b)' | redefinition of group name 'a' as group 2; was group 1 at position 12 | redefinition of group name 'a' as group 2; was group 1 12 1 13
+error '[a' | unterminated character set at position 0 | unterminated character set 0 1 1
+error '[z-a]' | bad character range z-a at position 1 | bad character range z-a 1 1 2
+error '*a' | nothing to repeat at position 0 | nothing to repeat 0 1 1
+error 'a**' | multiple repeat at position 2 | multiple repeat 2 1 3
+error 'a{3,1}' | min repeat greater than max repeat at position 2 | min repeat greater than max repeat 2 1 3
+error '\\q' | bad escape \q at position 0 | bad escape \q 0 1 1
+error '(?<x)' | unknown extension ?<x at position 1 | unknown extension ?<x 1 1 2
+error '(?Px)' | unknown extension ?Px at position 1 | unknown extension ?Px 1 1 2
+error '(?P=nope)' | unknown group name 'nope' at position 4 | unknown group name 'nope' 4 1 5
+error '(a)\\2' | invalid group reference 2 at position 4 | invalid group reference 2 4 1 5
+error '\\' | bad escape (end of pattern) at position 0 | bad escape (end of pattern) 0 1 1
+error '(?<=a+)b' | look-behind requires fixed-width pattern | look-behind requires fixed-width pattern None None None
+error '(?i' | missing -, : or ) at position 3 | missing -, : or ) 3 1 4
+error '(?z)' | unknown extension ?z at position 1 | unknown extension ?z 1 1 2
+error 'a(?i)b' | global flags not at the start of the expression at position 1 | global flags not at the start of the expression 1 1 2
+error 'x{5}{3}' | multiple repeat at position 4 | multiple repeat 4 1 5
+error '(?(2)a|b)' | invalid group reference 2 at position 3 | invalid group reference 2 3 1 4
+error '(?#abc' | missing ), unterminated comment at position 0 | missing ), unterminated comment 0 1 1
+error '[\\d-z]' | bad character range \d-z at position 1 | bad character range \d-z 1 1 2
+error '(?(a)b)' | unknown group name 'a' at position 3 | unknown group name 'a' 3 1 4
+error '\\x4' | incomplete escape \x4 at position 0 | incomplete escape \x4 0 1 1
+error '\\u12' | incomplete escape \u12 at position 0 | incomplete escape \u12 0 1 1
+error '(a)(?(1)b|c|d)' | conditional backref with more than two branches at position 11 | conditional backref with more than two branches 11 1 12
+error '(?P<a' | missing >, unterminated name at position 4 | missing >, unterminated name 4 1 5
+error '(?P<>a)' | missing group name at position 4 | missing group name 4 1 5
+error '(?-:a)' | missing flag at position 3 | missing flag 3 1 4
+error '(?i-i:a)' | bad inline flags: flag turned on and off at position 5 | bad inline flags: flag turned on and off 5 1 6
+error '(?a-a:x)' | bad inline flags: cannot turn off flags 'a', 'u' and 'L' at position 5 | bad inline flags: cannot turn off flags 'a', 'u' and 'L' 5 1 6
+error '^*' | nothing to repeat at position 1 | nothing to repeat 1 1 2
+ok '(?<=(a))\\1'
+error 'a\nb(' | missing ), unterminated subpattern at position 3 (line 2, column 2) | missing ), unterminated subpattern 3 2 2
+error '\\400' | octal escape value \400 outside of range 0-0o377 at position 0 | octal escape value \400 outside of range 0-0o377 0 1 1
+error '(?L)a' | bad inline flags: cannot use 'L' flag with a str pattern at position 3 | bad inline flags: cannot use 'L' flag with a str pattern 3 1 4
+error '(?au)a' | bad inline flags: flags 'a', 'u' and 'L' are incompatible at position 4 | bad inline flags: flags 'a', 'u' and 'L' are incompatible 4 1 5
+world hello, bar foo
+a[111]b[222][222]
+a
+	\b 'a\\-b'
+<a><>
+a2b4c18
+bbaa ('bbba', 3)
+error invalid group reference 2 at position 3
+IndexError unknown group name 'x'
+error missing group name at position 3
+error bad escape \q at position 0
+error invalid group reference 9 at position 1
+[('a', '1'), ('b', ''), ('c', '3')] ['1', '22', '333'] ['1', '2']
+['a', ',', None, 'b', None, ';', 'c'] ['a', 'b', 'c,d'] ['', 'a', '', 'b', 'c', '']
+['Words', 'words', 'words', ''] ['Words', ', ', 'words', ', ', 'words', '.', '']
+2024 05 17 8 10 (11, 13) ((3, 13), (3, 7), (8, 10), (11, 13))
+17/05/2024 2024 on 2024-05-17 ok re.compile('(?P<y>\\d{4})-(?P<m>\\d\\d)-(?P<d>\\d\\d)') 0 16 3 d
+IndexError no such group
+IndexError no such group
+re.compile('\\d+', re.IGNORECASE|re.MULTILINE) \d+ 42 0 {} {'a': 1}
+re.compile('a', re.ASCII) re.compile('a', re.DOTALL|re.VERBOSE) re.compile('(?i)a', re.IGNORECASE) 34
+<re.Match object; span=(0, 2), match='12'> None <re.Match object; span=(3, 4), match='2'> <re.Match object; span=(2, 4), match='12'> <re.Match object; span=(0, 3), match='123'>
+['2', '33'] [<re.Match object; span=(2, 4), match='22'>, <re.Match object; span=(5, 6), match='3'>]
+a\.b\*c\?d\+e\(f\)\[g\]\{h\}\|i\^j\$k\\l\ m\-n\#o\&p\~q héllo_wörld123
+True True False
+('a', '-') {'a': 'a', 'b': '-'}
+None <re.Match object; span=(2, 3), match='b'> <re.Match object; span=(0, 3), match='A\nB'>
+<re.Match object; span=(0, 2), match='ab'> <re.Match object; span=(0, 3), match='aaa'> ('3', '14')
+<re.Match object; span=(7, 9), match='42'> <re.Match object; span=(4, 6), match='17'>
+<re.Match object; span=(0, 30), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'> True
+<re.Match object; span=(0, 3), match='日本語'> <re.Match object; span=(0, 3), match='١٢٣'> <re.Match object; span=(1, 2), match='\u2003'>

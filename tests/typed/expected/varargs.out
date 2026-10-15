@@ -1,0 +1,18 @@
+0 5 10
+fruit: apple, pear none:  x: a|b
+cfg  cfg depth=1 height=4 width=3
+1 () [] 20 (3, 4) [('j', 6), ('k', 5)]
+60 61
+(1, 2, 0) (1, 2, 9) (7, 8, 9)
+d height=2 width=1 e depth=5 height=2 width=1
+123 125
+0 ()
+1 ('one',)
+2 ('a', 'b')
+1 2 3
+1-2-3
+start x y end
+
+4, 5, 6
+['> hello world', '> user id=7 name=ann', '> ']
+7

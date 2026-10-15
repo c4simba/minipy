@@ -1,0 +1,13 @@
+True False True
+['a.txt', 'dir/b.bin', 'empty/', 'c.txt']
+b'hello zip hello zip ' 30 b'written through open\n'
+dir/b.bin 30 0 2961479299 False True
+<ZipInfo filename='dir/b.bin' filemode='?rw-------' file_size=30>
+b'written through open\n' b''
+None
+KeyError: "There is no item named 'nope' in the archive"
+['a.txt', 'c.txt', 'dir', 'empty'] True
+b'\x00\x01\x02\x00\x01\x02'
+['a.txt', 'dir/b.bin', 'empty/', 'c.txt', 'd.txt'] b'appended'
+['mem.txt'] b'in memory'
+BadZipFile: File is not a zip file

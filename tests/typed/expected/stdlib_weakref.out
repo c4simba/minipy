@@ -1,0 +1,9 @@
+True a a
+2 True b ['a', 'b'] True
+1 ['a']
+1 True
+True
+finalized early
+False
+end
+finalized at exit

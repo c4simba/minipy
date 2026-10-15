@@ -1,0 +1,7 @@
+6 3 600 1007
+13
+33
+True False True True False
+0
+True True True True False True
+[(1, 'a'), (2, 'b'), (3, 'c')] (3, 'c') True False

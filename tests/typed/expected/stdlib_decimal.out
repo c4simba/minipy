@@ -1,0 +1,66 @@
+0.3 3.30
+Decimal('3.14') Decimal('-7') Decimal('1E-7') Decimal('-0')
+1000.0001 42 Infinity -NaN7 sNaN
+-3.14 Infinity 2.5
+0.1000000000000000055511151231257827021181583404541015625 12.5 70
+1.5 -0 10000000000000000159028911097599180468360808563945281389781327557747838772170381060813469985856815104
+DecimalTuple(sign=0, digits=(1, 2, 3, 4, 5, 6), exponent=-3)
+DecimalTuple(sign=1, digits=(0,), exponent='F') DecimalTuple(sign=0, digits=(5,), exponent='n')
+1.3 1.2E+3 0
+12.3E+6 150E-9 1E-7
+0.1428571428571428571428571429
+1.414213562373095048801688724 2.302585092994045684017991455 2 2.718281828459045235360287471
+2.25 0.25 1.414213562373095048801688724 2.000000000000000000000000000
+3 -3 1 (Decimal('3'), Decimal('2'))
+3.3 3.3 9.99 0.125 0.125
+-5.5 5.555555555555555555555555556 2.5
+4 10 -2
+2 4 7.33 7.32
+1.23 -1
+1234.5 12345600 1234 1
+1000 1100
+1.5 -3 1.000000000000000000000000001 0.9999999999999999999999999999
+-1 -1 True
+-Zero +Normal sNaN 0
+True True True True False
+[Decimal('-2'), Decimal('0.5'), Decimal('3.1'), Decimal('10')] 1.5
+True 7 2075258708292324556
+one False
+-7 2.5 2 4 2.68
+-2 -1 -1 False
+(3, 4) (-2500, 1)
+1,234,567.89 1.235e+6 1_234_567.9      1234567.89 1234567.9      |
+3.14 12.5% 0.00 +0042.00
+100000    NaN 1.5e-10 12
+Context(prec=28, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[Inexact, FloatOperation, Rounded], traps=[InvalidOperation, DivisionByZero, Overflow])
+0.33333 1.2346 1.0737E+9
+3.1416 1.4142 True True False
+Context(prec=5, rounding=ROUND_HALF_UP, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[Inexact, Rounded], traps=[InvalidOperation, DivisionByZero, Overflow])
+False -1000003 999995
+0.142857 6
+0.1428571428571428571428571429 28
+2.78 ROUND_DOWN
+1.414213562
+9 ROUND_HALF_UP 1.41421356
+Context(prec=9, rounding=ROUND_HALF_UP, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[Clamped, InvalidOperation, DivisionByZero, Overflow, Underflow])
+Context(prec=9, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[], traps=[])
+Context(prec=16, rounding=ROUND_HALF_EVEN, Emin=-383, Emax=384, capitals=1, clamp=1, flags=[], traps=[]) 34
+DivisionByZero: [<class 'decimal.DivisionByZero'>]
+InvalidOperation: [<class 'decimal.ConversionSyntax'>] True True
+InvalidOperation: [<class 'decimal.DivisionUndefined'>]
+sqrt: [<class 'decimal.InvalidOperation'>]
+Infinity NaN NaN
+True True
+Context(prec=9, rounding=ROUND_HALF_EVEN, Emin=-999999, Emax=999999, capitals=1, clamp=0, flags=[DivisionByZero, InvalidOperation], traps=[])
+Inexact: [<class 'decimal.Inexact'>] True
+Infinity True
+TypeError: unsupported operand type(s) for +: 'decimal.Decimal' and 'float'
+TypeError: '<' not supported between instances of 'decimal.Decimal' and 'str'
+True True
+ValueError: cannot convert NaN to integer
+OverflowError: cannot convert Infinity to integer
+1.6069380442589902755419620923411626025222029937828E+60
+2238393297946874000179418290327143433.3477754744947
+1.2193263113702179522618503273362292333223746380111E+59
+2.7182818284590452353602874713526624977572470937000 0.69314718055994530941723212145817656807550013436026
+1.0 1000000000000000000000000000001

@@ -1,0 +1,23 @@
+'ls -l "my file.txt" \'single q\' a\\ b' ['ls', '-l', 'my file.txt', 'single q', 'a b'] ['ls', '-l', 'my file.txt', 'single q', 'a b']
+'echo "a \\"quoted\\" word" x#y # comment' ['echo', 'a "quoted" word', 'x#y', '#', 'comment'] ['echo', 'a "quoted" word', 'x']
+'a\'b\'c "d"e' ['abc', 'de'] ['abc', 'de']
+'one  two\tthree\nfour' ['one', 'two', 'three', 'four'] ['one', 'two', 'three', 'four']
+'x="a b" y=\'c\'' ['x=a b', 'y=c'] ['x=a b', 'y=c']
+'esc "\\$HOME \\x" \'\\n\'' ['esc', '\\$HOME \\x', '\\n'] ['esc', '\\$HOME \\x', '\\n']
+'' [] []
+'   ' [] []
+'a"b"c' ['abc'] ['abc']
+['a', "'b c'", 'd']
+'simple' simple
+'with space' 'with space'
+"it's" 'it'"'"'s'
+'' ''
+'$var' '$var'
+'a"b' 'a"b'
+'safe-chars_./=@%+,:' safe-chars_./=@%+,:
+echo 'hello world' 'it'"'"'s'
+['a', '=', 'b', ';', 'c', '(', 'd', ',', "'e f'", ')']
+['cmd', '&&', 'other', '||', 'x', ';', 'y']
+a b None
+ValueError No closing quotation
+ValueError No escaped character

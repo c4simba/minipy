@@ -1,0 +1,24 @@
+decl 'DOCTYPE html'
+start html []
+start head []
+start title []
+data 'T & x'
+end title
+end head
+start body [('class', 'main'), ('id', 'b1'), ('hidden', None)]
+start p []
+data 'Hi\xa0'
+start b []
+data 'there'
+end b
+startend br []
+start img [('src', 'a.png'), ('alt', 'A')]
+comment ' note '
+pi 'php x ?'
+start script []
+data 'if (a < b) { }'
+end script
+end body
+end html
+(1, 211)
+["data 'a '", 'entityref lt', "data ' b '", 'charref 62', "data ' c'"]

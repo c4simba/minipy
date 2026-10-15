@@ -1,0 +1,13 @@
+(1+2j) (3-4j) (4-2j) (-2+6j) (11+2j) (-0.2+0.4j) (-1-2j) (1+2j) 5.0
+1.0 2.0 (1-2j) True True False True
+2j (-1+0j) (1+0j) (0.5+0j) True (2+0j)
+(-0+1j) (1e+20+1e-05j) (-3+4j) (1+0j) (2+4j) (2.5+2j) (0.6-1.2j) (1-2j)
+(1+2j) -3.5j (4+0j) [(1+2j), (3-4j)] {'k': (1+2j)} (1+2j) (3-4j)
+True (3+3j) 5.0 True
+1j (-2-1j) True
+[0j, (1-1j), (2-2j), (3-3j)] (6-6j) 4.242640687119285
+1j (2+1j) 1.5707963267948966 3.141592653589793
+(1.4142135623730951, 0.7853981633974483) (1+0j) True
+True True True
+ZeroDivisionError: division by zero
+ValueError: complex() arg is a malformed string

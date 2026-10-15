@@ -1,0 +1,194 @@
+INFO:     Started server process [4242]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:40102 - "GET / HTTP/1.1" 200 OK
+[http] GET /
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 17
+content-type: application/json
+connection: close
+
+{"Hello":"World"}
+INFO:     127.0.0.1:40103 - "GET /items/5 HTTP/1.1" 200 OK
+[http] GET /items/5
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 22
+content-type: application/json
+connection: close
+
+{"item_id":5,"q":null}
+INFO:     127.0.0.1:40104 - "GET /items/5?q=somequery HTTP/1.1" 200 OK
+[http] GET /items/5?q=somequery
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 29
+content-type: application/json
+connection: close
+
+{"item_id":5,"q":"somequery"}
+INFO:     127.0.0.1:40105 - "GET /items/42?q=hello%20world%2B%C3%A9 HTTP/1.1" 200 OK
+[http] GET /items/42?q=hello%20world%2B%C3%A9
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 35
+content-type: application/json
+connection: close
+
+{"item_id":42,"q":"hello world+é"}
+INFO:     127.0.0.1:40106 - "GET /items/foo HTTP/1.1" 422 Unprocessable Entity
+[http] GET /items/foo
+HTTP/1.1 422 Unprocessable Entity
+server: uvicorn
+content-length: 152
+content-type: application/json
+connection: close
+
+{"detail":[{"type":"int_parsing","loc":["path","item_id"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"foo"}]}
+INFO:     127.0.0.1:40107 - "GET /items/ HTTP/1.1" 404 Not Found
+[http] GET /items/
+HTTP/1.1 404 Not Found
+server: uvicorn
+content-length: 22
+content-type: application/json
+connection: close
+
+{"detail":"Not Found"}
+INFO:     127.0.0.1:40108 - "GET /nothing HTTP/1.1" 404 Not Found
+[http] GET /nothing
+HTTP/1.1 404 Not Found
+server: uvicorn
+content-length: 22
+content-type: application/json
+connection: close
+
+{"detail":"Not Found"}
+INFO:     127.0.0.1:40109 - "POST / HTTP/1.1" 405 Method Not Allowed
+[http] POST /
+HTTP/1.1 405 Method Not Allowed
+server: uvicorn
+content-length: 31
+content-type: application/json
+connection: close
+
+{"detail":"Method Not Allowed"}
+INFO:     127.0.0.1:40110 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+[http] HEAD /
+HTTP/1.1 405 Method Not Allowed
+server: uvicorn
+content-length: 31
+content-type: application/json
+connection: close
+
+
+INFO:     127.0.0.1:40111 - "GET /catalog/foo HTTP/1.1" 200 OK
+[http] GET /catalog/foo
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 37
+content-type: application/json
+connection: close
+
+{"item":"Foo","price":50.2,"tags":[]}
+INFO:     127.0.0.1:40112 - "GET /catalog/bar?discount=0.5&verbose=yes HTTP/1.1" 200 OK
+[http] GET /catalog/bar?discount=0.5&verbose=yes
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 37
+content-type: application/json
+connection: close
+
+{"item":"Bar","price":31.0,"tags":[]}
+INFO:     127.0.0.1:40113 - "GET /catalog/zzz HTTP/1.1" 404 Not Found
+[http] GET /catalog/zzz
+HTTP/1.1 404 Not Found
+server: uvicorn
+content-length: 27
+content-type: application/json
+connection: close
+
+{"detail":"Item not found"}
+INFO:     127.0.0.1:40114 - "GET /catalog/foo?verbose=maybe HTTP/1.1" 422 Unprocessable Entity
+[http] GET /catalog/foo?verbose=maybe
+HTTP/1.1 422 Unprocessable Entity
+server: uvicorn
+content-length: 145
+content-type: application/json
+connection: close
+
+{"detail":[{"type":"bool_parsing","loc":["query","verbose"],"msg":"Input should be a valid boolean, unable to interpret input","input":"maybe"}]}
+INFO:     127.0.0.1:40115 - "GET /catalog/foo?discount=x HTTP/1.1" 422 Unprocessable Entity
+[http] GET /catalog/foo?discount=x
+HTTP/1.1 422 Unprocessable Entity
+server: uvicorn
+content-length: 151
+content-type: application/json
+connection: close
+
+{"detail":[{"type":"float_parsing","loc":["query","discount"],"msg":"Input should be a valid number, unable to parse string as a number","input":"x"}]}
+INFO:     127.0.0.1:40116 - "GET /objects/foo HTTP/1.1" 200 OK
+[http] GET /objects/foo
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 43
+content-type: application/json
+connection: close
+
+{"name":"Foo","price":50.2,"tags":["tool"]}
+INFO:     127.0.0.1:40117 - "POST /echo?text=hi&times=3 HTTP/1.1" 200 OK
+[http] POST /echo?text=hi&times=3
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 16
+content-type: application/json
+connection: close
+
+["hi","hi","hi"]
+INFO:     127.0.0.1:40118 - "POST /echo HTTP/1.1" 422 Unprocessable Entity
+[http] POST /echo
+HTTP/1.1 422 Unprocessable Entity
+server: uvicorn
+content-length: 90
+content-type: application/json
+connection: close
+
+{"detail":[{"type":"missing","loc":["query","text"],"msg":"Field required","input":null}]}
+INFO:     127.0.0.1:40119 - "GET /echo?text=hi HTTP/1.1" 405 Method Not Allowed
+[http] GET /echo?text=hi
+HTTP/1.1 405 Method Not Allowed
+server: uvicorn
+content-length: 31
+content-type: application/json
+connection: close
+
+{"detail":"Method Not Allowed"}
+INFO:     127.0.0.1:40120 - "GET /users/7/items/pen?short=0 HTTP/1.1" 200 OK
+[http] GET /users/7/items/pen?short=0
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 58
+content-type: application/json
+connection: close
+
+{"user":7,"item":"pen","description":"a long description"}
+INFO:     127.0.0.1:40121 - "GET /users/7/items/pen HTTP/1.1" 200 OK
+[http] GET /users/7/items/pen
+HTTP/1.1 200 OK
+server: uvicorn
+content-length: 42
+content-type: application/json
+connection: close
+
+{"user":7,"item":"pen","description":null}
+ERROR:    Exception in ASGI application: a bug in the endpoint
+INFO:     127.0.0.1:40122 - "GET /boom HTTP/1.1" 500 Internal Server Error
+[http] GET /boom
+HTTP/1.1 500 Internal Server Error
+server: uvicorn
+content-length: 21
+content-type: text/plain; charset=utf-8
+connection: close
+
+Internal Server Error

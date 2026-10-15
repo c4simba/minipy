@@ -1,0 +1,38 @@
+catalog 2 {} '\n  '
+b1 en en Python & XML EUR
+b2 None none <Fun> & games USD
+['xml', 'python']
+Ann
+Ann
+['b1', 'b2'] 2
+['b1'] ['b2']
+['29.90', '9.50'] café ☺ dflt
+['b2'] ['python']
+['Python', '&', 'XML', 'Ann']
+title '\n    ' ['id'] [('id', 'b2')]
+<top v="1"><child name="a">x &lt; y &amp; "z"</child><child name="b" extra="line&#10;break&#09;&quot;q&quot;"><empty /></child>after<!-- note --></top>
+b'<top v="1"><child name="a">x &lt; y &amp; "z"</child><child name="b" extra="line&#10;break&#09;&quot;q&quot;"><empty /></child>after<!-- note --></top>'
+<top v="1"><child name="a">x &lt; y &amp; "z"</child><child name="b" extra="line&#10;break&#09;&quot;q&quot;"><empty></empty></child>after<!-- note --></top>
+b'<u>caf&#233;</u>' b'<u>caf\xc3\xa9</u>' <u>café</u>
+b"<?xml version='1.0' encoding='iso-8859-1'?>\n<u>caf\xe9</u>"
+x < y & "z"after
+['first', 'child'] 3 True False
+<top v="1">
+  <first />
+  <child name="b" extra="line&#10;break&#09;&quot;q&quot;">
+    <empty />
+  </child>after<!-- note -->
+</top>
+<ns0:root xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:ns0="urn:x"><ns0:item>1</ns0:item><dc:title>t</dc:title></ns0:root>
+<x:root xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:x="urn:x"><x:item>1</x:item><dc:title>t</dc:title></x:root>
+top ['first', 'child'] 
+    
+b"<?xml version='1.0' encoding='utf-8'?>\n<"
+ParseError: mismatched tag: line 1, column 8 (1, 8)
+ParseError: no element found: line 1, column 3 (1, 3)
+ParseError: no element found: line 1, column 0 (1, 0)
+ParseError: junk after document element: line 1, column 7 (1, 7)
+ParseError: duplicate attribute: line 1, column 9 (1, 9)
+ParseError: undefined entity: line 1, column 3 (1, 3)
+ParseError: syntax error: line 1, column 0 (1, 0)
+ParseError: not well-formed (invalid token): line 1, column 5 (1, 5)

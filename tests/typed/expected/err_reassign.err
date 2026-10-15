@@ -1,0 +1,1 @@
+err_reassign.py:2: error: type mismatch: variable 'x' is int, cannot take str

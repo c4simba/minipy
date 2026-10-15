@@ -1,0 +1,19 @@
+12
+b'hello' 5 b'\nworld\n' b''
+6 b'wor'
+12 12 True True
+['a'] ['b', 'f.txt']
+[('', ['a'], []), ('/a', ['b'], ['f.txt']), ('/a/b', [], [])]
+['a/', 'g.txt']
+['g.txt']
+FileExistsError File exists True
+FileNotFoundError No such file or directory True
+NotADirectoryError Not a directory True
+OSError Directory not empty
+('x/y.tar', '.gz') ('/a/b', '') a/c/d q.py
+/c/d a/b True ../b/c
+/usr/l /usr ('.bashrc', '')
+True False True
+/ True posix dflt 8 True
+x/~ /a ('', '//', 'x/y')
+False

@@ -1,0 +1,117 @@
+'abc.txt' '*.txt' True True
+'abc.txt' 'a?c.*' True True
+'abc' '[ab]bc' True True
+'cbc' '[!ab]bc' True True
+'-' '[a-]' True True
+'b' '[a-c]' True True
+']' '[]]' True True
+'a]' '[!]]]' True True
+'x' '[z-a]' False False
+'[' '[' True True
+'[x' '[x' True True
+'a.TXT' '*.txt' False False
+'' '*' True True
+'aaaab' '*a*b' True True
+'abcabd' '*abd' True True
+'abc' 'a**c' True True
+'ab/c' 'a*c' True True
+'.hidden' '*' True True
+'e' '[--0]' False False
+'/' '[--0]' True True
+['a.py', 'c.py'] ['b.txt']
+['/a.txt', '/x[1].txt']
+['/a.txt', '/b.py', '/other', '/sub', '/x[1].txt']
+['/other/g.txt', '/sub/c.txt']
+['/a.txt', '/other/g.txt', '/sub/c.txt', '/sub/deep/d.txt', '/x[1].txt']
+['/', '/a.txt', '/b.py', '/other', '/other/g.txt', '/sub', '/sub/c.txt', '/sub/deep', '/sub/deep/d.txt', '/sub/deep/e.py', '/x[1].txt']
+['/', '/other/', '/sub/', '/sub/deep/']
+['/.dot.txt', '/.hid', '/a.txt', '/b.py', '/other', '/sub', '/x[1].txt']
+['a.txt', 'x[1].txt'] ['b.py', 'sub/deep/e.py']
+['/sub/'] [] ['/a.txt'] []
+x[[]1][*][?].txt ['/x[1].txt'] True False
+['/sub/c.txt', '/sub/deep', '/sub/deep/d.txt', '/sub/deep/e.py']
+build/shutil_test/a2.txt
+build/shutil_test/b.py
+build/shutil_test/a3.txt 1100000000.0 True
+SameFileError 'build/shutil_test/a2.txt' and 'build/shutil_test/a2.txt' are the same file
+FileNotFoundError 2
+build/shutil_test/copy
+['a.txt:5', 'b.py:8', 'sub/c.txt:5', 'sub/deep/d.log:5000']
+build/shutil_test/copy2
+['a.txt:5', 'sub/c.txt:5']
+FileExistsError 17
+build/shutil_test/copy
+build/shutil_test/moved False
+build/shutil_test/moved/a3.txt
+['a.txt:5', 'a3.txt:5', 'sub/c.txt:5']
+Error Destination path 'build/shutil_test/moved/a2.txt' already exists
+False ['a2.txt', 'b.py', 'copy', 'src']
+FileNotFoundError 2
+['lstat nothing FileNotFoundError']
+None
+-rw-r--r-- drwxr-xr-x lrwxrwxrwx -rwsr-xr-x drwxrwxrwt True False 2541
+terminal_size True True
+False
+['scandir f.txt NotADirectoryError', 'rmdir f.txt NotADirectoryError']
+NotADirectoryError 20
+True True tmp True
+True True 16 True
+5
+True dir_
+True
+True True
+False
+True True
+False
+b'abc' True True
+False
+text
+ True
+False
+4
+b'zz'
+False True
+'' PurePosixPath('.') . ()   []    . []
+'.' PurePosixPath('.') . ()   []    . []
+'/' PurePosixPath('/') / ('/',)   []  / / / []
+'//' PurePosixPath('//') // ('//',)   []  // // // []
+'///' PurePosixPath('/') / ('/',)   []  / / / []
+'//a' PurePosixPath('//a') //a ('//', 'a') a  [] a // // // ['//']
+'a//b/./c/' PurePosixPath('a/b/c') a/b/c ('a', 'b', 'c') c  [] c   a/b ['a/b', 'a', '.']
+'./a' PurePosixPath('a') a ('a',) a  [] a   . ['.']
+'a/..' PurePosixPath('a/..') a/.. ('a', '..') ..  [] ..   a ['a', '.']
+'../a/./b' PurePosixPath('../a/b') ../a/b ('..', 'a', 'b') b  [] b   ../a ['../a', '..', '.']
+'/a/b.tar.gz' PurePosixPath('/a/b.tar.gz') /a/b.tar.gz ('/', 'a', 'b.tar.gz') b.tar.gz .gz ['.tar', '.gz'] b.tar / / /a ['/a', '/']
+'a/.bashrc' PurePosixPath('a/.bashrc') a/.bashrc ('a', '.bashrc') .bashrc  [] .bashrc   a ['a', '.']
+'a/foo.' PurePosixPath('a/foo.') a/foo. ('a', 'foo.') foo. . ['.'] foo   a ['a', '.']
+'a/foo..' PurePosixPath('a/foo..') a/foo.. ('a', 'foo..') foo.. . ['.', '.'] foo.   a ['a', '.']
+'a/b c.txt' PurePosixPath('a/b c.txt') a/b c.txt ('a', 'b c.txt') b c.txt .txt ['.txt'] b c   a ['a', '.']
+a/b.txt a/b a/b. a/c.d a/z.c
+ValueError Invalid suffix 'txt'
+ValueError Invalid name ''
+ValueError PurePosixPath('/') has an empty name
+b/c ../b b
+ValueError '/a/b' is not in the subpath of '/c'
+ValueError 'a' is not in the subpath of '/a'
+True False True True False
+True True True False
+/c x/y a/b/c True True
+[PurePosixPath('a'), PurePosixPath('a/c'), PurePosixPath('b')] / /c/d
+PosixPath('x') x/y file:///a%20b/c True False True
+FileExistsError 17
+12 2 6
+hello
+world
+ b'\x00\x01' True False True True
+['a.txt', 'b.bin', 'sub'] ['a.txt'] ['a.txt', 'sub/deep/d.txt']
+['sub/c.py'] 12 a.md
+. ['sub'] ['a.txt', 'b.bin']
+sub ['deep'] ['c.py']
+sub/deep [] ['d.txt']
+hello
+b'\x00\x01'
+eee f.txt True False
+FileNotFoundError 2
+True True True
+True True
+False

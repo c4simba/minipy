@@ -1,0 +1,5 @@
+namespace(host='localhost', port=8080) localhost 8080
+9090 namespace(host='localhost', port=9090)
+namespace(debug=True) True
+1 2 True ['a', 'b'] None [('a', 1), ('b', 2)] {'a': 1, 'b': 2}
+TypeError

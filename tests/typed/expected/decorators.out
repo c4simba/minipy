@@ -1,0 +1,17 @@
+[Demo]
+  button 'OK' at (10, 20)
+  button 'Cancel' at (80, 20)
+accepted cancelled no such button
+cancelled accepted unbound key F1
+accepted cancelled ['-> on_cancel', '<- on_cancel', '-> on_cancel', '<- on_cancel', '-> on_cancel', '<- on_cancel']
+hey!!!
+102334155 41
+5 9 ['-> add', '<- add', '-> add', '<- add']
+<b><i>HI</i></b> wrapper
+up -> up 1
+up -> up 2
+reset -> [reset]
+up -> up 1
+up 2 [reset] 0
+['hello a', 'hello b', 'a', 'b']
+2

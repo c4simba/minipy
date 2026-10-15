@@ -1,0 +1,28 @@
+dot
+circle 12.0
+square 9.0
+rect 10.0
+unknown
+going north
+picking sword, shield
+unknown pick
+looking
+looking
+nothing
+unknown dance
+origin
+x-axis 3
+y-axis 4
+diagonal
+elsewhere
+['ok', 'ok', 'not found', 'server error 503', 'other']
+debug on 80 port 8080 rest ['a', 'b'] no port
+none zero value 7
+zero a x 5 (2, 'b') 2 b
+10
+inner 2 leaf 1 left child 3 right child 8
+['vowel', 'consonant', 'word']
+2x2 10 single 5 then 2 other
+n = 1
+n = 2
+done

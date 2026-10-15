@@ -1,0 +1,16 @@
+Ann is 42 years b-a hey!
+[       r] [l       ] [   c    ] [***mid***] [0003.142] [+42] [1,234,567]
+[   Ann] [Ann   ] [  Ann  ] [   42] [42   ] [00042] [3.14] [    3.1416] [2a] [0x2a] [101010] [52]
+25.0% 1.00e-05 1.235e+04 3.14159 1.23457e+06 42 -1,234,567 3.0
+left      |     right|   mid    |
+   42|42   |00042|+42|ff|FF|10|1.234568e+04|0.000123
+ff 3.500    s 007
+0xff -0xff 0b101 0o10 0x0
+abc...    abc --abc-- 00042 -0042
+Hello World hELLO wORLD 3 -1
+['line1', 'line2'] [] ['no newline']
+True False True False True True
+[3, 2, 1] ['c', 'b', 'a'] 14 3
+1024 1.4142135623730951 1 6
+2 1 0 
+4 3 2 y x 

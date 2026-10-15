@@ -1,0 +1,18 @@
+Color.RED <Color.GREEN: 2> RED 1 True
+Color.GREEN Color.BLUE ['RED', 'GREEN', 'BLUE'] 3 True
+red=1 True True Color
+['RED', 'GREEN', 'BLUE', 'CRIMSON'] True False True
+ValueError: 9 is not a valid Color
+KeyError: 'PINK'
+r [1, 2, 3] Color.BLUE
+1 <Num.TWO: 2> 10 11 2 [1, 2, 10, 11]
+read <Mode.WRITE: 'w'> True read
+Perm.RW <Perm.R|X: 5> Perm.RW True False
+<Perm.W|X: 3> <Perm: 0> False ['R', 'W', 'X'] 2
+[<Perm.R: 4>, <Perm.W: 2>] True <Perm.R|X: 5>
+5 <Bits.B|C: 6> 4 <Bits.A|8: 9>
+5.976e+24 9.8 (3.303e+23, 2439700.0)
+stop ? go
+Level.LOW Level.HIGH 4 11
+[('BLUE', 1), ('RED', 2)] Color.BLUE
+['TUE', 'MON'] True

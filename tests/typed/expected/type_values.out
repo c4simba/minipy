@@ -1,0 +1,10 @@
+Animal Dog True False True Dog
+<class 'int'> <class 'str'> <class 'float'> <class 'bool'> <class 'list'> <class 'tuple'> <class 'dict'> <class 'set'> <class 'bytes'> <class 'NoneType'>
+<class '__main__.Dog'> <class '__main__.Dog'> Animal <class 'int'> str
+True False True True True False True True True
+True False True True True
+False <class 'NoneType'>
+True <class 'int'>
+an int a str True False
+<class '__main__.Dog'> Dog True
+KeyError <class 'KeyError'> True False

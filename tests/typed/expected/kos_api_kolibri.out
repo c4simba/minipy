@@ -1,0 +1,137 @@
+event: 6
+mouse: (-5, -3) 1 True (0, -2) (0, 0)
+time: (12, 34, 56)
+date: (2026, 10, 8)
+screen: (1024, 768)
+work area: (0, 0, 1023, 739)
+skin: 22 (6, 3, 72, 3)
+video: (1024, 768) 32 bpp, 4096
+uptime: (705032827, 1) 5000 ms
+cpu: 2400 MHz
+ram: 1048576 of 2097152 KB
+ram info: [524288, 262144, 77, 16777216, 65536]
+kernel: 0.7.7.0 abi 40.0 commit f26d5b28 +1675
+colors: [0, 1052688, 5263440, 9474192]
+languages: 4 1
+layout: 32 159
+msr: (287454020, 85)
+access: True False True
+[kos] set time 23:59:07
+[kos] set date 2027-01-31
+[kos] window z-position 1 for -1
+[kos] screen setting 48.6 = 0x3ff 0x2bc
+[kos] mouse setting 4: 0x2000180
+[kos] MSR 0x1b = 0x9:0x12345678
+me: kos_api_kol pid 4242 slot 4 of 6
+threads: ['IDLE/1', 'OS/2', '@TASKBAR/3', 'kos_api_kol/4242', 'SHELL/4300']
+slot of 4300: 6, of 999: 0
+[kos] priority of -1 = 1
+priority: 2 -> 2
+[kos] kill pid 4300
+[kos] kill pid 31337
+kill: True False
+mouse: (0, 0) (-5, -3) 1
+mouse speed: 3 delay 50
+[kos] cursor file '/sys/arrow.cur'
+[kos] cursor 0x4001
+[kos] cursor 0x0
+cursor: 16385 0 16385
+[kos] cursor 0x4001 deleted
+[kos] keyboard mode 1
+keyboard: 1 mods True
+[kos] keyboard mode 0
+[kos] hotkey set scancode 46 modifiers 0x110
+hotkey: True
+[gui] window x=10 w=300 y=20 h=200 style=0x13ffffff caption='API'
+[gui] pixel x=1 y=2 color=0xff0000
+[gui] line 0,0 - 50,25 color=0xff00
+[gui] number 255 base 16 digits=4 at 5,6 color=0x0 flags=0x0
+[gui] number -12 base 10 digits=6 no-leading-zeros at 5,26 color=0x0 flags=0x0
+[gui] text x=7 y=8 color=0xff 'big' flags=0xd1 background=0xeeeeee
+[gui] text x=0 y=0 color=0x123456 'in a canvas' flags=0xb8 canvas 64x16
+[gui] image 4x2 at 40,50 bytes=112233000000
+[gui] image 8x2 at 60,70 bpp=1 palette=00000000ffffff00 row_offset=3 first=a5000000
+[gui] blit flags=0x0 to 1,2 4x4 from 0,0 4x4 row=16 first=11223344
+[gui] move window x=-1 y=50 w=-1 h=-1
+[gui] title 'Заголовок' (encoding 3)
+[gui] title removed
+[gui] window shape 0101010100000000
+[gui] window shape reset
+pixel: 197184 owner 4
+screen area: [0, 35]
+background: (800, 600) mode 2 last (10, 20, 400, 300)
+background rect: 7 8
+[kos] background redraw 1,2 - 3,4
+[kos] skin '/sys/default.skn'
+font: 1 9 skin 0
+ls: ['docs/', 'hello.txt=38', 'kernel.mnt=3072', 'pics/']
+dot entries: 5
+read: 'Hello'
+read all: 'MiniPy on KolibriOS\n\nA file browser example.\n'
+missing: True -1
+write: 0 0
+new: 'first+second' 12
+write at: 0 'FIRST+second'
+truncate: 0 'FIR'
+info: 32 3 (2026, 1, 2, 3, 4, 5)
+[kos] attributes of '/tmp0/1/new.txt' = 0x21
+attrs: 33
+mkdir: 0 True
+rename: 0 True False
+unicode: 0 'данные'
+symlink: 0 '/tmp0/1/hello.txt'
+delete: 0 10 0
+read into: (0, 8) [254, 255, 0]
+[kos] run '/tmp0/1/hello.txt' '-v'
+run: 5000 -5
+load file: 'notes'
+[kos] current folder '/tmp0/1/docs'
+cwd: /tmp0/1/docs
+[kos] system folder 'home' = '/hd0/1/home'
+clipboard: 1 'fake clipboard'
+[kos] clipboard += type 0, 'copied text'
+clipboard: 2 'copied text'
+clipboard delete: True 1
+[kos] IPC area of 64 bytes
+ipc send: 0 0 4
+ipc full: 3
+event: 7
+ipc receive: [(4242, 'ping'), (4242, 'pong!')] []
+dbg
+board: [100, 98, 103, 10, -1]
+pipe: (7, 8) 16 'through' ' the pipe'
+[kos] futex created, value 5
+futex: 256 -2 -1 True
+memory: True 1234567 True
+[kos] shared memory 'my-area': 4096 bytes
+shm: 0 4096 shared (0, 5)
+[kos] shared memory 'my-area' closed
+[kos] driver 0x8000 code 7 input 010203
+driver: 32768 0 0 3
+drivers: ['SOUND', 'USBHID']
+signal: [3, 1, 2, 3, 4, 5]
+pci: 768 2 32902 28672 1879081094 -1
+[kos] PCI write 0:1.0 reg 0x3c = 0xb
+net devices: 2 fakenet0 True link 10
+net bytes: (705032712, 1) packets 106
+mac: 52:54:00:12:34:56
+ip: 192.168.0.10 dns 8.8.8.8 mask 255.255.255.0 gw 192.168.0.1
+[kos] IP = 10.1.2.3
+arp: 1 192.168.0.1 52:54:00:aa:bb:cc ttl 300 True
+[kos] ARP add 192.168.0.77 01:02:03:04:05:06 ttl 60
+[kos] socket 3: domain 2 type 1 protocol 6
+[kos] socket 3 connected to 93.184.216.34:80
+socket: (3, 0) (0, 0)
+[kos] socket 3 sends 'GET / HTTP/1.0\r\n\r\n' flags 0x0
+send: (18, 0)
+receive: 'HTTP/1.0 200 OK\r\n'
+accept: (4, 0) 10.0.0.2:5555
+[kos] socket 3 option 1/2 = 3
+option: (1, 0) (0, 0)
+[kos] socket 3 closed
+close: (0, 0) pair (7, 8)
+debug regs: 4096 32752
+debug read: 4 3
+[kos] breakpoint thread 77 edx=0xf01 at 0x2000
+[kos] speaker data 00000000
+[kos] message: event 2, 65

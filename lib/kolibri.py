@@ -1,0 +1,1871 @@
+# KolibriOS system functions for MiniPy, built on the `sys.syscall` gateway.
+#
+# Function reference: kernel/trunk/docs/sysfuncs.txt in the KolibriOS sources
+# (https://git.kolibrios.org/KolibriOS/kolibrios), also
+# https://wiki.kolibrios.org/wiki/SysFn. The function numbers are given with
+# each wrapper ("fn 18.20" = function 18, subfunction 20).
+#
+# The same file works in the interpreter (the KolibriOS build of minipy) and
+# in compiled programs (minipy --compile --target kolibri):
+#
+#   * sys.syscall(eax, ebx, ecx, edx, esi, edi, ebp) loads the registers, runs
+#     `int 0x40` and returns [eax, ebx, ecx, edx, esi, edi]. An int argument
+#     is the register value; a str passes the address of its bytes (always
+#     followed by a 0 byte: an ASCIIZ string); a sys.buffer passes the address
+#     of its bytes. A string can not hold a 0 byte, so structures are built in
+#     buffers (sys.buffer / sys.poke / sys.poke_str) and read back with
+#     sys.peek / sys.peek_str; a pointer inside a structure is sys.addr(buf).
+#   * The interpreter returns the registers as unsigned numbers, compiled code
+#     as signed 32-bit ones. Every wrapper here normalizes with _s32() (a
+#     result of -1 is -1 in both) and masks after shifting (`(v >> 16) &
+#     0xFFFF`), so the results are the same. For the same reason a constant
+#     with bit 31 set is written negative (-0x80000000): 0x80000000 is a
+#     positive number in the interpreter and a negative one compiled.
+#   * Memory the kernel hands out (a clipboard slot, a loaded file, a shared
+#     area) is read and written with sys.peek_at / sys.poke_at /
+#     sys.peek_str_at / sys.cstr_at at that address.
+#   * A buffer the kernel keeps using after the call (window shape, IPC area,
+#     debug messages, speaker data) must stay referenced by the program.
+#
+# Outdated interfaces the documentation says not to use (18.11, 24.4/24.5,
+# 64) and the ones that need the address of machine code (51.1 create thread,
+# 68.24 exception handler) are left out.
+
+import sys
+
+# ---------------------------------------------------------------- helpers
+
+def _s32(v: int) -> int:
+    """A register value as a signed 32-bit number (the same in both modes)."""
+    return ((v & 0xFFFFFFFF) ^ 0x80000000) - 0x80000000
+
+def _s16(v: int) -> int:
+    return ((v & 0xFFFF) ^ 0x8000) - 0x8000
+
+def _pk(hi: int, lo: int) -> int:
+    """KolibriOS packs a coordinate pair into one register: high 16 | low 16."""
+    return ((hi & 0xFFFF) << 16) | (lo & 0xFFFF)
+
+def _hi(v: int) -> int:
+    return (v >> 16) & 0xFFFF
+
+def _lo(v: int) -> int:
+    return v & 0xFFFF
+
+def _bcd(b: int) -> int:
+    return ((b >> 4) & 15) * 10 + (b & 15)
+
+def _to_bcd(n: int) -> int:
+    return ((n // 10) % 10) * 16 + n % 10
+
+def _ascii(s: str) -> bool:
+    for ch in s:
+        if ord(ch) > 127:
+            return False
+    return True
+
+def _cbuf(s: str) -> buffer:
+    """A buffer holding s and a 0 byte: an ASCIIZ string to point at."""
+    b = sys.buffer(len(s.encode()) + 1)
+    sys.poke_str(b, 0, s)
+    return b
+
+def _u32_float(v: int) -> float:
+    f = float(v)
+    if f < 0.0:
+        f += 4294967296.0
+    return f
+
+def _dword(b: buffer, off: int) -> int:
+    return _s32(sys.peek(b, off, 4))
+
+def _cstr(b: buffer, off: int, maxlen: int) -> str:
+    return sys.cstr_at(sys.addr(b) + off, maxlen)
+
+def hex32(v: int) -> str:
+    """v as 8 hex digits (a register, an address, a hash)."""
+    digits = "0123456789abcdef"
+    out = ""
+    for i in range(8):
+        out += digits[(v >> (28 - 4 * i)) & 15]
+    return out
+
+def ip_to_str(ip: int) -> str:
+    """An IPv4 address as KolibriOS keeps it (first octet in the low byte)."""
+    return str(ip & 255) + "." + str((ip >> 8) & 255) + "." + str((ip >> 16) & 255) + "." + str((ip >> 24) & 255)
+
+def ip_from_str(text: str) -> int:
+    parts = text.split(".")
+    if len(parts) != 4:
+        return 0
+    v = 0
+    for i in range(4):
+        v = v | ((int(parts[i]) & 255) << (8 * i))
+    return _s32(v)
+
+def mac_to_str(octets: list[int]) -> str:
+    digits = "0123456789abcdef"
+    out = ""
+    for i in range(len(octets)):
+        b = octets[i] & 255
+        if i:
+            out += ":"
+        out += digits[b >> 4] + digits[b & 15]
+    return out
+
+# ---------------------------------------------------------------- events (fn 10, 11, 23, 40)
+
+EV_REDRAW = 1          # the window must be drawn again
+EV_KEY = 2             # a key (or a hotkey) was pressed
+EV_BUTTON = 3          # a button was pressed
+EV_BACKGROUND = 5      # the desktop background was redrawn
+EV_MOUSE = 6           # mouse moved / a mouse button changed
+EV_IPC = 7             # an IPC message arrived
+EV_NETWORK = 8         # network event
+EV_DEBUG = 9           # debug event
+
+# masks for set_event_mask(): bit i = event i+1
+EVM_REDRAW = 1
+EVM_KEY = 2
+EVM_BUTTON = 4
+EVM_BACKGROUND = 16
+EVM_MOUSE = 32
+EVM_IPC = 64
+EVM_NETWORK = 128
+EVM_DEBUG = 256
+EVM_MOUSE_ACTIVE_ONLY = -0x80000000     # bit 31: inactive windows get no mouse events
+EVM_MOUSE_INSIDE_ONLY = 0x40000000      # no mouse events with the cursor outside
+
+def wait_event() -> int:
+    """fn 10: block until an event comes; its code (EV_*)."""
+    return _s32(sys.syscall(10)[0])
+
+def check_event() -> int:
+    """fn 11: the next event, 0 if there is none."""
+    return _s32(sys.syscall(11)[0])
+
+def wait_event_timeout(ticks: int) -> int:
+    """fn 23: wait at most ticks/100 s; 0 if nothing came."""
+    return _s32(sys.syscall(23, ticks)[0])
+
+def set_event_mask(mask: int) -> int:
+    """fn 40: which events wait_event & co report (EVM_*); the previous mask."""
+    return _s32(sys.syscall(40, mask)[0])
+
+# ---------------------------------------------------------------- window (fn 0, 12, 67, 71, 18.x)
+
+WS_SKINNED = 0x03000000          # style Y=3: skinned window
+WS_SKINNED_FIXED = 0x04000000    # style Y=4: skinned, fixed size
+WS_ONLY_AREA = 0x01000000        # style Y=1: just the area, nothing drawn
+WS_CAPTION = 0x10000000          # A: has a caption
+WS_CLIENT_COORDS = 0x20000000    # B: drawing is relative to the client area
+WS_NO_FILL = 0x40000000          # C: the working area is not filled
+WS_GRADIENT = -0x80000000        # D (bit 31): gradient fill
+
+def window_redraw_begin() -> None:
+    sys.syscall(12, 1)                                   # fn 12.1: start redraw
+
+def window_redraw_end() -> None:
+    sys.syscall(12, 2)                                   # fn 12.2: finish redraw
+
+def define_window(x: int, y: int, w: int, h: int, work_color: int, caption: str) -> None:
+    """fn 0: a skinned fixed-size window (type 4) with a caption."""
+    sys.syscall(0, _pk(x, w), _pk(y, h), 0x14000000 | (work_color & 0xFFFFFF), 0, caption)
+
+def define_window_ex(x: int, y: int, w: int, h: int, style: int, work_color: int, caption: str, header_color: int = 0) -> None:
+    """fn 0 with any style: style = WS_* flags or'ed together."""
+    sys.syscall(0, _pk(x, w), _pk(y, h), (style & 0xFF000000) | (work_color & 0xFFFFFF), header_color, caption)
+
+def set_title(text: str) -> None:
+    sys.syscall(71, 1, text)                             # fn 71.1: change the caption
+
+def set_title_utf8(text: str) -> None:
+    sys.syscall(71, 2, text, 3)                          # fn 71.2: caption with an encoding (3 = UTF-8)
+
+def remove_title() -> None:
+    sys.syscall(71, 1, 0)                                # fn 71.1 with NULL
+
+def move_window(x: int, y: int, w: int = -1, h: int = -1) -> None:
+    """fn 67: move/resize the window; -1 keeps a value."""
+    sys.syscall(67, x, y, w, h)
+
+def set_window_shape(data: buffer) -> None:
+    """fn 50.0: shape bytes (0/1 per point); keep the buffer while the shape is in use."""
+    sys.syscall(50, 0, data)
+
+def set_window_shape_scale(scale: int) -> None:
+    sys.syscall(50, 1, scale)                            # fn 50.1: a byte covers 2^scale x 2^scale points
+
+def reset_window_shape() -> None:
+    sys.syscall(50, 0, 0)                                # fn 50.0 with NULL: rectangular again
+
+def unfocus_window(slot: int) -> None:
+    sys.syscall(18, 1, slot)                             # fn 18.1
+
+def focus_window(slot: int) -> None:
+    sys.syscall(18, 3, slot)                             # fn 18.3: activate (and restore) a window
+
+def active_window() -> int:
+    return _s32(sys.syscall(18, 7)[0])                   # fn 18.7: slot of the active window
+
+def minimize_window() -> None:
+    sys.syscall(18, 10)                                  # fn 18.10: minimize the topmost window
+
+def minimize_window_of(slot: int) -> int:
+    return _s32(sys.syscall(18, 22, 0, slot)[0])         # fn 18.22.0
+
+def minimize_window_of_pid(pid: int) -> int:
+    return _s32(sys.syscall(18, 22, 1, pid)[0])          # fn 18.22.1
+
+def restore_window_of(slot: int) -> int:
+    return _s32(sys.syscall(18, 22, 2, slot)[0])         # fn 18.22.2
+
+def restore_window_of_pid(pid: int) -> int:
+    return _s32(sys.syscall(18, 22, 3, pid)[0])          # fn 18.22.3
+
+def minimize_all_windows() -> int:
+    return _s32(sys.syscall(18, 23)[0])                  # fn 18.23: how many got minimized
+
+ZPOS_DESKTOP = -2
+ZPOS_ALWAYS_BACK = -1
+ZPOS_NORMAL = 0
+ZPOS_ALWAYS_TOP = 1
+
+def window_zpos(pid: int = -1) -> int:
+    return _s32(sys.syscall(18, 25, 1, pid)[0])          # fn 18.25.1 (-1: this window)
+
+def set_window_zpos(zpos: int, pid: int = -1) -> bool:
+    return _s32(sys.syscall(18, 25, 2, pid, zpos)[0]) == 1   # fn 18.25.2
+
+# ---------------------------------------------------------------- drawing (fn 1, 4, 7, 13, 38, 47, 65, 73)
+
+def put_pixel(x: int, y: int, color: int) -> None:
+    sys.syscall(1, x, y, color & 0xFFFFFF)               # fn 1
+
+def invert_pixel(x: int, y: int) -> None:
+    sys.syscall(1, x, y, 0x01000000)                     # fn 1 with 0x01xxxxxx
+
+def draw_text(x: int, y: int, text: str, color: int) -> None:
+    """fn 4: ebx = x<<16|y, ecx = colour, edx = string, esi = length (6x9 cp866 font)."""
+    sys.syscall(4, _pk(x, y), color & 0xFFFFFF, text, len(text.encode()))
+
+FONT_6X9 = 0           # cp866
+FONT_8X16 = 1          # cp866
+FONT_UTF16 = 2         # 8x16, UTF-16LE
+FONT_UTF8 = 3          # 8x16, UTF-8
+
+def draw_text_ex(x: int, y: int, text: str, color: int, font: int = 0, scale: int = 1, background: int = -1) -> None:
+    """fn 4 with a font (FONT_*), a size multiplier 1..8 and an optional
+    background colour; the string is passed zero-terminated (A=1)."""
+    flags = 0x80000000 | ((font & 3) << 28) | (((scale - 1) & 7) << 24)
+    if background >= 0:
+        sys.syscall(4, _pk(x, y), flags | 0x40000000 | (color & 0xFFFFFF), text, 0, background & 0xFFFFFF)
+    else:
+        sys.syscall(4, _pk(x, y), flags | (color & 0xFFFFFF), text, 0)
+
+def new_canvas(w: int, h: int) -> buffer:
+    """A user buffer for drawing text into (fn 4/47 with C=1): w, h, 32bpp pixels."""
+    b = sys.buffer(8 + w * h * 4)
+    sys.poke(b, 0, w, 4)
+    sys.poke(b, 4, h, 4)
+    return b
+
+def draw_text_canvas(canvas: buffer, x: int, y: int, text: str, color: int, font: int = 0, scale: int = 1) -> None:
+    """fn 4 with C=1: draw into a canvas made by new_canvas()."""
+    flags = 0x80000000 | ((font & 3) << 28) | 0x08000000 | (((scale - 1) & 7) << 24)
+    sys.syscall(4, _pk(x, y), flags | (color & 0xFFFFFF), text, 0, canvas)
+
+def draw_rect(x: int, y: int, w: int, h: int, color: int) -> None:
+    sys.syscall(13, _pk(x, w), _pk(y, h), color & 0xFFFFFF)          # fn 13: filled bar
+
+def draw_gradient_rect(x: int, y: int, w: int, h: int, color: int) -> None:
+    sys.syscall(13, _pk(x, w), _pk(y, h), 0x80000000 | (color & 0xFFFFFF))
+
+def draw_line(x1: int, y1: int, x2: int, y2: int, color: int) -> None:
+    sys.syscall(38, _pk(x1, x2), _pk(y1, y2), color & 0xFFFFFF)     # fn 38 (end point included)
+
+def draw_inverted_line(x1: int, y1: int, x2: int, y2: int) -> None:
+    sys.syscall(38, _pk(x1, x2), _pk(y1, y2), 0x01000000)
+
+def draw_number(x: int, y: int, value: int, digits: int, color: int, base: int = 10, leading_zeros: bool = False, font: int = 0, scale: int = 1) -> None:
+    """fn 47: the number in base 10, 16 or 2, at most 60 digits."""
+    bh = 0
+    if base == 16:
+        bh = 1
+    elif base == 2:
+        bh = 2
+    ebx = (bh << 8) | ((digits & 63) << 16)
+    if not leading_zeros:
+        ebx = ebx | 0x80000000
+    esi = ((font & 1) << 28) | (((scale - 1) & 7) << 24) | (color & 0xFFFFFF)
+    sys.syscall(47, ebx, value, _pk(x, y), esi)
+
+def draw_image(image: buffer, x: int, y: int, w: int, h: int) -> None:
+    """fn 7: w*h pixels of 3 bytes BB GG RR."""
+    sys.syscall(7, image, _pk(w, h), _pk(x, y))
+
+def draw_image_palette(image: buffer, x: int, y: int, w: int, h: int, bpp: int, palette: buffer = None, row_offset: int = 0) -> None:
+    """fn 65: bpp = 1, 2, 4, 8, 9, 15, 16, 24 or 32; palette (2^bpp dwords
+    0x00RRGGBB) for bpp <= 8; row_offset = bytes from one row to the next
+    beyond the packed size (ebp, 0 normally)."""
+    sys.syscall(65, image, _pk(w, h), _pk(x, y), bpp, palette, row_offset)
+
+def draw_image_at(address: int, x: int, y: int, w: int, h: int, bpp: int = 32, row_offset: int = 0) -> None:
+    """fn 65 with the image at a memory address (a part of a bigger picture:
+    row_offset = the bytes skipped from the end of one row to the next)."""
+    sys.syscall(65, address, _pk(w, h), _pk(x, y), bpp, 0, row_offset)
+
+BLIT_BACKGROUND = 0x10
+BLIT_TRANSPARENT = 0x20
+BLIT_CLIENT = 0x20000000
+
+def blit(bitmap: buffer, x: int, y: int, w: int, h: int, src_x: int, src_y: int, src_w: int, src_h: int, row_bytes: int, flags: int = 0) -> None:
+    """fn 73: copy a 32bpp bitmap (row_bytes per row) into the window."""
+    p = sys.buffer(40)
+    sys.poke(p, 0, x, 4)
+    sys.poke(p, 4, y, 4)
+    sys.poke(p, 8, w, 4)
+    sys.poke(p, 12, h, 4)
+    sys.poke(p, 16, src_x, 4)
+    sys.poke(p, 20, src_y, 4)
+    sys.poke(p, 24, src_w, 4)
+    sys.poke(p, 28, src_h, 4)
+    sys.poke(p, 32, sys.addr(bitmap), 4)
+    sys.poke(p, 36, row_bytes, 4)
+    sys.syscall(73, flags, p)
+
+# ---------------------------------------------------------------- buttons (fn 8, 17)
+
+def define_button(x: int, y: int, w: int, h: int, button_id: int, color: int) -> None:
+    """fn 8: a clickable button. Id 1 is the skin's close box, 0xFFFF minimize."""
+    sys.syscall(8, _pk(x, w), _pk(y, h), button_id & 0xFFFFFF, color & 0xFFFFFF)
+
+def define_button_ex(x: int, y: int, w: int, h: int, button_id: int, color: int, draw: bool = True, frame_on_press: bool = True) -> None:
+    edx = button_id & 0xFFFFFF
+    if not draw:
+        edx = edx | 0x40000000
+    if not frame_on_press:
+        edx = edx | 0x20000000
+    sys.syscall(8, _pk(x, w), _pk(y, h), edx, color & 0xFFFFFF)
+
+def delete_button(button_id: int) -> None:
+    sys.syscall(8, 0, 0, 0x80000000 | (button_id & 0xFFFFFF))
+
+def get_pressed_button() -> int:
+    """fn 17: the pressed button id (its high 24 bits), 0 if none."""
+    v = _s32(sys.syscall(17)[0])
+    if v == 1:
+        return 0
+    return (v >> 8) & 0xFFFFFF
+
+def get_pressed_button_mouse() -> int:
+    """fn 17: the mouse buttons it was pressed with (0 = left), -1 if none."""
+    v = _s32(sys.syscall(17)[0])
+    if v == 1:
+        return -1
+    return v & 255
+
+# ---------------------------------------------------------------- keyboard (fn 2, 66, 21.2, 26.2)
+
+# codes of the keys in ASCII mode (the kernel's keymap)
+KEY_BACKSPACE = 8
+KEY_TAB = 9
+KEY_ENTER = 13
+KEY_ESCAPE = 27
+KEY_LEFT = 176
+KEY_DOWN = 177
+KEY_UP = 178
+KEY_RIGHT = 179
+KEY_HOME = 180
+KEY_END = 181
+KEY_DELETE = 182
+KEY_PAGE_DOWN = 183
+KEY_PAGE_UP = 184
+KEY_INSERT = 185
+
+def get_key() -> int:
+    """fn 2: eax as returned (1 = buffer empty; al = 0, ah = code otherwise)."""
+    return _s32(sys.syscall(2)[0])
+
+class Key:
+    code: int          # ASCII code (or scancode in scancode mode, or of a hotkey)
+    scancode: int      # in ASCII mode: the key's scancode
+    hotkey: bool       # a system-wide hotkey (code is its scancode)
+    controls: int      # hotkeys: state of the control keys
+
+    def __init__(self, raw: int):
+        self.hotkey = (raw & 255) == 2
+        self.code = (raw >> 8) & 255
+        self.scancode = 0
+        self.controls = 0
+        if self.hotkey:
+            self.controls = (raw >> 16) & 0xFFFF
+        else:
+            self.scancode = (raw >> 16) & 255
+
+def read_key() -> Key:
+    """fn 2 decoded; None when the buffer is empty."""
+    v = _s32(sys.syscall(2)[0])
+    if v == 1:
+        return None
+    return Key(v)
+
+KEYMODE_ASCII = 0
+KEYMODE_SCANCODES = 1
+
+def set_keyboard_mode(mode: int) -> None:
+    sys.syscall(66, 1, mode)                             # fn 66.1
+
+def keyboard_mode() -> int:
+    return _s32(sys.syscall(66, 2)[0])                   # fn 66.2
+
+MOD_LSHIFT = 1
+MOD_RSHIFT = 2
+MOD_LCTRL = 4
+MOD_RCTRL = 8
+MOD_LALT = 0x10
+MOD_RALT = 0x20
+MOD_CAPSLOCK = 0x40
+MOD_NUMLOCK = 0x80
+MOD_SCROLLLOCK = 0x100
+MOD_LWIN = 0x200
+MOD_RWIN = 0x400
+
+def control_keys() -> int:
+    return _s32(sys.syscall(66, 3)[0])                   # fn 66.3: MOD_* bits
+
+def set_hotkey(scancode: int, modifiers: int) -> bool:
+    """fn 66.4: modifiers = 0xXYZ (Alt, Ctrl, Shift states, see the docs)."""
+    return _s32(sys.syscall(66, 4, scancode & 255, modifiers)[0]) == 0
+
+def delete_hotkey(scancode: int, modifiers: int) -> bool:
+    return _s32(sys.syscall(66, 5, scancode & 255, modifiers)[0]) == 0   # fn 66.5
+
+def lock_input() -> None:
+    sys.syscall(66, 6)                                   # fn 66.6
+
+def unlock_input() -> None:
+    sys.syscall(66, 7)                                   # fn 66.7
+
+LAYOUT_NORMAL = 1
+LAYOUT_SHIFT = 2
+LAYOUT_ALT = 3
+
+def keyboard_layout(which: int) -> buffer:
+    """fn 26.2: the 128-byte table for LAYOUT_*."""
+    b = sys.buffer(128)
+    sys.syscall(26, 2, which, b)
+    return b
+
+def set_keyboard_layout(which: int, table: buffer) -> bool:
+    return _s32(sys.syscall(21, 2, which, table)[0]) == 0    # fn 21.2
+
+LANG_EN = 1
+LANG_FI = 2
+LANG_GE = 3
+LANG_RU = 4
+LANG_FR = 5
+LANG_ET = 6
+LANG_UA = 7
+LANG_IT = 8
+LANG_BE = 9
+LANG_SP = 10
+LANG_CA = 11
+
+def keyboard_language() -> int:
+    return _s32(sys.syscall(26, 2, 9)[0])                # fn 26.2.9
+
+def set_keyboard_language(lang: int) -> bool:
+    return _s32(sys.syscall(21, 2, 9, lang)[0]) == 0     # fn 21.2.9
+
+def system_language() -> int:
+    return _s32(sys.syscall(26, 5)[0])                   # fn 26.5
+
+def set_system_language(lang: int) -> None:
+    sys.syscall(21, 5, lang)                             # fn 21.5
+
+# ---------------------------------------------------------------- mouse (fn 37, 18.19, 18.15)
+
+def mouse_screen_pos() -> tuple[int, int]:
+    v = sys.syscall(37, 0)[0]                            # fn 37.0
+    return (_hi(v), _lo(v))
+
+def mouse_window_pos() -> tuple[int, int]:
+    """fn 37.1: relative to the window, negative left of / above it (eax is
+    x*65536 + y computed as one 32-bit number)."""
+    v = _s32(sys.syscall(37, 1)[0])
+    y = _s16(v)
+    return ((v - y) >> 16, y)
+
+MOUSE_LEFT = 1
+MOUSE_RIGHT = 2
+MOUSE_MIDDLE = 4
+MOUSE_4 = 8
+MOUSE_5 = 16
+
+def mouse_buttons() -> int:
+    return _s32(sys.syscall(37, 2)[0]) & 31              # fn 37.2: MOUSE_* held
+
+# fn 37.3 event bits
+MOUSE_LEFT_PRESSED = 0x100
+MOUSE_RIGHT_PRESSED = 0x200
+MOUSE_MIDDLE_PRESSED = 0x400
+MOUSE_VSCROLL = 0x8000
+MOUSE_LEFT_RELEASED = 0x10000
+MOUSE_RIGHT_RELEASED = 0x20000
+MOUSE_MIDDLE_RELEASED = 0x40000
+MOUSE_HSCROLL = 0x800000
+MOUSE_DOUBLE_CLICK = 0x1000000
+
+def mouse_events() -> int:
+    return _s32(sys.syscall(37, 3)[0])                   # fn 37.3: states and MOUSE_*_PRESSED/... events
+
+def mouse_scroll() -> tuple[int, int]:
+    """fn 37.7: (horizontal, vertical) wheel steps since the last call."""
+    v = sys.syscall(37, 7)[0]
+    return (_s16(v >> 16), _s16(v))
+
+def load_cursor_file(path: str) -> int:
+    return _s32(sys.syscall(37, 4, path, 0)[0])          # fn 37.4, dx = 0: a .cur file; handle or 0
+
+def load_cursor_image(argb: buffer, hot_x: int, hot_y: int) -> int:
+    """fn 37.4, dx = 2: 32*32 ARGB pixels; the hotspot in edx."""
+    return _s32(sys.syscall(37, 4, argb, ((hot_x & 255) << 24) | ((hot_y & 255) << 16) | 2)[0])
+
+def load_cursor_utf8(path: str) -> int:
+    return _s32(sys.syscall(37, 8, path, 3)[0])          # fn 37.8 (3 = UTF-8)
+
+def set_cursor(handle: int) -> int:
+    return _s32(sys.syscall(37, 5, handle)[0])           # fn 37.5 (0: the standard arrow); the previous one
+
+def delete_cursor(handle: int) -> None:
+    sys.syscall(37, 6, handle)                           # fn 37.6
+
+def mouse_speed() -> int:
+    return _s32(sys.syscall(18, 19, 0)[0])               # fn 18.19.0
+
+def set_mouse_speed(divider: int) -> None:
+    sys.syscall(18, 19, 1, divider)                      # fn 18.19.1
+
+def mouse_sensitivity() -> int:
+    return _s32(sys.syscall(18, 19, 2)[0])               # fn 18.19.2
+
+def set_mouse_sensitivity(value: int) -> None:
+    sys.syscall(18, 19, 3, value)                        # fn 18.19.3
+
+def set_mouse_pos(x: int, y: int) -> None:
+    sys.syscall(18, 19, 4, _pk(x, y))                    # fn 18.19.4
+
+def simulate_mouse_buttons(buttons: int) -> None:
+    sys.syscall(18, 19, 5, buttons)                      # fn 18.19.5
+
+def double_click_delay() -> int:
+    return _s32(sys.syscall(18, 19, 6)[0])               # fn 18.19.6 (1/100 s)
+
+def set_double_click_delay(delay: int) -> None:
+    sys.syscall(18, 19, 7, delay & 255)                  # fn 18.19.7
+
+def center_mouse() -> None:
+    sys.syscall(18, 15)                                  # fn 18.15
+
+# ---------------------------------------------------------------- screen (fn 14, 34, 35, 36, 48.5/6, 61, 18.24)
+
+def screen_size() -> tuple[int, int]:
+    v = sys.syscall(14)[0]                               # fn 14: (width-1)<<16 | (height-1)
+    return (_hi(v) + 1, _lo(v) + 1)
+
+def screen_work_area() -> tuple[int, int, int, int]:
+    """fn 48.5: (left, top, right, bottom) of the area maximized windows get."""
+    r = sys.syscall(48, 5)
+    return (_s16(r[0] >> 16), _s16(r[1] >> 16), _s16(r[0]), _s16(r[1]))
+
+def set_screen_work_area(left: int, top: int, right: int, bottom: int) -> None:
+    sys.syscall(48, 6, _pk(left, right), _pk(top, bottom))   # fn 48.6
+
+def set_screen_limits(w: int, h: int) -> None:
+    sys.syscall(18, 24, w, h)                            # fn 18.24
+
+def pixel_owner(x: int, y: int) -> int:
+    return _s32(sys.syscall(34, x, y)[0])                # fn 34: slot of the window there
+
+def screen_pixel(x: int, y: int) -> int:
+    w = screen_size()[0]
+    return _s32(sys.syscall(35, y * w + x)[0]) & 0xFFFFFF    # fn 35
+
+def read_screen(x: int, y: int, w: int, h: int) -> buffer:
+    """fn 36: w*h pixels of 3 bytes BB GG RR."""
+    b = sys.buffer(w * h * 3)
+    sys.syscall(36, b, _pk(w, h), _pk(x, y))
+    return b
+
+def read_screen_into(out: buffer, x: int, y: int, w: int, h: int) -> None:
+    """fn 36 into a buffer of at least w*h*3 bytes (B G R per pixel)."""
+    sys.syscall(36, out, _pk(w, h), _pk(x, y))
+
+def video_resolution() -> tuple[int, int]:
+    v = sys.syscall(61, 1)[0]                            # fn 61.1
+    return (_hi(v), _lo(v))
+
+def video_bits_per_pixel() -> int:
+    return _s32(sys.syscall(61, 2)[0])                   # fn 61.2
+
+def video_bytes_per_line() -> int:
+    return _s32(sys.syscall(61, 3)[0])                   # fn 61.3
+
+def wait_retrace() -> None:
+    sys.syscall(18, 14)                                  # fn 18.14
+
+# ---------------------------------------------------------------- skin and styles (fn 48)
+
+class SystemColors:
+    frame: int
+    grab: int
+    work_dark: int
+    work_light: int
+    grab_text: int
+    work: int
+    work_button: int
+    work_button_text: int
+    work_text: int
+    graph: int
+
+    def __init__(self, b: buffer):
+        self.frame = _dword(b, 0) & 0xFFFFFF
+        self.grab = _dword(b, 4) & 0xFFFFFF
+        self.work_dark = _dword(b, 8) & 0xFFFFFF
+        self.work_light = _dword(b, 12) & 0xFFFFFF
+        self.grab_text = _dword(b, 16) & 0xFFFFFF
+        self.work = _dword(b, 20) & 0xFFFFFF
+        self.work_button = _dword(b, 24) & 0xFFFFFF
+        self.work_button_text = _dword(b, 28) & 0xFFFFFF
+        self.work_text = _dword(b, 32) & 0xFFFFFF
+        self.graph = _dword(b, 36) & 0xFFFFFF
+
+def system_colors() -> SystemColors:
+    b = sys.buffer(40)
+    sys.syscall(48, 3, b, 40)                            # fn 48.3
+    return SystemColors(b)
+
+def set_system_colors(table: buffer) -> None:
+    sys.syscall(48, 2, table, 40)                        # fn 48.2 (then apply_screen_settings())
+
+def apply_screen_settings() -> None:
+    sys.syscall(48, 0, 0)                                # fn 48.0
+
+def set_button_style(style_3d: bool) -> None:
+    sys.syscall(48, 1, 1 if style_3d else 0)             # fn 48.1
+
+def skin_height() -> int:
+    return _s32(sys.syscall(48, 4)[0])                   # fn 48.4
+
+def skin_margins() -> tuple[int, int, int, int]:
+    """fn 48.7: (left, top, right, bottom) of the caption text area."""
+    r = sys.syscall(48, 7)
+    return (_s16(r[0] >> 16), _s16(r[1] >> 16), _s16(r[0]), _s16(r[1]))
+
+def set_skin(path: str) -> int:
+    if _ascii(path):
+        return _s32(sys.syscall(48, 8, path)[0])         # fn 48.8: 0 or a file system error
+    return _s32(sys.syscall(48, 13, path, 3)[0])         # fn 48.13 with UTF-8
+
+FONT_SMOOTH_OFF = 0
+FONT_SMOOTH_AA = 1
+FONT_SMOOTH_SUBPIXEL = 2
+
+def font_smoothing() -> int:
+    return _s32(sys.syscall(48, 9)[0])                   # fn 48.9
+
+def set_font_smoothing(mode: int) -> None:
+    sys.syscall(48, 10, mode & 255)                      # fn 48.10
+
+def font_size() -> int:
+    return _s32(sys.syscall(48, 11)[0])                  # fn 48.11
+
+def set_font_size(height: int) -> None:
+    sys.syscall(48, 12, height & 255)                    # fn 48.12
+
+# ---------------------------------------------------------------- desktop background (fn 15, 39, 25)
+
+def background_set_size(w: int, h: int) -> None:
+    sys.syscall(15, 1, w, h)                             # fn 15.1
+
+def background_put_pixel(x: int, y: int, w: int, color: int) -> None:
+    sys.syscall(15, 2, (x + y * w) * 3, color & 0xFFFFFF)    # fn 15.2 (w: the image width)
+
+def background_redraw() -> None:
+    sys.syscall(15, 3)                                   # fn 15.3
+
+BG_TILE = 1
+BG_STRETCH = 2
+
+def background_set_mode(mode: int) -> None:
+    sys.syscall(15, 4, mode)                             # fn 15.4
+
+def background_put_image(data: buffer, offset: int, size: int) -> None:
+    sys.syscall(15, 5, data, offset, size)               # fn 15.5 (BB GG RR bytes)
+
+def background_map() -> int:
+    return _s32(sys.syscall(15, 6)[0])                   # fn 15.6: address of the pixels (sys.peek_at), 0 on error
+
+def background_unmap(address: int) -> bool:
+    return _s32(sys.syscall(15, 7, address)[0]) == 1     # fn 15.7
+
+def background_last_redraw() -> tuple[int, int, int, int]:
+    """fn 15.8: (left, top, right, bottom) of the last background redraw."""
+    r = sys.syscall(15, 8)
+    return (_s16(r[0] >> 16), _s16(r[1] >> 16), _s16(r[0]), _s16(r[1]))
+
+def background_redraw_rect(left: int, top: int, right: int, bottom: int) -> None:
+    sys.syscall(15, 9, _pk(left, right), _pk(top, bottom))   # fn 15.9
+
+def background_size() -> tuple[int, int]:
+    v = sys.syscall(39, 1)[0]                            # fn 39.1
+    return (_hi(v), _lo(v))
+
+def background_pixel(x: int, y: int, w: int) -> int:
+    return _s32(sys.syscall(39, 2, (x + y * w) * 3)[0]) & 0xFFFFFF   # fn 39.2
+
+def background_read_rect(x: int, y: int, w: int, h: int) -> buffer:
+    """fn 39.3: w*h dwords 0x00RRGGBB; None on error."""
+    b = sys.buffer(w * h * 4)
+    if _s32(sys.syscall(39, 3, _pk(x, y), _pk(w, h), b)[0]) != 0:
+        return None
+    return b
+
+def background_mode() -> int:
+    return _s32(sys.syscall(39, 4)[0])                   # fn 39.4
+
+def screen_put_image(image: buffer, x: int, y: int, w: int, h: int) -> None:
+    """fn 25: BB GG RR TT pixels straight on the screen's background layer."""
+    sys.syscall(25, image, _pk(w, h), _pk(x, y))
+
+# ---------------------------------------------------------------- time (fn 3, 29, 22, 26.9/26.10, 5)
+
+def system_time() -> tuple[int, int, int]:
+    """fn 3: (hours, minutes, seconds)."""
+    v = sys.syscall(3)[0]
+    return (_bcd(v), _bcd(v >> 8), _bcd(v >> 16))
+
+def system_date() -> tuple[int, int, int]:
+    """fn 29: (year, month, day)."""
+    v = sys.syscall(29)[0]
+    return (2000 + _bcd(v), _bcd(v >> 8), _bcd(v >> 16))
+
+def set_system_time(hours: int, minutes: int, seconds: int) -> int:
+    return _s32(sys.syscall(22, 0, _to_bcd(hours) | (_to_bcd(minutes) << 8) | (_to_bcd(seconds) << 16))[0])   # fn 22.0
+
+def set_system_date(year: int, month: int, day: int) -> int:
+    return _s32(sys.syscall(22, 1, _to_bcd(year % 100) | (_to_bcd(month) << 8) | (_to_bcd(day) << 16))[0])   # fn 22.1
+
+def set_day_of_week(day: int) -> int:
+    return _s32(sys.syscall(22, 2, day)[0])              # fn 22.2 (1 = Sunday)
+
+def set_alarm(hours: int, minutes: int, seconds: int) -> int:
+    return _s32(sys.syscall(22, 3, _to_bcd(hours) | (_to_bcd(minutes) << 8) | (_to_bcd(seconds) << 16))[0])   # fn 22.3
+
+def uptime_ticks() -> int:
+    return _s32(sys.syscall(26, 9)[0])                   # fn 26.9: 1/100 s since boot (wraps)
+
+def uptime_ns() -> tuple[int, int]:
+    r = sys.syscall(26, 10)                              # fn 26.10: (low, high) dwords of nanoseconds
+    return (_s32(r[0]), _s32(r[3]))
+
+def uptime_seconds() -> float:
+    r = sys.syscall(26, 10)
+    return (_u32_float(r[3]) * 4294967296.0 + _u32_float(r[0])) / 1000000000.0
+
+def delay(ticks: int) -> None:
+    sys.syscall(5, ticks)                                # fn 5: sleep ticks/100 s
+
+def yield_cpu() -> None:
+    sys.syscall(68, 1)                                   # fn 68.1: give up the rest of the time slice
+
+# ---------------------------------------------------------------- system (fn 18, 21, 26, 16, 68)
+
+def cpu_frequency() -> float:
+    return _u32_float(sys.syscall(18, 5)[0])             # fn 18.5: Hz (mod 2^32)
+
+def idle_count() -> int:
+    return _s32(sys.syscall(18, 4)[0])                   # fn 18.4
+
+def free_ram_kb() -> int:
+    return _s32(sys.syscall(18, 16)[0])                  # fn 18.16
+
+def total_ram_kb() -> int:
+    return _s32(sys.syscall(18, 17)[0])                  # fn 18.17
+
+class RamInfo:
+    total_pages: int
+    free_pages: int
+    page_faults: int
+    kernel_heap: int
+    kernel_heap_free: int
+    kernel_blocks: int
+    kernel_free_blocks: int
+    max_free_block: int
+    max_alloc_block: int
+
+    def __init__(self, b: buffer):
+        self.total_pages = _dword(b, 0)
+        self.free_pages = _dword(b, 4)
+        self.page_faults = _dword(b, 8)
+        self.kernel_heap = _dword(b, 12)
+        self.kernel_heap_free = _dword(b, 16)
+        self.kernel_blocks = _dword(b, 20)
+        self.kernel_free_blocks = _dword(b, 24)
+        self.max_free_block = _dword(b, 28)
+        self.max_alloc_block = _dword(b, 32)
+
+def ram_info() -> RamInfo:
+    b = sys.buffer(36)
+    if _s32(sys.syscall(18, 20, b)[0]) == -1:            # fn 18.20
+        return None
+    return RamInfo(b)
+
+class KernelVersion:
+    major: int
+    minor: int
+    patch: int
+    build: int
+    debug_tag: int     # 0 for a release
+    abi_major: int
+    abi_minor: int
+    commit: int
+    commits_since_release: int
+
+    def __init__(self, b: buffer):
+        self.major = sys.peek(b, 0, 1)
+        self.minor = sys.peek(b, 1, 1)
+        self.patch = sys.peek(b, 2, 1)
+        self.build = sys.peek(b, 3, 1)
+        self.debug_tag = sys.peek(b, 4, 1)
+        self.abi_minor = sys.peek(b, 5, 1)
+        self.abi_major = sys.peek(b, 6, 2)
+        self.commit = _dword(b, 8)
+        self.commits_since_release = sys.peek(b, 14, 2)
+
+    def __str__(self) -> str:
+        return str(self.major) + "." + str(self.minor) + "." + str(self.patch) + "." + str(self.build)
+
+def kernel_version() -> KernelVersion:
+    b = sys.buffer(16)
+    sys.syscall(18, 13, b)                               # fn 18.13
+    return KernelVersion(b)
+
+SHUTDOWN_POWER_OFF = 2
+SHUTDOWN_REBOOT = 3
+SHUTDOWN_RESTART_KERNEL = 4
+
+def shutdown(mode: int) -> None:
+    sys.syscall(18, 9, mode)                             # fn 18.9
+
+def speaker_enabled() -> bool:
+    return _s32(sys.syscall(18, 8, 1)[0]) == 0           # fn 18.8.1 (0 = enabled)
+
+def toggle_speaker() -> None:
+    sys.syscall(18, 8, 2)                                # fn 18.8.2
+
+def save_ramdisk(path: str) -> int:
+    return _s32(sys.syscall(18, 6, path)[0])             # fn 18.6: 0 or a file system error
+
+def save_ramdisk_floppy(drive: int) -> int:
+    return _s32(sys.syscall(16, drive)[0])               # fn 16 (drive 1 or 2)
+
+def hd_access_enabled() -> bool:
+    return _s32(sys.syscall(26, 11)[0]) == 1             # fn 26.11
+
+def set_hd_access(enabled: bool) -> None:
+    sys.syscall(21, 11, 1 if enabled else 0)             # fn 21.11
+
+def pci_access_enabled() -> bool:
+    return _s32(sys.syscall(26, 12)[0]) == 1             # fn 26.12
+
+def set_pci_access(enabled: bool) -> None:
+    sys.syscall(21, 12, 1 if enabled else 0)             # fn 21.12
+
+def task_switches() -> int:
+    return _s32(sys.syscall(68, 0)[0])                   # fn 68.0
+
+def cache_enabled() -> bool:
+    return _s32(sys.syscall(68, 2, 1)[0]) == 0           # fn 68.2.1
+
+def set_cache(enabled: bool) -> None:
+    sys.syscall(68, 2, 2 if enabled else 3)              # fn 68.2.2 / 68.2.3
+
+def enable_rdpmc() -> int:
+    return _s32(sys.syscall(68, 2, 0)[0])                # fn 68.2.0: cr4
+
+def read_msr(msr: int) -> tuple[int, int]:
+    r = sys.syscall(68, 3, 0, msr)                       # fn 68.3: (low, high)
+    return (_s32(r[0]), _s32(r[1]))
+
+def write_msr(msr: int, low: int, high: int) -> None:
+    sys.syscall(68, 4, 0, msr, high, low)                # fn 68.4: esi:edi = high:low
+
+def reserve_ports(first: int, last: int) -> bool:
+    return _s32(sys.syscall(46, 0, first, last)[0]) == 0     # fn 46
+
+def free_ports(first: int, last: int) -> bool:
+    return _s32(sys.syscall(46, 1, first, last)[0]) == 0
+
+def apm(function: int, bx: int = 0, cx: int = 0) -> list[int]:
+    """fn 49: an APM BIOS call; the 16-bit registers come back as in the spec."""
+    return sys.syscall(49, bx, cx, function)
+
+def send_message(event: int, param: int) -> bool:
+    """fn 72.1: send EV_KEY (key code) or EV_BUTTON (button id) to the active window."""
+    return _s32(sys.syscall(72, 1, event, param)[0]) == 0
+
+def exit_process() -> None:
+    sys.syscall(-1)                                      # fn -1: terminate (no return)
+
+# ---------------------------------------------------------------- processes and threads (fn 9, 18, 51)
+
+class ThreadInfo:
+    cpu_usage: int
+    window_stack_pos: int
+    slot_at_stack_pos: int
+    name: str
+    memory_address: int
+    memory_size: int
+    pid: int
+    window_x: int
+    window_y: int
+    window_w: int
+    window_h: int
+    status: int        # 0 running, 1/2 suspended, 3/4 terminating, 5 waiting, 9 free slot
+    client_x: int
+    client_y: int
+    client_w: int
+    client_h: int
+    window_state: int  # 1 maximized, 2 minimized, 4 rolled up
+    event_mask: int
+    keyboard_mode: int
+    slot: int          # the slot it was read from (-1: the caller's own)
+
+    def __init__(self, b: buffer, slot: int = -1):
+        self.slot = slot
+        self.cpu_usage = _dword(b, 0)
+        self.window_stack_pos = sys.peek(b, 4, 2)
+        self.slot_at_stack_pos = sys.peek(b, 6, 2)
+        self.name = _cstr(b, 10, 11).strip()
+        self.memory_address = _dword(b, 22)
+        self.memory_size = _dword(b, 26) + 1
+        self.pid = _dword(b, 30)
+        self.window_x = _dword(b, 34)
+        self.window_y = _dword(b, 38)
+        self.window_w = _dword(b, 42)
+        self.window_h = _dword(b, 46)
+        self.status = sys.peek(b, 50, 2)
+        self.client_x = _dword(b, 54)
+        self.client_y = _dword(b, 58)
+        self.client_w = _dword(b, 62)
+        self.client_h = _dword(b, 66)
+        self.window_state = sys.peek(b, 70, 1)
+        self.event_mask = _dword(b, 71)
+        self.keyboard_mode = sys.peek(b, 75, 1)
+
+def thread_info(slot: int = -1) -> ThreadInfo:
+    """fn 9: a thread slot (-1: this thread)."""
+    b = sys.buffer(1024)
+    if _s32(sys.syscall(9, b, slot)[0]) == -1:
+        return None
+    return ThreadInfo(b, slot)
+
+def max_slot() -> int:
+    b = sys.buffer(1024)
+    return _s32(sys.syscall(9, b, -1)[0])                # fn 9: the highest slot number
+
+def threads() -> list[ThreadInfo]:
+    """Every used slot (fn 9 over 1..max_slot())."""
+    out: list[ThreadInfo] = []
+    b = sys.buffer(1024)
+    top = _s32(sys.syscall(9, b, -1)[0])
+    for slot in range(1, top + 1):
+        sys.syscall(9, b, slot)
+        if sys.peek(b, 50, 2) != 9:
+            out.append(ThreadInfo(b, slot))
+    return out
+
+def current_pid() -> int:
+    return thread_info(-1).pid
+
+def current_slot() -> int:
+    return _s32(sys.syscall(51, 2)[0])                   # fn 51.2
+
+def slot_of_pid(pid: int) -> int:
+    return _s32(sys.syscall(18, 21, pid)[0])             # fn 18.21 (0: no such process)
+
+def kill_slot(slot: int) -> None:
+    sys.syscall(18, 2, slot)                             # fn 18.2
+
+def kill_pid(pid: int) -> bool:
+    return _s32(sys.syscall(18, 18, pid)[0]) == 0        # fn 18.18
+
+def thread_priority(slot: int = -1) -> int:
+    return _s32(sys.syscall(51, 3, slot)[0])             # fn 51.3 (0 highest .. 255)
+
+def set_thread_priority(priority: int, slot: int = -1) -> int:
+    return _s32(sys.syscall(51, 4, slot, priority)[0])   # fn 51.4: the previous one, -1 on error
+
+# ---------------------------------------------------------------- memory (fn 68)
+
+def heap_init() -> int:
+    return _s32(sys.syscall(68, 11)[0])                  # fn 68.11: heap size, 0 on failure
+
+def mem_alloc(size: int) -> int:
+    return _s32(sys.syscall(68, 12, size)[0])            # fn 68.12: address (pages)
+
+def mem_free(address: int) -> bool:
+    return _s32(sys.syscall(68, 13, address)[0]) == 1    # fn 68.13
+
+def mem_realloc(address: int, size: int) -> int:
+    return _s32(sys.syscall(68, 20, size, address)[0])   # fn 68.20: new address, 0 on error
+
+def mem_release_pages(address: int, offset: int, size: int) -> None:
+    sys.syscall(68, 26, address, offset, size)           # fn 68.26
+
+def ring_alloc(size: int) -> int:
+    return _s32(sys.syscall(68, 29, size)[0])            # fn 68.29 (a multiple of 4096)
+
+def load_file(path: str) -> str:
+    """fn 68.27/68.28: a whole file (unpacked if packed); None on error.
+    (A str can not hold 0 bytes in the interpreter: binary data loses them.)"""
+    heap_init()
+    if _ascii(path):
+        r = sys.syscall(68, 27, path)
+    else:
+        r = sys.syscall(68, 28, path, 3)
+    if _s32(r[0]) == 0:
+        return None
+    data = sys.peek_str_at(r[0], _s32(r[3]))
+    sys.syscall(68, 13, r[0])
+    return data
+
+def load_file_buffer(path: str) -> buffer:
+    """fn 68.27/68.28: a whole file in a buffer (unpacked if packed); None on error."""
+    heap_init()
+    if _ascii(path):
+        r = sys.syscall(68, 27, path)
+    else:
+        r = sys.syscall(68, 28, path, 3)
+    if _s32(r[0]) == 0:
+        return None
+    n = _s32(r[3])
+    out = sys.buffer(max(1, n))
+    whole = n - n % 4
+    for off in range(0, whole, 4):
+        sys.poke(out, off, sys.peek_at(r[0] + off, 4), 4)
+    for off in range(whole, n):
+        sys.poke(out, off, sys.peek_at(r[0] + off, 1), 1)
+    sys.syscall(68, 13, r[0])
+    return out
+
+SHM_OPEN = 0
+SHM_OPEN_ALWAYS = 4
+SHM_CREATE = 8
+SHM_READ = 0
+SHM_WRITE = 1
+
+def shm_open(name: str, size: int, flags: int) -> tuple[int, int]:
+    """fn 68.22: (address, size or error code); address 0 on error."""
+    heap_init()
+    r = sys.syscall(68, 22, name, size, flags)
+    return (_s32(r[0]), _s32(r[3]))
+
+def shm_close(name: str) -> None:
+    sys.syscall(68, 23, name)                            # fn 68.23
+
+def wait_signal() -> list[int]:
+    """fn 68.14: wait for a signal: [code, data1..data5]."""
+    b = sys.buffer(24)
+    sys.syscall(68, 14, b)
+    out: list[int] = []
+    for i in range(6):
+        out.append(_dword(b, 4 * i))
+    return out
+
+def load_driver(name: str) -> int:
+    return _s32(sys.syscall(68, 16, name)[0])            # fn 68.16: handle, 0 on error
+
+def load_driver_pe(path: str, cmdline: str = "") -> int:
+    return _s32(sys.syscall(68, 21, path, cmdline)[0])   # fn 68.21
+
+def unload_driver(handle: int, cmdline: str = "") -> int:
+    return _s32(sys.syscall(68, 30, handle, cmdline)[0]) # fn 68.30
+
+def control_driver(handle: int, code: int, inp: buffer, in_size: int, out: buffer, out_size: int) -> int:
+    """fn 68.17: driver function `code` with input/output buffers."""
+    s = sys.buffer(24)
+    sys.poke(s, 0, handle, 4)
+    sys.poke(s, 4, code, 4)
+    if in_size > 0:
+        sys.poke(s, 8, sys.addr(inp), 4)
+    sys.poke(s, 12, in_size, 4)
+    if out_size > 0:
+        sys.poke(s, 16, sys.addr(out), 4)
+    sys.poke(s, 20, out_size, 4)
+    return _s32(sys.syscall(68, 17, s)[0])
+
+class DriverInfo:
+    name: str
+    next: int
+    prev: int
+    base: int
+    entry: int
+    handler: int
+
+    def __init__(self, b: buffer):
+        self.name = _cstr(b, 0, 16)
+        self.next = _dword(b, 16)
+        self.prev = _dword(b, 20)
+        self.base = _dword(b, 24)
+        self.entry = _dword(b, 28)
+        self.handler = _dword(b, 32)
+
+def drivers() -> list[DriverInfo]:
+    """fn 68.31: the loaded drivers. The list is a ring through a dummy head
+    whose address is not given: the walk goes from head.next to head.prev."""
+    out: list[DriverInfo] = []
+    head = sys.syscall(68, 31, 1)
+    item = _s32(head[1])
+    last = _s32(head[2])
+    b = sys.buffer(36)
+    while len(out) < 256:
+        if _s32(sys.syscall(68, 31, 2, item, 0, b)[0]) != 0:
+            break
+        d = DriverInfo(b)
+        out.append(d)
+        if item == last:
+            break
+        item = d.next
+    return out
+
+def load_dll(path: str) -> int:
+    """fn 68.19/68.18: address of the export table, 0 on error."""
+    if _ascii(path):
+        return _s32(sys.syscall(68, 19, path)[0])
+    return _s32(sys.syscall(68, 18, path, 3)[0])
+
+def dll_exports(table: int) -> list[str]:
+    """The names in a DLL export table (pairs of name pointer, address)."""
+    out: list[str] = []
+    while table != 0:
+        name = _s32(sys.peek_at(table, 4))
+        if name == 0:
+            break
+        out.append(sys.cstr_at(name, 256))
+        table += 8
+    return out
+
+def dll_symbol(table: int, name: str) -> int:
+    """The address of an exported function, 0 if missing."""
+    while table != 0:
+        p = _s32(sys.peek_at(table, 4))
+        if p == 0:
+            break
+        if sys.cstr_at(p, 256) == name:
+            return _s32(sys.peek_at(table + 4, 4))
+        table += 8
+    return 0
+
+# ---------------------------------------------------------------- clipboard (fn 54)
+
+CLIP_TEXT = 0
+CLIP_TEXT_BLOCK = 1
+CLIP_IMAGE = 2
+CLIP_RAW = 3
+CLIP_UTF8 = 0
+CLIP_CP866 = 1
+CLIP_CP1251 = 2
+
+def clipboard_count() -> int:
+    return _s32(sys.syscall(54, 0)[0])                   # fn 54.0: slots, -1 if no clipboard
+
+def clipboard_read(slot: int) -> str:
+    """fn 54.1: a slot's whole container ([size][type][...data]); None on error."""
+    heap_init()
+    p = _s32(sys.syscall(54, 1, slot)[0])
+    if p == 1 or p == -1 or p == 0:
+        return None
+    size = _s32(sys.peek_at(p, 4))
+    data = sys.peek_str_at(p, size)
+    sys.syscall(68, 13, p)
+    return data
+
+def clipboard_get_text(slot: int = -1) -> str:
+    """The text of a clipboard slot (-1: the last one); None if it holds no text."""
+    if slot < 0:
+        slot = clipboard_count() - 1
+    if slot < 0:
+        return None
+    heap_init()
+    p = _s32(sys.syscall(54, 1, slot)[0])
+    if p == 1 or p == -1 or p == 0:
+        return None
+    size = _s32(sys.peek_at(p, 4))
+    kind = _s32(sys.peek_at(p + 4, 4))
+    text: str = None
+    if (kind == CLIP_TEXT or kind == CLIP_TEXT_BLOCK) and size > 12:
+        text = sys.cstr_at(p + 12, size - 12)
+    sys.syscall(68, 13, p)
+    return text
+
+def clipboard_put_text(text: str, encoding: int = 0) -> bool:
+    """fn 54.2: a new slot with a text container (encoding CLIP_UTF8/CP866/CP1251)."""
+    size = 12 + len(text.encode())
+    b = sys.buffer(size + 1)
+    sys.poke(b, 0, size, 4)
+    sys.poke(b, 4, CLIP_TEXT, 4)
+    sys.poke(b, 8, encoding, 4)
+    sys.poke_str(b, 12, text)
+    return _s32(sys.syscall(54, 2, size, b)[0]) == 0
+
+def clipboard_put(data: buffer, size: int) -> bool:
+    """fn 54.2: a container built by the caller ([size][type]...)."""
+    return _s32(sys.syscall(54, 2, size, data)[0]) == 0
+
+def clipboard_delete_last() -> bool:
+    return _s32(sys.syscall(54, 3)[0]) == 0              # fn 54.3
+
+def clipboard_unlock() -> bool:
+    return _s32(sys.syscall(54, 4)[0]) == 0              # fn 54.4
+
+# ---------------------------------------------------------------- IPC (fn 60)
+
+def ipc_area(size: int) -> buffer:
+    """A receiving area for set_ipc_area(): 8 header bytes + messages."""
+    b = sys.buffer(size)
+    sys.poke(b, 4, 8, 4)
+    return b
+
+def set_ipc_area(area: buffer) -> None:
+    """fn 60.1: messages to this process land in `area` (keep it referenced)."""
+    sys.syscall(60, 1, area, len(area))
+
+def ipc_send(pid: int, message: str) -> int:
+    """fn 60.2: 0 sent, 1 no area, 2 area locked, 3 area full, 4 no such process."""
+    return _s32(sys.syscall(60, 2, pid, message, len(message.encode()))[0])
+
+def ipc_receive(area: buffer) -> list[tuple[int, str]]:
+    """The messages in the area as (sender pid, data), and the area emptied."""
+    out: list[tuple[int, str]] = []
+    sys.poke(area, 0, 1, 4)                              # locked while read
+    used = _dword(area, 4)
+    pos = 8
+    while pos + 8 <= used:
+        pid = _dword(area, pos)
+        n = _dword(area, pos + 4)
+        out.append((pid, sys.peek_str(area, pos + 8, n)))
+        pos += 8 + n
+    sys.poke(area, 4, 8, 4)
+    sys.poke(area, 0, 0, 4)
+    return out
+
+# ---------------------------------------------------------------- debug board (fn 63) and debugging (fn 69)
+
+def debug_write(text: str) -> None:
+    """fn 63.1, a byte at a time (the 'board' program shows it); UTF-8."""
+    for b in text.encode():
+        sys.syscall(63, 1, b)
+
+def debug_print(text: str) -> None:
+    debug_write(text + "\r\n")
+
+def debug_read() -> int:
+    """fn 63.2: the next byte of the board, -1 if it is empty."""
+    r = sys.syscall(63, 2)
+    if _s32(r[1]) == 0:
+        return -1
+    return r[0] & 255
+
+def debug_set_message_area(area: buffer) -> None:
+    """fn 69.0: area = [size][used][messages]; keep it referenced."""
+    sys.syscall(69, 0, area)
+
+def debug_get_registers(tid: int) -> list[int]:
+    """fn 69.1: [eip, eflags, eax, ecx, edx, ebx, esp, ebp, esi, edi]."""
+    b = sys.buffer(40)
+    sys.syscall(69, 1, tid, 40, b)
+    out: list[int] = []
+    for i in range(10):
+        out.append(_dword(b, 4 * i))
+    return out
+
+def debug_set_registers(tid: int, regs: list[int]) -> None:
+    b = sys.buffer(40)
+    for i in range(10):
+        sys.poke(b, 4 * i, regs[i], 4)
+    sys.syscall(69, 2, tid, 40, b)                       # fn 69.2
+
+def debug_detach(pid: int) -> None:
+    sys.syscall(69, 3, pid)                              # fn 69.3
+
+def debug_suspend(tid: int) -> None:
+    sys.syscall(69, 4, tid)                              # fn 69.4
+
+def debug_resume(tid: int) -> None:
+    sys.syscall(69, 5, tid)                              # fn 69.5
+
+def debug_read_memory(pid: int, address: int, out: buffer, size: int) -> int:
+    return _s32(sys.syscall(69, 6, pid, size, address, out)[0])   # fn 69.6: bytes read, -1 on error
+
+def debug_write_memory(pid: int, address: int, data: buffer, size: int) -> int:
+    return _s32(sys.syscall(69, 7, pid, size, address, data)[0])  # fn 69.7
+
+def debug_terminate(pid: int) -> None:
+    sys.syscall(69, 8, pid)                              # fn 69.8
+
+def debug_set_breakpoint(tid: int, index: int, address: int, condition: int, length: int) -> int:
+    """fn 69.9: condition 0 exec / 1 read / 3 read-write, length 0 byte / 1 word / 3 dword."""
+    flags = (condition & 3) | ((length & 3) << 2)
+    return _s32(sys.syscall(69, 9, tid, (index & 3) | (flags << 8), address)[0])
+
+def debug_clear_breakpoint(tid: int, index: int) -> int:
+    return _s32(sys.syscall(69, 9, tid, (index & 3) | 0x8000)[0])
+
+# ---------------------------------------------------------------- sound (fn 55)
+
+def speaker_play(data: buffer) -> bool:
+    """fn 55.55: play speaker data (see the docs for the format); keep the buffer until it ends."""
+    return _s32(sys.syscall(55, 55, 0, 0, data)[0]) == 0
+
+# ---------------------------------------------------------------- PCI (fn 62)
+
+def pci_version() -> int:
+    return _s32(sys.syscall(62, 0)[0])                   # fn 62.0: ah.al, -1 if disabled
+
+def pci_last_bus() -> int:
+    v = _s32(sys.syscall(62, 1)[0])                      # fn 62.1
+    if v == -1:
+        return -1
+    return v & 255
+
+def pci_mechanism() -> int:
+    v = _s32(sys.syscall(62, 2)[0])                      # fn 62.2
+    if v == -1:
+        return -1
+    return v & 255
+
+def _pci_regs(sub: int, bus: int, dev: int, fn: int, reg: int) -> tuple[int, int]:
+    return ((sub & 255) | ((bus & 255) << 8), (((dev & 31) << 3 | (fn & 7)) << 8) | (reg & 255))
+
+def pci_read(bus: int, dev: int, fn: int, reg: int, size: int) -> int:
+    """fn 62.4/5/6: a register of 1, 2 or 4 bytes; -1 on error."""
+    sub = 4
+    mask = 255
+    if size == 2:
+        sub = 5
+        mask = 0xFFFF
+    elif size == 4:
+        sub = 6
+        mask = -1
+    r = _pci_regs(sub, bus, dev, fn, reg)
+    v = _s32(sys.syscall(62, r[0], r[1])[0])
+    if v == -1 and size != 4:
+        return -1
+    return v & mask
+
+def pci_write(bus: int, dev: int, fn: int, reg: int, size: int, value: int) -> bool:
+    """fn 62.8/9/10."""
+    sub = 8
+    if size == 2:
+        sub = 9
+    elif size == 4:
+        sub = 10
+    r = _pci_regs(sub, bus, dev, fn, reg)
+    return _s32(sys.syscall(62, r[0], r[1], value)[0]) == 0
+
+# ---------------------------------------------------------------- files (fn 70, 80, 30)
+# Errors are the file system codes (FS_*). A path is ASCII (passed as is,
+# function 70) or anything else (passed as UTF-8, function 80).
+
+FS_OK = 0
+FS_NOT_SUPPORTED = 2
+FS_UNKNOWN_FS = 3
+FS_NOT_FOUND = 5
+FS_EOF = 6
+FS_BAD_POINTER = 7
+FS_DISK_FULL = 8
+FS_ERROR = 9
+FS_ACCESS_DENIED = 10
+FS_DEVICE_ERROR = 11
+FS_NO_MEMORY = 12
+
+ATTR_READONLY = 1
+ATTR_HIDDEN = 2
+ATTR_SYSTEM = 4
+ATTR_VOLUME = 8
+ATTR_FOLDER = 0x10
+ATTR_ARCHIVE = 0x20
+ATTR_SYMLINK = 0x40
+
+def _fs(sub: int, a4: int, a8: int, size: int, ptr: int, path: str) -> list[int]:
+    """The information block of fn 70 (path inside it, at +20) or fn 80
+    (UTF-8 path pointed to from +24) -> the registers."""
+    if _ascii(path):
+        info = sys.buffer(21 + len(path.encode()) + 1)
+        sys.poke(info, 0, sub, 4)
+        sys.poke(info, 4, a4, 4)
+        sys.poke(info, 8, a8, 4)
+        sys.poke(info, 12, size, 4)
+        sys.poke(info, 16, ptr, 4)
+        sys.poke_str(info, 20, path)
+        return sys.syscall(70, info)
+    p = _cbuf(path)
+    info = sys.buffer(28)
+    sys.poke(info, 0, sub, 4)
+    sys.poke(info, 4, a4, 4)
+    sys.poke(info, 8, a8, 4)
+    sys.poke(info, 12, size, 4)
+    sys.poke(info, 16, ptr, 4)
+    sys.poke(info, 20, 3, 4)
+    sys.poke(info, 24, sys.addr(p), 4)
+    return sys.syscall(80, info)                         # p (the path) is alive until here
+
+class FileInfo:
+    name: str
+    attributes: int
+    size: int            # low 32 bits (size_high: the rest)
+    size_high: int
+    created: tuple[int, int, int, int, int, int]       # (year, month, day, hour, minute, second)
+    accessed: tuple[int, int, int, int, int, int]
+    modified: tuple[int, int, int, int, int, int]
+
+    def __init__(self, b: buffer, off: int, name: str):
+        self.name = name
+        self.attributes = _dword(b, off)
+        self.created = _stamp(b, off + 8)
+        self.accessed = _stamp(b, off + 16)
+        self.modified = _stamp(b, off + 24)
+        self.size = _dword(b, off + 32)
+        self.size_high = _dword(b, off + 36)
+
+    def is_folder(self) -> bool:
+        return (self.attributes & ATTR_FOLDER) != 0
+
+def _stamp(b: buffer, off: int) -> tuple[int, int, int, int, int, int]:
+    """BDFE time (sec, min, hour, 0) then date (day, month, year word)."""
+    return (sys.peek(b, off + 6, 2), sys.peek(b, off + 5, 1), sys.peek(b, off + 4, 1),
+            sys.peek(b, off + 2, 1), sys.peek(b, off + 1, 1), sys.peek(b, off, 1))
+
+def file_info(path: str) -> FileInfo:
+    """fn 70.5: attributes, size and times; None on error."""
+    b = sys.buffer(40)
+    if _s32(_fs(5, 0, 0, 0, sys.addr(b), path)[0]) != 0:
+        return None
+    return FileInfo(b, 0, "")
+
+def file_exists(path: str) -> bool:
+    b = sys.buffer(40)
+    return _s32(_fs(5, 0, 0, 0, sys.addr(b), path)[0]) == 0
+
+def file_size(path: str) -> int:
+    """The size in bytes, -1 if there is no such file."""
+    b = sys.buffer(40)
+    if _s32(_fs(5, 0, 0, 0, sys.addr(b), path)[0]) != 0:
+        return -1
+    return _dword(b, 32)
+
+def read_file(path: str, max_size: int) -> str:
+    """fn 70.0: up to max_size bytes from the start; None on error."""
+    data = sys.buffer(max_size)
+    r = _fs(0, 0, 0, max_size, sys.addr(data), path)
+    status = _s32(r[0])
+    if status != FS_OK and status != FS_EOF:
+        return None
+    return sys.peek_str(data, 0, _s32(r[1]))
+
+def read_text(path: str) -> str:
+    """The whole file; None on error."""
+    n = file_size(path)
+    if n < 0:
+        return None
+    return read_file(path, n)
+
+def read_into(path: str, offset: int, out: buffer, size: int) -> tuple[int, int]:
+    """fn 70.0: (status, bytes read) of size bytes at offset into the buffer."""
+    r = _fs(0, offset, 0, size, sys.addr(out), path)
+    return (_s32(r[0]), _s32(r[1]))
+
+def write_file(path: str, text: str) -> int:
+    """fn 70.2: create or rewrite the file; the status."""
+    data = _cbuf(text)
+    return _s32(_fs(2, 0, 0, len(text.encode()), sys.addr(data), path)[0])
+
+def write_buffer(path: str, data: buffer, size: int) -> int:
+    return _s32(_fs(2, 0, 0, size, sys.addr(data), path)[0])
+
+def write_at(path: str, offset: int, text: str) -> int:
+    """fn 70.3: write into an existing file at offset; the status."""
+    data = _cbuf(text)
+    return _s32(_fs(3, offset, 0, len(text.encode()), sys.addr(data), path)[0])
+
+def append_file(path: str, text: str) -> int:
+    n = file_size(path)
+    if n < 0:
+        return write_file(path, text)
+    return write_at(path, n, text)
+
+def set_file_size(path: str, size: int) -> int:
+    return _s32(_fs(4, size, 0, 0, 0, path)[0])          # fn 70.4
+
+def set_attributes(path: str, attributes: int) -> int:
+    """fn 70.6: the attribute bits (times are kept)."""
+    b = sys.buffer(40)
+    if _s32(_fs(5, 0, 0, 0, sys.addr(b), path)[0]) != 0:
+        return FS_NOT_FOUND
+    sys.poke(b, 0, attributes, 4)
+    return _s32(_fs(6, 0, 0, 0, sys.addr(b), path)[0])
+
+def delete_file(path: str) -> int:
+    return _s32(_fs(8, 0, 0, 0, 0, path)[0])             # fn 70.8 (empty folders too)
+
+def make_folder(path: str) -> int:
+    return _s32(_fs(9, 0, 0, 0, 0, path)[0])             # fn 70.9
+
+def rename_file(path: str, new_name: str) -> int:
+    """fn 70.10: a relative new name is in the same folder."""
+    n = _cbuf(new_name)
+    return _s32(_fs(10, 0, 0, 0, sys.addr(n), path)[0])
+
+def make_symlink(link: str, target: str) -> int:
+    t = _cbuf(target)
+    return _s32(_fs(11, 0, 0, 0, sys.addr(t), link)[0])  # fn 70.11
+
+def read_symlink(link: str) -> str:
+    b = sys.buffer(1024)
+    if _s32(_fs(12, 0, 0, 1024, sys.addr(b), link)[0]) != 0:   # fn 70.12
+        return None
+    return _cstr(b, 0, 1024)
+
+def list_folder(path: str) -> list[FileInfo]:
+    """fn 70.1: the entries of a folder (names in UTF-8); [] on error."""
+    out: list[FileInfo] = []
+    batch = 16
+    buf = sys.buffer(32 + batch * 560)
+    start = 0
+    while True:
+        r = _fs(1, start, 3, batch, sys.addr(buf), path)
+        status = _s32(r[0])
+        if status != FS_OK and status != FS_EOF:
+            break
+        n = _dword(buf, 4)
+        for i in range(n):
+            off = 32 + i * 560
+            out.append(FileInfo(buf, off, _cstr(buf, off + 40, 520)))
+        start += n
+        if status == FS_EOF or n < batch:
+            break
+    return out
+
+def run_program(path: str, params: str = "", debug: bool = False) -> int:
+    """fn 70.7: start a program; its PID, or -(file system error)."""
+    p = _cbuf(params)
+    return _s32(_fs(7, 1 if debug else 0, sys.addr(p), 0, 0, path)[0])
+
+def current_folder() -> str:
+    """fn 30.2 (fn 30.5 with UTF-8)."""
+    b = sys.buffer(1024)
+    sys.syscall(30, 5, b, 1024, 3)
+    return _cstr(b, 0, 1024)
+
+def set_current_folder(path: str) -> None:
+    if _ascii(path):
+        sys.syscall(30, 1, path)                         # fn 30.1
+    else:
+        sys.syscall(30, 4, path, 3)                      # fn 30.4 (UTF-8)
+
+def add_system_folder(key: str, path: str) -> None:
+    """fn 30.3: once per session; key (lower case) -> a path like 'HD0/1'."""
+    b = sys.buffer(128)
+    sys.poke_str(b, 0, key)
+    sys.poke_str(b, 64, path)
+    sys.syscall(30, 3, b)
+
+# ---------------------------------------------------------------- network devices (fn 74)
+
+def _net(sub: int, device: int) -> int:
+    return (sub & 255) | ((device & 255) << 8)
+
+def net_device_count() -> int:
+    return _s32(sys.syscall(74, 255)[0])                 # fn 74.-1
+
+def net_device_type(device: int) -> int:
+    return _s32(sys.syscall(74, _net(0, device))[0])     # fn 74.0
+
+def net_device_name(device: int) -> str:
+    b = sys.buffer(64)
+    if _s32(sys.syscall(74, _net(1, device), b)[0]) == -1:   # fn 74.1
+        return None
+    return _cstr(b, 0, 64)
+
+def net_device_reset(device: int) -> bool:
+    return _s32(sys.syscall(74, _net(2, device))[0]) != -1   # fn 74.2
+
+def net_device_stop(device: int) -> bool:
+    return _s32(sys.syscall(74, _net(3, device))[0]) != -1   # fn 74.3
+
+def net_device_pointer(device: int) -> int:
+    return _s32(sys.syscall(74, _net(4, device))[0])     # fn 74.4
+
+def net_packets_sent(device: int) -> int:
+    return _s32(sys.syscall(74, _net(6, device))[0])     # fn 74.6
+
+def net_packets_received(device: int) -> int:
+    return _s32(sys.syscall(74, _net(7, device))[0])     # fn 74.7
+
+def net_bytes_sent(device: int) -> tuple[int, int]:
+    r = sys.syscall(74, _net(8, device))                 # fn 74.8: (low, high)
+    return (_s32(r[0]), _s32(r[1]))
+
+def net_bytes_received(device: int) -> tuple[int, int]:
+    r = sys.syscall(74, _net(9, device))                 # fn 74.9
+    return (_s32(r[0]), _s32(r[1]))
+
+LINK_DOWN = 0
+LINK_UNKNOWN = 1
+LINK_FULL_DUPLEX = 2
+LINK_10M = 4
+LINK_100M = 8
+LINK_1G = 12
+
+def net_link_status(device: int) -> int:
+    return _s32(sys.syscall(74, _net(10, device))[0])    # fn 74.10
+
+def net_tx_errors(device: int) -> int:
+    return _s32(sys.syscall(74, _net(11, device))[0])    # fn 74.11
+
+def net_tx_dropped(device: int) -> int:
+    return _s32(sys.syscall(74, _net(12, device))[0])    # fn 74.12
+
+def net_tx_missed(device: int) -> int:
+    return _s32(sys.syscall(74, _net(13, device))[0])    # fn 74.13
+
+def net_rx_errors(device: int) -> int:
+    return _s32(sys.syscall(74, _net(14, device))[0])    # fn 74.14
+
+def net_rx_dropped(device: int) -> int:
+    return _s32(sys.syscall(74, _net(15, device))[0])    # fn 74.15
+
+def net_rx_missed(device: int) -> int:
+    return _s32(sys.syscall(74, _net(16, device))[0])    # fn 74.16
+
+# ---------------------------------------------------------------- network protocols (fn 76)
+
+PROTO_ETH = 0
+PROTO_IPV4 = 1
+PROTO_ICMP = 2
+PROTO_UDP = 3
+PROTO_TCP = 4
+PROTO_ARP = 5
+
+def _np(proto: int, sub: int, device: int) -> int:
+    return (proto << 16) | ((device & 255) << 8) | (sub & 255)
+
+def mac_address(device: int = 0) -> list[int]:
+    """fn 76 Ethernet.0: the six octets; [] on error (the kernel gives the
+    first two in bx, the other four in eax)."""
+    r = sys.syscall(76, _np(PROTO_ETH, 0, device))
+    tail = _s32(r[0])
+    if tail == -1:
+        return []
+    head = r[1] & 0xFFFF
+    return [head & 255, (head >> 8) & 255, tail & 255, (tail >> 8) & 255, (tail >> 16) & 255, (tail >> 24) & 255]
+
+def ip_address(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 2, device))[0])
+
+def set_ip_address(ip: int, device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 3, device), ip)[0]) != -1
+
+def dns_address(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 4, device))[0])
+
+def set_dns_address(ip: int, device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 5, device), ip)[0]) != -1
+
+def subnet_mask(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 6, device))[0])
+
+def set_subnet_mask(mask: int, device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 7, device), mask)[0]) != -1
+
+def gateway(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 8, device))[0])
+
+def set_gateway(ip: int, device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_IPV4, 9, device), ip)[0]) != -1
+
+def protocol_packets_sent(proto: int, device: int = 0) -> int:
+    """fn 76 subfunction 0 of PROTO_IPV4/ICMP/UDP/TCP/ARP."""
+    return _s32(sys.syscall(76, _np(proto, 0, device))[0])
+
+def protocol_packets_received(proto: int, device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(proto, 1, device))[0])
+
+class ArpEntry:
+    ip: int
+    mac: list[int]
+    status: int
+    ttl: int
+
+    def __init__(self, b: buffer):
+        self.ip = _dword(b, 0)
+        self.mac = [sys.peek(b, 4, 1), sys.peek(b, 5, 1), sys.peek(b, 6, 1), sys.peek(b, 7, 1), sys.peek(b, 8, 1), sys.peek(b, 9, 1)]
+        self.status = sys.peek(b, 10, 2)
+        self.ttl = sys.peek(b, 12, 2)
+
+def arp_count(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_ARP, 2, device))[0])
+
+def arp_entry(index: int, device: int = 0) -> ArpEntry:
+    b = sys.buffer(14)
+    if _s32(sys.syscall(76, _np(PROTO_ARP, 3, device), index, 0, 0, b)[0]) == -1:
+        return None
+    return ArpEntry(b)
+
+def arp_add(ip: int, mac: list[int], ttl: int, device: int = 0) -> bool:
+    b = sys.buffer(14)
+    sys.poke(b, 0, ip, 4)
+    for i in range(6):
+        sys.poke(b, 4 + i, mac[i], 1)
+    sys.poke(b, 12, ttl, 2)
+    return _s32(sys.syscall(76, _np(PROTO_ARP, 4, device), 0, 0, b)[0]) != -1
+
+def arp_remove(index: int, device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_ARP, 5, device), index)[0]) != -1   # -1: the whole table
+
+def arp_announce(device: int = 0) -> bool:
+    return _s32(sys.syscall(76, _np(PROTO_ARP, 6, device))[0]) != -1
+
+def arp_conflicts(device: int = 0) -> int:
+    return _s32(sys.syscall(76, _np(PROTO_ARP, 7, device))[0])
+
+# ---------------------------------------------------------------- sockets (fn 75)
+# Each call gives (result, error code); result -1 means failure.
+
+AF_INET4 = 2
+AF_LOCAL = 1
+SOCK_STREAM = 1
+SOCK_DGRAM = 2
+SOCK_RAW = 3
+IPPROTO_IP = 0
+IPPROTO_ICMP = 1
+IPPROTO_TCP = 6
+IPPROTO_UDP = 17
+MSG_PEEK = 2
+MSG_DONTWAIT = 0x40
+
+def sockaddr_in(ip: str, port: int) -> buffer:
+    """struct sockaddr_in: family, port (network order), address, 8 zeroes."""
+    b = sys.buffer(16)
+    sys.poke(b, 0, AF_INET4, 2)
+    sys.poke(b, 2, ((port & 255) << 8) | ((port >> 8) & 255), 2)
+    sys.poke(b, 4, ip_from_str(ip), 4)
+    return b
+
+def sockaddr_ip(addr: buffer) -> str:
+    return ip_to_str(_dword(addr, 4))
+
+def sockaddr_port(addr: buffer) -> int:
+    p = sys.peek(addr, 2, 2)
+    return ((p & 255) << 8) | ((p >> 8) & 255)
+
+def _sock(r: list[int]) -> tuple[int, int]:
+    return (_s32(r[0]), _s32(r[1]))
+
+def socket_open(domain: int, kind: int, protocol: int) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 0, domain, kind, protocol))      # fn 75.0
+
+def socket_close(sock: int) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 1, sock))                        # fn 75.1
+
+def socket_bind(sock: int, addr: buffer) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 2, sock, addr, 16))              # fn 75.2
+
+def socket_listen(sock: int, backlog: int) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 3, sock, backlog))               # fn 75.3
+
+def socket_connect(sock: int, addr: buffer) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 4, sock, addr, 16))              # fn 75.4
+
+def socket_accept(sock: int, addr: buffer) -> tuple[int, int]:
+    """fn 75.5: (new socket, error); addr gets the peer."""
+    return _sock(sys.syscall(75, 5, sock, addr, 16))
+
+def socket_send(sock: int, data: str, flags: int = 0) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 6, sock, data, len(data.encode()), flags))   # fn 75.6: bytes sent
+
+def socket_send_buffer(sock: int, data: buffer, size: int, flags: int = 0) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 6, sock, data, size, flags))
+
+def socket_receive(sock: int, out: buffer, size: int, flags: int = 0) -> tuple[int, int]:
+    return _sock(sys.syscall(75, 7, sock, out, size, flags))      # fn 75.7: bytes received
+
+def socket_receive_str(sock: int, size: int, flags: int = 0) -> str:
+    """fn 75.7 as text; None on error."""
+    b = sys.buffer(size)
+    r = _sock(sys.syscall(75, 7, sock, b, size, flags))
+    if r[0] < 0:
+        return None
+    return sys.peek_str(b, 0, r[0])
+
+def socket_set_option(sock: int, level: int, name: int, value: int) -> tuple[int, int]:
+    """fn 75.8 with a 4-byte option value."""
+    b = sys.buffer(16)
+    sys.poke(b, 0, level, 4)
+    sys.poke(b, 4, name, 4)
+    sys.poke(b, 8, 4, 4)
+    sys.poke(b, 12, value, 4)
+    return _sock(sys.syscall(75, 8, sock, b))
+
+def socket_get_option(sock: int, level: int, name: int) -> tuple[int, int]:
+    """fn 75.9: (value, error)."""
+    b = sys.buffer(16)
+    sys.poke(b, 0, level, 4)
+    sys.poke(b, 4, name, 4)
+    sys.poke(b, 8, 4, 4)
+    r = _sock(sys.syscall(75, 9, sock, b))
+    if r[0] == -1:
+        return r
+    return (_dword(b, 12), r[1])
+
+def socket_pair() -> tuple[int, int]:
+    return _sock(sys.syscall(75, 10))                    # fn 75.10: the two sockets
+
+# ---------------------------------------------------------------- futexes and pipes (fn 77)
+
+def futex_create(value: int) -> int:
+    return _s32(sys.syscall(77, 0, value)[0])            # fn 77.0: handle, 0 on error
+
+def futex_destroy(handle: int) -> bool:
+    return _s32(sys.syscall(77, 1, handle)[0]) == 0      # fn 77.1
+
+def futex_wait(handle: int, value: int, timeout: int = 0) -> int:
+    """fn 77.2: 0 woken, -1 timeout, -2 value differs (timeout in 1/100 s, 0 = forever)."""
+    return _s32(sys.syscall(77, 2, handle, value, timeout)[0])
+
+def futex_wake(handle: int, count: int) -> int:
+    return _s32(sys.syscall(77, 3, handle, count)[0])    # fn 77.3: how many woke
+
+def pipe() -> tuple[int, int]:
+    """fn 77.13: (read handle, write handle); (-error, 0) on failure."""
+    b = sys.buffer(8)
+    r = _s32(sys.syscall(77, 13, b, 0)[0])
+    if r != 0:
+        return (r, 0)
+    return (_dword(b, 0), _dword(b, 4))
+
+def pipe_read(handle: int, out: buffer, size: int) -> int:
+    return _s32(sys.syscall(77, 10, handle, out, size)[0])   # fn 77.10: bytes, 0 at EOF
+
+def pipe_read_str(handle: int, size: int) -> str:
+    b = sys.buffer(size)
+    n = _s32(sys.syscall(77, 10, handle, b, size)[0])
+    if n < 0:
+        return None
+    return sys.peek_str(b, 0, n)
+
+def pipe_write(handle: int, data: str) -> int:
+    return _s32(sys.syscall(77, 11, handle, data, len(data.encode()))[0])   # fn 77.11

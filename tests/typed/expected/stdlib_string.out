@@ -1,0 +1,14 @@
+abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 0123456789abcdefABCDEF 01234567 ' \t\n\r\x0b\x0c'
+!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~ 100
+Hello World Foo A-B-C X
+tim likes ham; $5 for tim x likes ${what}; $5 for x
+ann likes jam; $5 for ann
+['who', 'what'] True False $who likes ${what}; $$5 for $who
+1${b}c$ ${a
+1 2 3 2
+ValueError Invalid placeholder in string: line 1, col 6
+ValueError Invalid placeholder in string: line 2, col 7
+ValueError Invalid placeholder in string: line 1, col 1
+ValueError Invalid placeholder in string: line 1, col 1
+KeyError 'missing'
+it costs %5 %{x}y

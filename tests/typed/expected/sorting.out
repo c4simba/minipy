@@ -1,0 +1,11 @@
+['Apple', 'Elder', 'banana', 'cherry', 'date', 'fig'] ['fig', 'date', 'cherry', 'banana', 'Elder', 'Apple']
+['fig', 'date', 'Apple', 'Elder', 'banana', 'cherry'] ['Apple', 'banana', 'cherry', 'date', 'Elder', 'fig']
+['banana', 'cherry', 'Apple', 'Elder', 'date', 'fig']
+['fig', 'date', 'Apple', 'Elder', 'banana', 'cherry']
+[dee(19), bob(25), ann(31), cy(31)] [ann(31), cy(31), bob(25), dee(19)]
+[dee(19), cy(31), bob(25), ann(31)]
+dee(19) cy(31) banana fig
+[-1, 2, 3, 5, -7]
+[5, 3, 2, -1, -7] [2.5, 0.5, -1.5]
+[('c', 1), ('b', 2), ('a', 2)] ('b', 2)
+['z', 'x', 'y'] ('y', 9)

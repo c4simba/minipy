@@ -1,0 +1,16 @@
+200 OK text/plain None b'GET /hello?x=1 ua=test/1.0\n'
+201 Made None 9 b'SOME DATA'
+404 Not Found text/html;charset=utf-8 ['Error code: 404', 'Message: Not Found.', 'Error code explanation: 404 - Nothing matches the given URI.']
+501 Unsupported method ('DELETE') text/html;charset=utf-8 ['Error code: 501', "Message: Unsupported method ('DELETE').", 'Error code explanation: 501 - Server does not support this operation.']
+127.0.0.1 - - [DATE] "GET /a.txt HTTP/1.1" 200 -
+200 OK text/plain 10 None b'text file\n'
+127.0.0.1 - - [DATE] "GET /sub/ HTTP/1.1" 200 -
+200 OK text/html 13 None b'<p>index</p>\n'
+127.0.0.1 - - [DATE] "GET /sub HTTP/1.1" 301 -
+301 Moved Permanently None 0 /sub/ 0
+127.0.0.1 - - [DATE] "GET / HTTP/1.1" 200 -
+200 ['<li><a href="a.txt">a.txt</a></li>', '<li><a href="sub/">sub/</a></li>']
+127.0.0.1 - - [DATE] code 404, message File not found
+127.0.0.1 - - [DATE] "GET /nothing.txt HTTP/1.1" 404 -
+404 File not found text/html;charset=utf-8 460 None 460
+('Not Found', 'Nothing matches the given URI') SimpleHTTP/0.6

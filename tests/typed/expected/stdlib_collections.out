@@ -1,0 +1,14 @@
+deque([1, 2, 3]) 5 0 4 0 4 [1, 2, 3] True
+deque([3, 1, 2]) 2
+deque([8, 9, 3, 1, 2])
+deque([2, 3, 4], maxlen=3) 3
+[2, 3, 4] 1 False
+deque(['a', 'c']) deque([])
+IndexError: pop from an empty deque
+Counter({'i': 4, 's': 4, 'p': 2, 'm': 1}) 4 0 [('i', 4), ('s', 4)] ['i', 'i', 'i', 'i', 'm'] 11 4
+6 0 Counter({'s': 6, 'p': 2, 'm': 1, 'a': 1, 'b': 1}) Counter({'s': 2, 'p': 2, 'm': 1})
+Counter({'a': 2, 'b': 1}) True Counter({1: 1, 2: 1})
+[0, 2] [1] 2 False dict_items([('a', [0, 2]), ('b', [1])])
+[('e', 1), ('h', 1), ('l', 2), ('o', 1)] None
+['y', 'z', 'x'] ('x', 1) ('y', 2) OrderedDict({'z': 3})
+(2, 'b')

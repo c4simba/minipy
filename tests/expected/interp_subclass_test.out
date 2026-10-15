@@ -1,0 +1,29 @@
+S hi HI! hix True 2 'hi' True 1
+I I(5) I(5) 6 10 True 60 I(5) 5 True True True range(0, 5) I(5) 005
+T (1, 2) 1 2 (1, 2, 3)
+1 missing:zz True 1 {'a': 1} D {'a': 1} None True
+5 {'extra': 5}
+[1, 2, 3, 4, 5] 15 L [2, 3] 5 [1, 2, 3, 4, 5, 6] True [5, 4, 3, 2, 1]
+1 {'hello': 1} ['hello']
+(3, 4) 3 4 True True True 2 [3, 4]
+6 Flags f6 7 True True x 6 6.0 0b110 3 -6 3 1 (1, 2)
+Ann Lee Hello, Ann Lee ANN LEE ['Ann', 'Lee'] Ann Lee, x {'Ann Lee': 1} True Name    Ann Lee| A 7
+[1, 2, 3, 4] 4 True True MySet
+{"a": 1} [1, 2] [1, 2] {"k": 3} "X Y"
+['add', 'base'] 5 2 ['add', 'base'] ops False True True
+Stack[1, 2] 3 3 Stack[1, 2] 2 [1, 2, 1, 2] [2, 1] [2, 1] [10, 20] True 1 1
+Stack[4, 5, 6] [4, 5, 6] 6 [4, 5, 6, 1, 2] list True True True
+HELLO 'HELLO' True HELLO! HELLOHELLO EL hello HELLO|'HELLO' HELLO 'HELLO' True True HELLO str
+['A', 'B'] {'HELLO': 1} HELLO,HELLO ['HE', '', 'O'] 5 b'HELLO' True
+Celsius(25.0) Celsius(25.0) 77.0 26.0 25 25 True True 25.0 Celsius(25.0) 3.5 True 5.0
+(1, 2) (2, 1) 1 2 (1, 2, 3) 1 [(1, 5), (2, 1)] x (1, 2) [1, 2] 1 2
+OrderedSet(['b', 'a', 'n']) ['b', 'a', 'n'] 3 True
+[1, 2, 3] 6 3 3 40 3 3 3.0 range(0, 3) 3 3 3
+True True (<class '__main__.Counted'>, <class 'int'>, <class 'object'>) True
+['z', 'a', 'm', 'f'] 3
+TypeError 'x' already defined
+mappingproxy({'a': 1}) namespace(a=1, b='x') <class 'function'> <class 'NoneType'> <class 'module'> <class 'generator'> <class 'method'> <class 'builtin_function_or_method'>
+namespace(x=1, y=2) True True True
+<class 'types.C'> 5 5
+TypeError 'mappingproxy' object does not support item assignment
+1 1 ['k'] True 0 {'k': 1}

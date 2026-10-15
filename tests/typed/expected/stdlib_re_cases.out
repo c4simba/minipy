@@ -1,0 +1,606 @@
+match 'abc' 'xabcy' None
+search 'abc' 'xabcy' <re.Match object; span=(1, 4), match='abc'> () None None {} (1, 4)
+fullmatch 'abc' 'xabcy' None
+findall 'abc' ['abc'] [(1, 4)]
+sub 'abc' 'x<abc>y' ('x-y', 1)
+split 'abc' ['x', 'y']
+match 'a.c' 'a\nc abc' None
+search 'a.c' 'a\nc abc' <re.Match object; span=(4, 7), match='abc'> () None None {} (4, 7)
+fullmatch 'a.c' 'a\nc abc' None
+findall 'a.c' ['abc'] [(4, 7)]
+sub 'a.c' 'a\nc <abc>' ('a\nc -', 1)
+split 'a.c' ['a\nc ', '']
+match 'a.c' 'a\nc' None
+search 'a.c' 'a\nc' None
+fullmatch 'a.c' 'a\nc' None
+findall 'a.c' [] []
+sub 'a.c' 'a\nc' ('a\nc', 0)
+split 'a.c' ['a\nc']
+match '^abc$' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+search '^abc$' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+fullmatch '^abc$' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+findall '^abc$' ['abc'] [(0, 3)]
+sub '^abc$' '<abc>' ('-', 1)
+split '^abc$' ['', '']
+match '^abc$' 'abc\n' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+search '^abc$' 'abc\n' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+fullmatch '^abc$' 'abc\n' None
+findall '^abc$' ['abc'] [(0, 3)]
+sub '^abc$' '<abc>\n' ('-\n', 1)
+split '^abc$' ['', '\n']
+match 'abc$' 'abc\nabc\n' None
+search 'abc$' 'abc\nabc\n' <re.Match object; span=(4, 7), match='abc'> () None None {} (4, 7)
+fullmatch 'abc$' 'abc\nabc\n' None
+findall 'abc$' ['abc'] [(4, 7)]
+sub 'abc$' 'abc\n<abc>\n' ('abc\n-\n', 1)
+split 'abc$' ['abc\n', '\n']
+match 'a*' 'aaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+search 'a*' 'aaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+fullmatch 'a*' 'aaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+findall 'a*' ['aaa', ''] [(0, 3), (3, 3)]
+sub 'a*' '<aaa><>' ('--', 2)
+split 'a*' ['', '', '']
+match 'a*?' 'aaa' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search 'a*?' 'aaa' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch 'a*?' 'aaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+findall 'a*?' ['', 'a', '', 'a', '', 'a', ''] [(0, 0), (0, 1), (1, 1), (1, 2), (2, 2), (2, 3), (3, 3)]
+sub 'a*?' '<><a><><a><><a><>' ('-------', 7)
+split 'a*?' ['', '', '', '', '', '', '', '']
+match 'a+?b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+search 'a+?b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+fullmatch 'a+?b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+findall 'a+?b' ['aaab'] [(0, 4)]
+sub 'a+?b' '<aaab>' ('-', 1)
+split 'a+?b' ['', '']
+match 'a{2,3}' 'aaaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+search 'a{2,3}' 'aaaa' <re.Match object; span=(0, 3), match='aaa'> () None None {} (0, 3)
+fullmatch 'a{2,3}' 'aaaa' None
+findall 'a{2,3}' ['aaa'] [(0, 3)]
+sub 'a{2,3}' '<aaa>a' ('-a', 1)
+split 'a{2,3}' ['', 'a']
+match 'a{2,3}?' 'aaaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+search 'a{2,3}?' 'aaaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+fullmatch 'a{2,3}?' 'aaaa' None
+findall 'a{2,3}?' ['aa', 'aa'] [(0, 2), (2, 4)]
+sub 'a{2,3}?' '<aa><aa>' ('--', 2)
+split 'a{2,3}?' ['', '', '']
+match 'a{,2}' 'aaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+search 'a{,2}' 'aaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+fullmatch 'a{,2}' 'aaa' None
+findall 'a{,2}' ['aa', 'a', ''] [(0, 2), (2, 3), (3, 3)]
+sub 'a{,2}' '<aa><a><>' ('---', 3)
+split 'a{,2}' ['', '', '', '']
+match 'a{2}' 'aaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+search 'a{2}' 'aaa' <re.Match object; span=(0, 2), match='aa'> () None None {} (0, 2)
+fullmatch 'a{2}' 'aaa' None
+findall 'a{2}' ['aa'] [(0, 2)]
+sub 'a{2}' '<aa>a' ('-a', 1)
+split 'a{2}' ['', 'a']
+match 'a{2,}' 'aaaaa' <re.Match object; span=(0, 5), match='aaaaa'> () None None {} (0, 5)
+search 'a{2,}' 'aaaaa' <re.Match object; span=(0, 5), match='aaaaa'> () None None {} (0, 5)
+fullmatch 'a{2,}' 'aaaaa' <re.Match object; span=(0, 5), match='aaaaa'> () None None {} (0, 5)
+findall 'a{2,}' ['aaaaa'] [(0, 5)]
+sub 'a{2,}' '<aaaaa>' ('-', 1)
+split 'a{2,}' ['', '']
+match 'a{}' 'a{}' <re.Match object; span=(0, 3), match='a{}'> () None None {} (0, 3)
+search 'a{}' 'a{}' <re.Match object; span=(0, 3), match='a{}'> () None None {} (0, 3)
+fullmatch 'a{}' 'a{}' <re.Match object; span=(0, 3), match='a{}'> () None None {} (0, 3)
+findall 'a{}' ['a{}'] [(0, 3)]
+sub 'a{}' '<a{}>' ('-', 1)
+split 'a{}' ['', '']
+match 'a{1' 'a{1' <re.Match object; span=(0, 3), match='a{1'> () None None {} (0, 3)
+search 'a{1' 'a{1' <re.Match object; span=(0, 3), match='a{1'> () None None {} (0, 3)
+fullmatch 'a{1' 'a{1' <re.Match object; span=(0, 3), match='a{1'> () None None {} (0, 3)
+findall 'a{1' ['a{1'] [(0, 3)]
+sub 'a{1' '<a{1>' ('-', 1)
+split 'a{1' ['', '']
+match 'a{1,x}' 'a{1,x}' <re.Match object; span=(0, 6), match='a{1,x}'> () None None {} (0, 6)
+search 'a{1,x}' 'a{1,x}' <re.Match object; span=(0, 6), match='a{1,x}'> () None None {} (0, 6)
+fullmatch 'a{1,x}' 'a{1,x}' <re.Match object; span=(0, 6), match='a{1,x}'> () None None {} (0, 6)
+findall 'a{1,x}' ['a{1,x}'] [(0, 6)]
+sub 'a{1,x}' '<a{1,x}>' ('-', 1)
+split 'a{1,x}' ['', '']
+match 'x{3,1' 'x{3,1' <re.Match object; span=(0, 5), match='x{3,1'> () None None {} (0, 5)
+search 'x{3,1' 'x{3,1' <re.Match object; span=(0, 5), match='x{3,1'> () None None {} (0, 5)
+fullmatch 'x{3,1' 'x{3,1' <re.Match object; span=(0, 5), match='x{3,1'> () None None {} (0, 5)
+findall 'x{3,1' ['x{3,1'] [(0, 5)]
+sub 'x{3,1' '<x{3,1>' ('-', 1)
+split 'x{3,1' ['', '']
+match '[abc]+' 'xxbcay' None
+search '[abc]+' 'xxbcay' <re.Match object; span=(2, 5), match='bca'> () None None {} (2, 5)
+fullmatch '[abc]+' 'xxbcay' None
+findall '[abc]+' ['bca'] [(2, 5)]
+sub '[abc]+' 'xx<bca>y' ('xx-y', 1)
+split '[abc]+' ['xx', 'y']
+match '[^abc]+' 'abxyzc' None
+search '[^abc]+' 'abxyzc' <re.Match object; span=(2, 5), match='xyz'> () None None {} (2, 5)
+fullmatch '[^abc]+' 'abxyzc' None
+findall '[^abc]+' ['xyz'] [(2, 5)]
+sub '[^abc]+' 'ab<xyz>c' ('ab-c', 1)
+split '[^abc]+' ['ab', 'c']
+match '[a-z0-9_]+' 'Hello_World42!' None
+search '[a-z0-9_]+' 'Hello_World42!' <re.Match object; span=(1, 6), match='ello_'> () None None {} (1, 6)
+fullmatch '[a-z0-9_]+' 'Hello_World42!' None
+findall '[a-z0-9_]+' ['ello_', 'orld42'] [(1, 6), (7, 13)]
+sub '[a-z0-9_]+' 'H<ello_>W<orld42>!' ('H-W-!', 2)
+split '[a-z0-9_]+' ['H', 'W', '!']
+match '[]a]+' 'a]]b' <re.Match object; span=(0, 3), match='a]]'> () None None {} (0, 3)
+search '[]a]+' 'a]]b' <re.Match object; span=(0, 3), match='a]]'> () None None {} (0, 3)
+fullmatch '[]a]+' 'a]]b' None
+findall '[]a]+' ['a]]'] [(0, 3)]
+sub '[]a]+' '<a]]>b' ('-b', 1)
+split '[]a]+' ['', 'b']
+match '[^]]+' 'ab]' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+search '[^]]+' 'ab]' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+fullmatch '[^]]+' 'ab]' None
+findall '[^]]+' ['ab'] [(0, 2)]
+sub '[^]]+' '<ab>]' ('-]', 1)
+split '[^]]+' ['', ']']
+match '[a-]+' 'a-a-b' <re.Match object; span=(0, 4), match='a-a-'> () None None {} (0, 4)
+search '[a-]+' 'a-a-b' <re.Match object; span=(0, 4), match='a-a-'> () None None {} (0, 4)
+fullmatch '[a-]+' 'a-a-b' None
+findall '[a-]+' ['a-a-'] [(0, 4)]
+sub '[a-]+' '<a-a->b' ('-b', 1)
+split '[a-]+' ['', 'b']
+match '[-a]+' '-a-b' <re.Match object; span=(0, 3), match='-a-'> () None None {} (0, 3)
+search '[-a]+' '-a-b' <re.Match object; span=(0, 3), match='-a-'> () None None {} (0, 3)
+fullmatch '[-a]+' '-a-b' None
+findall '[-a]+' ['-a-'] [(0, 3)]
+sub '[-a]+' '<-a->b' ('-b', 1)
+split '[-a]+' ['', 'b']
+match '[\\d\\s]+' 'x12 3y' None
+search '[\\d\\s]+' 'x12 3y' <re.Match object; span=(1, 5), match='12 3'> () None None {} (1, 5)
+fullmatch '[\\d\\s]+' 'x12 3y' None
+findall '[\\d\\s]+' ['12 3'] [(1, 5)]
+sub '[\\d\\s]+' 'x<12 3>y' ('x-y', 1)
+split '[\\d\\s]+' ['x', 'y']
+match '[\\w.-]+@[\\w.-]+' 'mail me: joe.b@ex-ample.com!' None
+search '[\\w.-]+@[\\w.-]+' 'mail me: joe.b@ex-ample.com!' <re.Match object; span=(9, 27), match='joe.b@ex-ample.com'> () None None {} (9, 27)
+fullmatch '[\\w.-]+@[\\w.-]+' 'mail me: joe.b@ex-ample.com!' None
+findall '[\\w.-]+@[\\w.-]+' ['joe.b@ex-ample.com'] [(9, 27)]
+sub '[\\w.-]+@[\\w.-]+' 'mail me: <joe.b@ex-ample.com>!' ('mail me: -!', 1)
+split '[\\w.-]+@[\\w.-]+' ['mail me: ', '!']
+match '\\d+' 'abc 123 def 45' None
+search '\\d+' 'abc 123 def 45' <re.Match object; span=(4, 7), match='123'> () None None {} (4, 7)
+fullmatch '\\d+' 'abc 123 def 45' None
+findall '\\d+' ['123', '45'] [(4, 7), (12, 14)]
+sub '\\d+' 'abc <123> def <45>' ('abc - def -', 2)
+split '\\d+' ['abc ', ' def ', '']
+match '\\D+' '123abc456' None
+search '\\D+' '123abc456' <re.Match object; span=(3, 6), match='abc'> () None None {} (3, 6)
+fullmatch '\\D+' '123abc456' None
+findall '\\D+' ['abc'] [(3, 6)]
+sub '\\D+' '123<abc>456' ('123-456', 1)
+split '\\D+' ['123', '456']
+match '\\s+' 'a \t\nb' None
+search '\\s+' 'a \t\nb' <re.Match object; span=(1, 4), match=' \t\n'> () None None {} (1, 4)
+fullmatch '\\s+' 'a \t\nb' None
+findall '\\s+' [' \t\n'] [(1, 4)]
+sub '\\s+' 'a< \t\n>b' ('a-b', 1)
+split '\\s+' ['a', 'b']
+match '\\S+' '  ab  ' None
+search '\\S+' '  ab  ' <re.Match object; span=(2, 4), match='ab'> () None None {} (2, 4)
+fullmatch '\\S+' '  ab  ' None
+findall '\\S+' ['ab'] [(2, 4)]
+sub '\\S+' '  <ab>  ' ('  -  ', 1)
+split '\\S+' ['  ', '  ']
+match '\\w+' '  héllo wörld ' None
+search '\\w+' '  héllo wörld ' <re.Match object; span=(2, 7), match='héllo'> () None None {} (2, 7)
+fullmatch '\\w+' '  héllo wörld ' None
+findall '\\w+' ['héllo', 'wörld'] [(2, 7), (8, 13)]
+sub '\\w+' '  <héllo> <wörld> ' ('  - - ', 2)
+split '\\w+' ['  ', ' ', ' ']
+match '\\W+' 'ab, cd' None
+search '\\W+' 'ab, cd' <re.Match object; span=(2, 4), match=', '> () None None {} (2, 4)
+fullmatch '\\W+' 'ab, cd' None
+findall '\\W+' [', '] [(2, 4)]
+sub '\\W+' 'ab<, >cd' ('ab-cd', 1)
+split '\\W+' ['ab', 'cd']
+match '\\bfoo\\b' 'a foo b' None
+search '\\bfoo\\b' 'a foo b' <re.Match object; span=(2, 5), match='foo'> () None None {} (2, 5)
+fullmatch '\\bfoo\\b' 'a foo b' None
+findall '\\bfoo\\b' ['foo'] [(2, 5)]
+sub '\\bfoo\\b' 'a <foo> b' ('a - b', 1)
+split '\\bfoo\\b' ['a ', ' b']
+match '\\bfoo\\b' 'afoob' None
+search '\\bfoo\\b' 'afoob' None
+fullmatch '\\bfoo\\b' 'afoob' None
+findall '\\bfoo\\b' [] []
+sub '\\bfoo\\b' 'afoob' ('afoob', 0)
+split '\\bfoo\\b' ['afoob']
+match '\\Bfoo\\B' 'afoob' None
+search '\\Bfoo\\B' 'afoob' <re.Match object; span=(1, 4), match='foo'> () None None {} (1, 4)
+fullmatch '\\Bfoo\\B' 'afoob' None
+findall '\\Bfoo\\B' ['foo'] [(1, 4)]
+sub '\\Bfoo\\B' 'a<foo>b' ('a-b', 1)
+split '\\Bfoo\\B' ['a', 'b']
+match '\\B' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search '\\B' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch '\\B' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+findall '\\B' [''] [(0, 0)]
+sub '\\B' '<>' ('-', 1)
+split '\\B' ['', '']
+match '\\b' '' None
+search '\\b' '' None
+fullmatch '\\b' '' None
+findall '\\b' [] []
+sub '\\b' '' ('', 0)
+split '\\b' ['']
+match '(a)(b)(c)' 'abc' <re.Match object; span=(0, 3), match='abc'> ('a', 'b', 'c') 3 None {} (0, 3)
+search '(a)(b)(c)' 'abc' <re.Match object; span=(0, 3), match='abc'> ('a', 'b', 'c') 3 None {} (0, 3)
+fullmatch '(a)(b)(c)' 'abc' <re.Match object; span=(0, 3), match='abc'> ('a', 'b', 'c') 3 None {} (0, 3)
+findall '(a)(b)(c)' ['abc'] [(0, 3)]
+sub '(a)(b)(c)' '<abc>' ('-', 1)
+split '(a)(b)(c)' ['', 'a', 'b', 'c', '']
+match '(a|b)*' 'abab' <re.Match object; span=(0, 4), match='abab'> ('b',) 1 None {} (0, 4)
+search '(a|b)*' 'abab' <re.Match object; span=(0, 4), match='abab'> ('b',) 1 None {} (0, 4)
+fullmatch '(a|b)*' 'abab' <re.Match object; span=(0, 4), match='abab'> ('b',) 1 None {} (0, 4)
+findall '(a|b)*' ['abab', ''] [(0, 4), (4, 4)]
+sub '(a|b)*' '<abab><>' ('--', 2)
+split '(a|b)*' ['', 'b', '', None, '']
+match '(a|ab)(c|bcd)(d*)' 'abcd' <re.Match object; span=(0, 4), match='abcd'> ('a', 'bcd', '') 3 None {} (0, 4)
+search '(a|ab)(c|bcd)(d*)' 'abcd' <re.Match object; span=(0, 4), match='abcd'> ('a', 'bcd', '') 3 None {} (0, 4)
+fullmatch '(a|ab)(c|bcd)(d*)' 'abcd' <re.Match object; span=(0, 4), match='abcd'> ('a', 'bcd', '') 3 None {} (0, 4)
+findall '(a|ab)(c|bcd)(d*)' ['abcd'] [(0, 4)]
+sub '(a|ab)(c|bcd)(d*)' '<abcd>' ('-', 1)
+split '(a|ab)(c|bcd)(d*)' ['', 'a', 'bcd', '', '']
+match '(?:ab)+' 'ababab' <re.Match object; span=(0, 6), match='ababab'> () None None {} (0, 6)
+search '(?:ab)+' 'ababab' <re.Match object; span=(0, 6), match='ababab'> () None None {} (0, 6)
+fullmatch '(?:ab)+' 'ababab' <re.Match object; span=(0, 6), match='ababab'> () None None {} (0, 6)
+findall '(?:ab)+' ['ababab'] [(0, 6)]
+sub '(?:ab)+' '<ababab>' ('-', 1)
+split '(?:ab)+' ['', '']
+match '(a*)*' 'b' <re.Match object; span=(0, 0), match=''> ('',) 1 None {} (0, 0)
+search '(a*)*' 'b' <re.Match object; span=(0, 0), match=''> ('',) 1 None {} (0, 0)
+fullmatch '(a*)*' 'b' None
+findall '(a*)*' ['', ''] [(0, 0), (1, 1)]
+sub '(a*)*' '<>b<>' ('-b-', 2)
+split '(a*)*' ['', '', 'b', '', '']
+match '(a*)+' 'b' <re.Match object; span=(0, 0), match=''> ('',) 1 None {} (0, 0)
+search '(a*)+' 'b' <re.Match object; span=(0, 0), match=''> ('',) 1 None {} (0, 0)
+fullmatch '(a*)+' 'b' None
+findall '(a*)+' ['', ''] [(0, 0), (1, 1)]
+sub '(a*)+' '<>b<>' ('-b-', 2)
+split '(a*)+' ['', '', 'b', '', '']
+match '(a|)*b' 'aab' <re.Match object; span=(0, 3), match='aab'> ('',) 1 None {} (0, 3)
+search '(a|)*b' 'aab' <re.Match object; span=(0, 3), match='aab'> ('',) 1 None {} (0, 3)
+fullmatch '(a|)*b' 'aab' <re.Match object; span=(0, 3), match='aab'> ('',) 1 None {} (0, 3)
+findall '(a|)*b' ['aab'] [(0, 3)]
+sub '(a|)*b' '<aab>' ('-', 1)
+split '(a|)*b' ['', '', '']
+match '(?:(a)|b)*' 'ab' <re.Match object; span=(0, 2), match='ab'> ('a',) 1 None {} (0, 2)
+search '(?:(a)|b)*' 'ab' <re.Match object; span=(0, 2), match='ab'> ('a',) 1 None {} (0, 2)
+fullmatch '(?:(a)|b)*' 'ab' <re.Match object; span=(0, 2), match='ab'> ('a',) 1 None {} (0, 2)
+findall '(?:(a)|b)*' ['ab', ''] [(0, 2), (2, 2)]
+sub '(?:(a)|b)*' '<ab><>' ('--', 2)
+split '(?:(a)|b)*' ['', 'a', '', None, '']
+match '((a)|b)+' 'ab' <re.Match object; span=(0, 2), match='ab'> ('b', 'a') 1 None {} (0, 2)
+search '((a)|b)+' 'ab' <re.Match object; span=(0, 2), match='ab'> ('b', 'a') 1 None {} (0, 2)
+fullmatch '((a)|b)+' 'ab' <re.Match object; span=(0, 2), match='ab'> ('b', 'a') 1 None {} (0, 2)
+findall '((a)|b)+' ['ab'] [(0, 2)]
+sub '((a)|b)+' '<ab>' ('-', 1)
+split '((a)|b)+' ['', 'b', 'a', '']
+match '(a)|(b)' 'b' <re.Match object; span=(0, 1), match='b'> (None, 'b') 2 None {} (0, 1)
+search '(a)|(b)' 'b' <re.Match object; span=(0, 1), match='b'> (None, 'b') 2 None {} (0, 1)
+fullmatch '(a)|(b)' 'b' <re.Match object; span=(0, 1), match='b'> (None, 'b') 2 None {} (0, 1)
+findall '(a)|(b)' ['b'] [(0, 1)]
+sub '(a)|(b)' '<b>' ('-', 1)
+split '(a)|(b)' ['', None, 'b', '']
+match '(?P<first>\\w+) (?P<last>\\w+)' 'Jane Doe' <re.Match object; span=(0, 8), match='Jane Doe'> ('Jane', 'Doe') 2 last {'first': 'Jane', 'last': 'Doe'} (0, 8)
+search '(?P<first>\\w+) (?P<last>\\w+)' 'Jane Doe' <re.Match object; span=(0, 8), match='Jane Doe'> ('Jane', 'Doe') 2 last {'first': 'Jane', 'last': 'Doe'} (0, 8)
+fullmatch '(?P<first>\\w+) (?P<last>\\w+)' 'Jane Doe' <re.Match object; span=(0, 8), match='Jane Doe'> ('Jane', 'Doe') 2 last {'first': 'Jane', 'last': 'Doe'} (0, 8)
+findall '(?P<first>\\w+) (?P<last>\\w+)' ['Jane Doe'] [(0, 8)]
+sub '(?P<first>\\w+) (?P<last>\\w+)' '<Jane Doe>' ('-', 1)
+split '(?P<first>\\w+) (?P<last>\\w+)' ['', 'Jane', 'Doe', '']
+match '(?P<x>a)(?P=x)' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 x {'x': 'a'} (0, 2)
+search '(?P<x>a)(?P=x)' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 x {'x': 'a'} (0, 2)
+fullmatch '(?P<x>a)(?P=x)' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 x {'x': 'a'} (0, 2)
+findall '(?P<x>a)(?P=x)' ['aa'] [(0, 2)]
+sub '(?P<x>a)(?P=x)' '<aa>' ('-', 1)
+split '(?P<x>a)(?P=x)' ['', 'a', '']
+match '(a)\\1' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 None {} (0, 2)
+search '(a)\\1' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 None {} (0, 2)
+fullmatch '(a)\\1' 'aa' <re.Match object; span=(0, 2), match='aa'> ('a',) 1 None {} (0, 2)
+findall '(a)\\1' ['aa'] [(0, 2)]
+sub '(a)\\1' '<aa>' ('-', 1)
+split '(a)\\1' ['', 'a', '']
+match '(a)\\1' 'ab' None
+search '(a)\\1' 'ab' None
+fullmatch '(a)\\1' 'ab' None
+findall '(a)\\1' [] []
+sub '(a)\\1' 'ab' ('ab', 0)
+split '(a)\\1' ['ab']
+match '(?i)hello' 'HeLLo' <re.Match object; span=(0, 5), match='HeLLo'> () None None {} (0, 5)
+search '(?i)hello' 'HeLLo' <re.Match object; span=(0, 5), match='HeLLo'> () None None {} (0, 5)
+fullmatch '(?i)hello' 'HeLLo' <re.Match object; span=(0, 5), match='HeLLo'> () None None {} (0, 5)
+findall '(?i)hello' ['HeLLo'] [(0, 5)]
+sub '(?i)hello' '<HeLLo>' ('-', 1)
+split '(?i)hello' ['', '']
+match '(?i:a)b' 'Ab AB' <re.Match object; span=(0, 2), match='Ab'> () None None {} (0, 2)
+search '(?i:a)b' 'Ab AB' <re.Match object; span=(0, 2), match='Ab'> () None None {} (0, 2)
+fullmatch '(?i:a)b' 'Ab AB' None
+findall '(?i:a)b' ['Ab'] [(0, 2)]
+sub '(?i:a)b' '<Ab> AB' ('- AB', 1)
+split '(?i:a)b' ['', ' AB']
+match '(?i)[a-c]+' 'xABCy' None
+search '(?i)[a-c]+' 'xABCy' <re.Match object; span=(1, 4), match='ABC'> () None None {} (1, 4)
+fullmatch '(?i)[a-c]+' 'xABCy' None
+findall '(?i)[a-c]+' ['ABC'] [(1, 4)]
+sub '(?i)[a-c]+' 'x<ABC>y' ('x-y', 1)
+split '(?i)[a-c]+' ['x', 'y']
+match '(?i)[^a]' 'A' None
+search '(?i)[^a]' 'A' None
+fullmatch '(?i)[^a]' 'A' None
+findall '(?i)[^a]' [] []
+sub '(?i)[^a]' 'A' ('A', 0)
+split '(?i)[^a]' ['A']
+match '(?m)^\\w+$' 'ab\ncd' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+search '(?m)^\\w+$' 'ab\ncd' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+fullmatch '(?m)^\\w+$' 'ab\ncd' None
+findall '(?m)^\\w+$' ['ab', 'cd'] [(0, 2), (3, 5)]
+sub '(?m)^\\w+$' '<ab>\n<cd>' ('-\n-', 2)
+split '(?m)^\\w+$' ['', '\n', '']
+match '(?s)a.b' 'a\nb' <re.Match object; span=(0, 3), match='a\nb'> () None None {} (0, 3)
+search '(?s)a.b' 'a\nb' <re.Match object; span=(0, 3), match='a\nb'> () None None {} (0, 3)
+fullmatch '(?s)a.b' 'a\nb' <re.Match object; span=(0, 3), match='a\nb'> () None None {} (0, 3)
+findall '(?s)a.b' ['a\nb'] [(0, 3)]
+sub '(?s)a.b' '<a\nb>' ('-', 1)
+split '(?s)a.b' ['', '']
+match '(?x) a b # comment\n c' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+search '(?x) a b # comment\n c' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+fullmatch '(?x) a b # comment\n c' 'abc' <re.Match object; span=(0, 3), match='abc'> () None None {} (0, 3)
+findall '(?x) a b # comment\n c' ['abc'] [(0, 3)]
+sub '(?x) a b # comment\n c' '<abc>' ('-', 1)
+split '(?x) a b # comment\n c' ['', '']
+match '(?x)[ ]a' ' a' <re.Match object; span=(0, 2), match=' a'> () None None {} (0, 2)
+search '(?x)[ ]a' ' a' <re.Match object; span=(0, 2), match=' a'> () None None {} (0, 2)
+fullmatch '(?x)[ ]a' ' a' <re.Match object; span=(0, 2), match=' a'> () None None {} (0, 2)
+findall '(?x)[ ]a' [' a'] [(0, 2)]
+sub '(?x)[ ]a' '< a>' ('-', 1)
+split '(?x)[ ]a' ['', '']
+match 'a(?=b)' 'ab ac' <re.Match object; span=(0, 1), match='a'> () None None {} (0, 1)
+search 'a(?=b)' 'ab ac' <re.Match object; span=(0, 1), match='a'> () None None {} (0, 1)
+fullmatch 'a(?=b)' 'ab ac' None
+findall 'a(?=b)' ['a'] [(0, 1)]
+sub 'a(?=b)' '<a>b ac' ('-b ac', 1)
+split 'a(?=b)' ['', 'b ac']
+match 'a(?!b)' 'ab ac' None
+search 'a(?!b)' 'ab ac' <re.Match object; span=(3, 4), match='a'> () None None {} (3, 4)
+fullmatch 'a(?!b)' 'ab ac' None
+findall 'a(?!b)' ['a'] [(3, 4)]
+sub 'a(?!b)' 'ab <a>c' ('ab -c', 1)
+split 'a(?!b)' ['ab ', 'c']
+match '(?<=a)b' 'ab cb' None
+search '(?<=a)b' 'ab cb' <re.Match object; span=(1, 2), match='b'> () None None {} (1, 2)
+fullmatch '(?<=a)b' 'ab cb' None
+findall '(?<=a)b' ['b'] [(1, 2)]
+sub '(?<=a)b' 'a<b> cb' ('a- cb', 1)
+split '(?<=a)b' ['a', ' cb']
+match '(?<!a)b' 'ab cb' None
+search '(?<!a)b' 'ab cb' <re.Match object; span=(4, 5), match='b'> () None None {} (4, 5)
+fullmatch '(?<!a)b' 'ab cb' None
+findall '(?<!a)b' ['b'] [(4, 5)]
+sub '(?<!a)b' 'ab c<b>' ('ab c-', 1)
+split '(?<!a)b' ['ab c', '']
+match '(?<=ab|cd)e' 'abe cde xde' None
+search '(?<=ab|cd)e' 'abe cde xde' <re.Match object; span=(2, 3), match='e'> () None None {} (2, 3)
+fullmatch '(?<=ab|cd)e' 'abe cde xde' None
+findall '(?<=ab|cd)e' ['e', 'e'] [(2, 3), (6, 7)]
+sub '(?<=ab|cd)e' 'ab<e> cd<e> xde' ('ab- cd- xde', 2)
+split '(?<=ab|cd)e' ['ab', ' cd', ' xde']
+match '(?>a+)b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+search '(?>a+)b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+fullmatch '(?>a+)b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+findall '(?>a+)b' ['aaab'] [(0, 4)]
+sub '(?>a+)b' '<aaab>' ('-', 1)
+split '(?>a+)b' ['', '']
+match '(?>a+)ab' 'aaab' None
+search '(?>a+)ab' 'aaab' None
+fullmatch '(?>a+)ab' 'aaab' None
+findall '(?>a+)ab' [] []
+sub '(?>a+)ab' 'aaab' ('aaab', 0)
+split '(?>a+)ab' ['aaab']
+match 'a++b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+search 'a++b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+fullmatch 'a++b' 'aaab' <re.Match object; span=(0, 4), match='aaab'> () None None {} (0, 4)
+findall 'a++b' ['aaab'] [(0, 4)]
+sub 'a++b' '<aaab>' ('-', 1)
+split 'a++b' ['', '']
+match 'a*+a' 'aaa' None
+search 'a*+a' 'aaa' None
+fullmatch 'a*+a' 'aaa' None
+findall 'a*+a' [] []
+sub 'a*+a' 'aaa' ('aaa', 0)
+split 'a*+a' ['aaa']
+match '(a)?(?(1)b|c)' 'ab c' <re.Match object; span=(0, 2), match='ab'> ('a',) 1 None {} (0, 2)
+search '(a)?(?(1)b|c)' 'ab c' <re.Match object; span=(0, 2), match='ab'> ('a',) 1 None {} (0, 2)
+fullmatch '(a)?(?(1)b|c)' 'ab c' None
+findall '(a)?(?(1)b|c)' ['ab', 'c'] [(0, 2), (3, 4)]
+sub '(a)?(?(1)b|c)' '<ab> <c>' ('- -', 2)
+split '(a)?(?(1)b|c)' ['', 'a', ' ', None, '']
+match "(?P<q>')?x(?(q)')" "'x' x" <re.Match object; span=(0, 3), match="'x'"> ("'",) 1 q {'q': "'"} (0, 3)
+search "(?P<q>')?x(?(q)')" "'x' x" <re.Match object; span=(0, 3), match="'x'"> ("'",) 1 q {'q': "'"} (0, 3)
+fullmatch "(?P<q>')?x(?(q)')" "'x' x" None
+findall "(?P<q>')?x(?(q)')" ["'x'", 'x'] [(0, 3), (4, 5)]
+sub "(?P<q>')?x(?(q)')" "<'x'> <x>" ('- -', 2)
+split "(?P<q>')?x(?(q)')" ['', "'", ' ', None, '']
+match '(?#comment)ab' 'ab' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+search '(?#comment)ab' 'ab' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+fullmatch '(?#comment)ab' 'ab' <re.Match object; span=(0, 2), match='ab'> () None None {} (0, 2)
+findall '(?#comment)ab' ['ab'] [(0, 2)]
+sub '(?#comment)ab' '<ab>' ('-', 1)
+split '(?#comment)ab' ['', '']
+match '\\x41\\u0042\\101' 'ABA' <re.Match object; span=(0, 3), match='ABA'> () None None {} (0, 3)
+search '\\x41\\u0042\\101' 'ABA' <re.Match object; span=(0, 3), match='ABA'> () None None {} (0, 3)
+fullmatch '\\x41\\u0042\\101' 'ABA' <re.Match object; span=(0, 3), match='ABA'> () None None {} (0, 3)
+findall '\\x41\\u0042\\101' ['ABA'] [(0, 3)]
+sub '\\x41\\u0042\\101' '<ABA>' ('-', 1)
+split '\\x41\\u0042\\101' ['', '']
+match '\\0' '\x00' <re.Match object; span=(0, 1), match='\x00'> () None None {} (0, 1)
+search '\\0' '\x00' <re.Match object; span=(0, 1), match='\x00'> () None None {} (0, 1)
+fullmatch '\\0' '\x00' <re.Match object; span=(0, 1), match='\x00'> () None None {} (0, 1)
+findall '\\0' ['\x00'] [(0, 1)]
+sub '\\0' '<\x00>' ('-', 1)
+split '\\0' ['', '']
+match 'a|b|c' 'xcx' None
+search 'a|b|c' 'xcx' <re.Match object; span=(1, 2), match='c'> () None None {} (1, 2)
+fullmatch 'a|b|c' 'xcx' None
+findall 'a|b|c' ['c'] [(1, 2)]
+sub 'a|b|c' 'x<c>x' ('x-x', 1)
+split 'a|b|c' ['x', 'x']
+match '' 'abc' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search '' 'abc' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch '' 'abc' None
+findall '' ['', '', '', ''] [(0, 0), (1, 1), (2, 2), (3, 3)]
+sub '' '<>a<>b<>c<>' ('-a-b-c-', 4)
+split '' ['', 'a', 'b', 'c', '']
+match 'x*' 'abxd' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search 'x*' 'abxd' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch 'x*' 'abxd' None
+findall 'x*' ['', '', 'x', '', ''] [(0, 0), (1, 1), (2, 3), (3, 3), (4, 4)]
+sub 'x*' '<>a<>b<x><>d<>' ('-a-b--d-', 5)
+split 'x*' ['', 'a', 'b', '', 'd', '']
+match '\\.' 'a.b' None
+search '\\.' 'a.b' <re.Match object; span=(1, 2), match='.'> () None None {} (1, 2)
+fullmatch '\\.' 'a.b' None
+findall '\\.' ['.'] [(1, 2)]
+sub '\\.' 'a<.>b' ('a-b', 1)
+split '\\.' ['a', 'b']
+match '\\$\\d+\\.\\d\\d' 'cost $12.50 now' None
+search '\\$\\d+\\.\\d\\d' 'cost $12.50 now' <re.Match object; span=(5, 11), match='$12.50'> () None None {} (5, 11)
+fullmatch '\\$\\d+\\.\\d\\d' 'cost $12.50 now' None
+findall '\\$\\d+\\.\\d\\d' ['$12.50'] [(5, 11)]
+sub '\\$\\d+\\.\\d\\d' 'cost <$12.50> now' ('cost - now', 1)
+split '\\$\\d+\\.\\d\\d' ['cost ', ' now']
+match '(\\d+)-(\\d+)' '10-20 30-40' <re.Match object; span=(0, 5), match='10-20'> ('10', '20') 2 None {} (0, 5)
+search '(\\d+)-(\\d+)' '10-20 30-40' <re.Match object; span=(0, 5), match='10-20'> ('10', '20') 2 None {} (0, 5)
+fullmatch '(\\d+)-(\\d+)' '10-20 30-40' None
+findall '(\\d+)-(\\d+)' ['10-20', '30-40'] [(0, 5), (6, 11)]
+sub '(\\d+)-(\\d+)' '<10-20> <30-40>' ('- -', 2)
+split '(\\d+)-(\\d+)' ['', '10', '20', ' ', '30', '40', '']
+match '^$' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search '^$' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch '^$' '' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+findall '^$' [''] [(0, 0)]
+sub '^$' '<>' ('-', 1)
+split '^$' ['', '']
+match '$' 'ab\n' None
+search '$' 'ab\n' <re.Match object; span=(2, 2), match=''> () None None {} (2, 2)
+fullmatch '$' 'ab\n' None
+findall '$' ['', ''] [(2, 2), (3, 3)]
+sub '$' 'ab<>\n<>' ('ab-\n-', 2)
+split '$' ['ab', '\n', '']
+match '\\Z' 'ab\n' None
+search '\\Z' 'ab\n' <re.Match object; span=(3, 3), match=''> () None None {} (3, 3)
+fullmatch '\\Z' 'ab\n' None
+findall '\\Z' [''] [(3, 3)]
+sub '\\Z' 'ab\n<>' ('ab\n-', 1)
+split '\\Z' ['ab\n', '']
+match '\\A\\w' 'ab' <re.Match object; span=(0, 1), match='a'> () None None {} (0, 1)
+search '\\A\\w' 'ab' <re.Match object; span=(0, 1), match='a'> () None None {} (0, 1)
+fullmatch '\\A\\w' 'ab' None
+findall '\\A\\w' ['a'] [(0, 1)]
+sub '\\A\\w' '<a>b' ('-b', 1)
+split '\\A\\w' ['', 'b']
+match '(?m)$' 'a\nb\n' None
+search '(?m)$' 'a\nb\n' <re.Match object; span=(1, 1), match=''> () None None {} (1, 1)
+fullmatch '(?m)$' 'a\nb\n' None
+findall '(?m)$' ['', '', ''] [(1, 1), (3, 3), (4, 4)]
+sub '(?m)$' 'a<>\nb<>\n<>' ('a-\nb-\n-', 3)
+split '(?m)$' ['a', '\nb', '\n', '']
+match '[\\]]' ']' <re.Match object; span=(0, 1), match=']'> () None None {} (0, 1)
+search '[\\]]' ']' <re.Match object; span=(0, 1), match=']'> () None None {} (0, 1)
+fullmatch '[\\]]' ']' <re.Match object; span=(0, 1), match=']'> () None None {} (0, 1)
+findall '[\\]]' [']'] [(0, 1)]
+sub '[\\]]' '<]>' ('-', 1)
+split '[\\]]' ['', '']
+match '[\\\\]' '\\' <re.Match object; span=(0, 1), match='\\'> () None None {} (0, 1)
+search '[\\\\]' '\\' <re.Match object; span=(0, 1), match='\\'> () None None {} (0, 1)
+fullmatch '[\\\\]' '\\' <re.Match object; span=(0, 1), match='\\'> () None None {} (0, 1)
+findall '[\\\\]' ['\\'] [(0, 1)]
+sub '[\\\\]' '<\\>' ('-', 1)
+split '[\\\\]' ['', '']
+match '[.]' 'a.b' None
+search '[.]' 'a.b' <re.Match object; span=(1, 2), match='.'> () None None {} (1, 2)
+fullmatch '[.]' 'a.b' None
+findall '[.]' ['.'] [(1, 2)]
+sub '[.]' 'a<.>b' ('a-b', 1)
+split '[.]' ['a', 'b']
+match '[*+?]+' 'a*+?b' None
+search '[*+?]+' 'a*+?b' <re.Match object; span=(1, 4), match='*+?'> () None None {} (1, 4)
+fullmatch '[*+?]+' 'a*+?b' None
+findall '[*+?]+' ['*+?'] [(1, 4)]
+sub '[*+?]+' 'a<*+?>b' ('a-b', 1)
+split '[*+?]+' ['a', 'b']
+match '(?i)straße' 'STRASSE straße' None
+search '(?i)straße' 'STRASSE straße' <re.Match object; span=(8, 14), match='straße'> () None None {} (8, 14)
+fullmatch '(?i)straße' 'STRASSE straße' None
+findall '(?i)straße' ['straße'] [(8, 14)]
+sub '(?i)straße' 'STRASSE <straße>' ('STRASSE -', 1)
+split '(?i)straße' ['STRASSE ', '']
+match '(?a)\\w+' 'héllo' <re.Match object; span=(0, 1), match='h'> () None None {} (0, 1)
+search '(?a)\\w+' 'héllo' <re.Match object; span=(0, 1), match='h'> () None None {} (0, 1)
+fullmatch '(?a)\\w+' 'héllo' None
+findall '(?a)\\w+' ['h', 'llo'] [(0, 1), (2, 5)]
+sub '(?a)\\w+' '<h>é<llo>' ('-é-', 2)
+split '(?a)\\w+' ['', 'é', '']
+match 'é+' 'ééé' <re.Match object; span=(0, 3), match='ééé'> () None None {} (0, 3)
+search 'é+' 'ééé' <re.Match object; span=(0, 3), match='ééé'> () None None {} (0, 3)
+fullmatch 'é+' 'ééé' <re.Match object; span=(0, 3), match='ééé'> () None None {} (0, 3)
+findall 'é+' ['ééé'] [(0, 3)]
+sub 'é+' '<ééé>' ('-', 1)
+split 'é+' ['', '']
+match '[à-ÿ]+' 'voilà ça' None
+search '[à-ÿ]+' 'voilà ça' <re.Match object; span=(4, 5), match='à'> () None None {} (4, 5)
+fullmatch '[à-ÿ]+' 'voilà ça' None
+findall '[à-ÿ]+' ['à', 'ç'] [(4, 5), (6, 7)]
+sub '[à-ÿ]+' 'voil<à> <ç>a' ('voil- -a', 2)
+split '[à-ÿ]+' ['voil', ' ', 'a']
+match '(a+)+b' 'aaaaaaaaaaaaab' <re.Match object; span=(0, 14), match='aaaaaaaaaaaaab'> ('aaaaaaaaaaaaa',) 1 None {} (0, 14)
+search '(a+)+b' 'aaaaaaaaaaaaab' <re.Match object; span=(0, 14), match='aaaaaaaaaaaaab'> ('aaaaaaaaaaaaa',) 1 None {} (0, 14)
+fullmatch '(a+)+b' 'aaaaaaaaaaaaab' <re.Match object; span=(0, 14), match='aaaaaaaaaaaaab'> ('aaaaaaaaaaaaa',) 1 None {} (0, 14)
+findall '(a+)+b' ['aaaaaaaaaaaaab'] [(0, 14)]
+sub '(a+)+b' '<aaaaaaaaaaaaab>' ('-', 1)
+split '(a+)+b' ['', 'aaaaaaaaaaaaa', '']
+match '(\\w+)\\s(\\w+)' 'hello world foo bar' <re.Match object; span=(0, 11), match='hello world'> ('hello', 'world') 2 None {} (0, 11)
+search '(\\w+)\\s(\\w+)' 'hello world foo bar' <re.Match object; span=(0, 11), match='hello world'> ('hello', 'world') 2 None {} (0, 11)
+fullmatch '(\\w+)\\s(\\w+)' 'hello world foo bar' None
+findall '(\\w+)\\s(\\w+)' ['hello world', 'foo bar'] [(0, 11), (12, 19)]
+sub '(\\w+)\\s(\\w+)' '<hello world> <foo bar>' ('- -', 2)
+split '(\\w+)\\s(\\w+)' ['', 'hello', 'world', ' ', 'foo', 'bar', '']
+match '(?:x|y)*?z' 'xyxyz' <re.Match object; span=(0, 5), match='xyxyz'> () None None {} (0, 5)
+search '(?:x|y)*?z' 'xyxyz' <re.Match object; span=(0, 5), match='xyxyz'> () None None {} (0, 5)
+fullmatch '(?:x|y)*?z' 'xyxyz' <re.Match object; span=(0, 5), match='xyxyz'> () None None {} (0, 5)
+findall '(?:x|y)*?z' ['xyxyz'] [(0, 5)]
+sub '(?:x|y)*?z' '<xyxyz>' ('-', 1)
+split '(?:x|y)*?z' ['', '']
+match 'a{0}' 'aaa' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+search 'a{0}' 'aaa' <re.Match object; span=(0, 0), match=''> () None None {} (0, 0)
+fullmatch 'a{0}' 'aaa' None
+findall 'a{0}' ['', '', '', ''] [(0, 0), (1, 1), (2, 2), (3, 3)]
+sub 'a{0}' '<>a<>a<>a<>' ('-a-a-a-', 4)
+split 'a{0}' ['', 'a', 'a', 'a', '']
+match '(a){0}b' 'ab' None
+search '(a){0}b' 'ab' <re.Match object; span=(1, 2), match='b'> (None,) None None {} (1, 2)
+fullmatch '(a){0}b' 'ab' None
+findall '(a){0}b' ['b'] [(1, 2)]
+sub '(a){0}b' 'a<b>' ('a-', 1)
+split '(a){0}b' ['a', None, '']
+match '(ab){2}' 'ababab' <re.Match object; span=(0, 4), match='abab'> ('ab',) 1 None {} (0, 4)
+search '(ab){2}' 'ababab' <re.Match object; span=(0, 4), match='abab'> ('ab',) 1 None {} (0, 4)
+fullmatch '(ab){2}' 'ababab' None
+findall '(ab){2}' ['abab'] [(0, 4)]
+sub '(ab){2}' '<abab>ab' ('-ab', 1)
+split '(ab){2}' ['', 'ab', 'ab']
+match '(ab){1,2}?' 'ababab' <re.Match object; span=(0, 2), match='ab'> ('ab',) 1 None {} (0, 2)
+search '(ab){1,2}?' 'ababab' <re.Match object; span=(0, 2), match='ab'> ('ab',) 1 None {} (0, 2)
+fullmatch '(ab){1,2}?' 'ababab' None
+findall '(ab){1,2}?' ['ab', 'ab', 'ab'] [(0, 2), (2, 4), (4, 6)]
+sub '(ab){1,2}?' '<ab><ab><ab>' ('---', 3)
+split '(ab){1,2}?' ['', 'ab', '', 'ab', '', 'ab', '']
+match '(?:a{2})*' 'aaaaa' <re.Match object; span=(0, 4), match='aaaa'> () None None {} (0, 4)
+search '(?:a{2})*' 'aaaaa' <re.Match object; span=(0, 4), match='aaaa'> () None None {} (0, 4)
+fullmatch '(?:a{2})*' 'aaaaa' None
+findall '(?:a{2})*' ['aaaa', '', ''] [(0, 4), (4, 4), (5, 5)]
+sub '(?:a{2})*' '<aaaa><>a<>' ('--a-', 3)
+split '(?:a{2})*' ['', '', 'a', '']

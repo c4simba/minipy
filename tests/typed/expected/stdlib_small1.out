@@ -1,0 +1,13 @@
+['False', 'None', 'True', 'and', 'as'] 35 True False True
+([('-a', ''), ('-b', 'val'), ('-c', 'x'), ('--long', '1'), ('--flag', '')], ['rest', '-z'])
+([('-a', ''), ('--flag', '')], ['x', 'y'])
+([('--flag', '')], []) ([('-a', '')], ['-'])
+GetoptError: option -q not recognized q
+GetoptError: option --fl not a unique prefix; possible options: flag, flog fl
+GetoptError: option -b requires argument b
+GetoptError: option --flag must not have an argument flag
+16 True 12 32 True
+x True True False
+ValueError: Upper bound must be positive.
+True True True
+True 2 CPython 3

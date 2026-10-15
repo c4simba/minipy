@@ -1,0 +1,170 @@
+# kui.window - a KolibriOS window described with decorators, on top of
+# kolibri.py (kui exports it: from kui import Window, window). Works compiled
+# (minipy --compile --target kolibri) and in the interpreter.
+#
+# The window itself is a decorator: the function under it paints the window
+# (it runs on every redraw) and its name becomes the Window object:
+#
+#   @window("Counter", 100, 100, 260, 160)
+#   def counter(win: Window) -> None:
+#       win.text(20, 30, "count: " + str(count))
+#
+#   @counter.button("+1", x=20, y=80)          # a button and what pressing it does
+#   def increment() -> None: ...
+#
+#   @counter.on_key("q")                       # a key (a character)
+#   @counter.on_key_code(k.KEY_UP)             # a key (KEY_* code)
+#   @counter.on_click                          # left button: (x, y) in the window
+#   @counter.on_double_click
+#   @counter.on_wheel                          # the wheel: steps, + is down
+#
+#   counter.run()                              # the event loop, until close()
+#
+# The older form works as well: win = Window(title, x, y, w, h) and
+# @win.on_paint for functions without parameters.
+import kolibri as k
+from typing import Callable
+
+class Button:
+    def __init__(self, ident: int, label: str, x: int, y: int, w: int, h: int, color: int, handler: Callable[[], None]):
+        self.ident = ident
+        self.label = label
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.color = color
+        self.handler = handler
+
+class Window:
+    def __init__(self, title: str, x: int, y: int, w: int, h: int, color: int = 0x223344):
+        self.title = title
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.color = color
+        self.buttons: list[Button] = []
+        self.keys: dict[int, Callable[[], None]] = {}
+        self.painters: list[Callable[[], None]] = []
+        self.paint: Callable[["Window"], None] = None
+        self.clicks: list[Callable[[int, int], None]] = []
+        self.double_clicks: list[Callable[[int, int], None]] = []
+        self.wheels: list[Callable[[int], None]] = []
+        self.running = True
+
+    # ---- decorators: describe the window ----
+    def button(self, label: str, x: int, y: int, w: int = 100, h: int = 30, color: int = 0x5588CC):
+        def register(handler: Callable[[], None]) -> Callable[[], None]:
+            self.buttons.append(Button(len(self.buttons) + 2, label, x, y, w, h, color, handler))   # id 1 is the close box
+            return handler
+        return register
+
+    def on_key(self, key: str):
+        def register(handler: Callable[[], None]) -> Callable[[], None]:
+            self.keys[ord(key)] = handler
+            return handler
+        return register
+
+    def on_key_code(self, code: int):
+        def register(handler: Callable[[], None]) -> Callable[[], None]:
+            self.keys[code] = handler
+            return handler
+        return register
+
+    def on_paint(self, painter: Callable[[], None]) -> Callable[[], None]:
+        self.painters.append(painter)
+        return painter
+
+    def on_click(self, handler: Callable[[int, int], None]) -> Callable[[int, int], None]:
+        self.clicks.append(handler)
+        return handler
+
+    def on_double_click(self, handler: Callable[[int, int], None]) -> Callable[[int, int], None]:
+        self.double_clicks.append(handler)
+        return handler
+
+    def on_wheel(self, handler: Callable[[int], None]) -> Callable[[int], None]:
+        self.wheels.append(handler)
+        return handler
+
+    # ---- drawing (inside a paint function) ----
+    def text(self, x: int, y: int, s: str, color: int = 0xFFFFFF) -> None:
+        k.draw_text(x, y, s, color)                                  # 6x9 font, cp866
+
+    def text_utf8(self, x: int, y: int, s: str, color: int = 0xFFFFFF) -> None:
+        k.draw_text_ex(x, y, s, color, k.FONT_UTF8)                  # 8x16 font, UTF-8
+
+    def bar(self, x: int, y: int, w: int, h: int, color: int) -> None:
+        k.draw_rect(x, y, w, h, color)
+
+    def frame(self, x: int, y: int, w: int, h: int, color: int) -> None:
+        k.draw_line(x, y, x + w - 1, y, color)
+        k.draw_line(x, y + h - 1, x + w - 1, y + h - 1, color)
+        k.draw_line(x, y, x, y + h - 1, color)
+        k.draw_line(x + w - 1, y, x + w - 1, y + h - 1, color)
+
+    # ---- running ----
+    def close(self) -> None:
+        self.running = False
+
+    def set_title(self, title: str) -> None:
+        self.title = title
+        k.set_title(title)
+
+    def redraw(self) -> None:
+        k.window_redraw_begin()
+        k.define_window(self.x, self.y, self.w, self.h, self.color, self.title)
+        for b in self.buttons:
+            k.define_button(b.x, b.y, b.w, b.h, b.ident, b.color)
+            self.text(b.x + 10, b.y + b.h // 2 - 4, b.label)
+        if self.paint is not None:
+            self.paint(self)
+        for paint in self.painters:
+            paint()
+        k.window_redraw_end()
+
+    def mouse(self) -> None:
+        events = k.mouse_events()
+        pos = k.mouse_window_pos()
+        if events & k.MOUSE_DOUBLE_CLICK:
+            for h in self.double_clicks:
+                h(pos[0], pos[1])
+        elif events & k.MOUSE_LEFT_PRESSED:
+            for h in self.clicks:
+                h(pos[0], pos[1])
+        if events & k.MOUSE_VSCROLL:
+            steps = k.mouse_scroll()[1]
+            if steps != 0:
+                for w in self.wheels:
+                    w(steps)
+
+    def run(self) -> None:
+        if len(self.clicks) + len(self.double_clicks) + len(self.wheels) > 0:
+            k.set_event_mask(k.EVM_REDRAW | k.EVM_KEY | k.EVM_BUTTON | k.EVM_MOUSE | k.EVM_MOUSE_ACTIVE_ONLY)
+        self.redraw()
+        while self.running:
+            event = k.wait_event()
+            if event == k.EV_REDRAW:
+                self.redraw()
+            elif event == k.EV_KEY:
+                key = k.get_key()                                    # al = 0, ah = the code
+                if key & 0xFF == 0 and (key >> 8) & 0xFF in self.keys:
+                    self.keys[(key >> 8) & 0xFF]()
+            elif event == k.EV_BUTTON:
+                ident = k.get_pressed_button()
+                if ident == 1:
+                    self.close()
+                for b in self.buttons:
+                    if b.ident == ident:
+                        b.handler()
+            elif event == k.EV_MOUSE:
+                self.mouse()
+
+def window(title: str, x: int, y: int, w: int, h: int, color: int = 0x223344):
+    """@window(...) over a paint function: the function becomes the Window."""
+    def make(paint: Callable[[Window], None]) -> Window:
+        win = Window(title, x, y, w, h, color)
+        win.paint = paint
+        return win
+    return make

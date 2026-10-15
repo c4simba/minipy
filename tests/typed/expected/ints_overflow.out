@@ -1,0 +1,21 @@
++ OverflowError: integer overflow (ints are 64-bit)
+- OverflowError: integer overflow (ints are 64-bit)
+* OverflowError: integer overflow (ints are 64-bit)
+** OverflowError: integer overflow (ints are 64-bit)
+** OverflowError: integer overflow (ints are 64-bit)
+<< OverflowError: integer overflow (ints are 64-bit)
+<< OverflowError: integer overflow (ints are 64-bit)
+// OverflowError: integer overflow (ints are 64-bit)
+neg OverflowError: integer overflow (ints are 64-bit)
+9223372036854775807 -9223372036854775808 1
+9223372036854775807
+-9223372036854775808
+OverflowError: int too large (ints are 64-bit)
+ValueError: invalid literal for int() with base 10: '123x'
+1000000000000000000
+OverflowError: int too large (ints are 64-bit)
+-9200000000000000000
+OverflowError: cannot convert float infinity to integer
+ValueError: cannot convert float NaN to integer
+ValueError: negative shift count
+0.5 0.001

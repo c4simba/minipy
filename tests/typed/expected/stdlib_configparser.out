@@ -1,0 +1,44 @@
+['forge.example', 'topsecret.server.example', 'paths'] yes
+hg yes 50022
+50023 False 9.0
+/home/admin/data /home/me/data   ; inline comment kept 'first line\nsecond line'
+%(home)s/data   ; inline comment kept True True False
+['compression', 'compressionlevel', 'forwardx11', 'serveraliveinterval', 'user'] dflt /home/me
+['user', 'serveraliveinterval', 'compression', 'compressionlevel', 'forwardx11'] True 7
+[DEFAULT]
+serveraliveinterval = 45
+compression = yes
+compressionlevel = 9
+forwardx11 = yes
+
+[forge.example]
+user = hg
+
+[topsecret.server.example]
+port = 50022
+forwardx11 = no
+path = /home/%(User)s/data
+user = admin
+
+[paths]
+home = /home/me
+data = %(home)s/data   ; inline comment kept
+
+[new]
+key = value
+
+[other]
+a = 1
+b = two
+
+
+DuplicateOptionError: While reading from '<string>' [line  3]: option 'x' in section 's' already exists
+MissingSectionHeaderError: File contains no section headers.
+file: '<string>', line: 1
+'no section\n'
+DuplicateSectionError: While reading from '<string>' [line  2]: section 's' already exists
+NoSectionError: No section: 'nosuch'
+NoOptionError: No option 'zzz' in section: 'paths'
+1/2 1/2+
+%(nope)s
+InterpolationMissingOptionError: Bad value substitution: option 'bad' in section 'new' contains an interpolation key 'missing' which is not a valid option name. Raw value: '%(missing)s'

@@ -1,0 +1,26 @@
+['Thread-1 (worker)', 'Thread-2 (worker)', 'Thread-3 (worker)', 'Thread-4 (worker)'] False True
+True 12 True
+[0, 1, 4, 9, 16, 25, 36, 49, 64, 81] True 0
+[1, 2, 4, 5]
+2 1
+Empty
+Full
+True True True
+['x', 'got']
+True True False
+True
+ValueError Semaphore released too many times
+reentrant True
+RuntimeError cannot release un-acquired lock
+MainThread True 1
+[False, 2] 1
+[True, True, True]
+timer fired
+[('ValueError', 'boom in thread', 'Bad')]
+RuntimeError threads can only be started once
+RuntimeError cannot join thread before it is started
+True False False True
+RuntimeError release unlocked lock
+main done
+non-daemon thread finished
+atexit ran 1

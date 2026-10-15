@@ -1,0 +1,23 @@
+23 <_io.TextIOWrapper name='build/io_test.txt' mode='w' encoding='UTF-8'> False True False
+True
+'alpha\nbeta\ngamma\ndelta'
+['alpha\n', 'beta\r\n', 'gamma\r', 'delta']
+'alpha\n' 6 'bet' 9 'a\n' 'gamma\ndelta'
+['alpha', 'beta', 'gamma', 'delta']
+b'alpha\nbeta\r\ngamma\rdelta' <_io.BufferedReader name='build/io_test.txt'> 23
+b'pha\n' b'beta\r\n' b'ga' 14
+'alpha'
+ALPHA utf-8
+32 32
+xxxx b'xxxx'
+printed,1,2.5
+second!
+[250, 251, 252, 253, 254, 255, 13, 10]
+x: [Errno 17] File exists: 'build/io_test.txt'
+w: [Errno 2] No such file or directory: 'build/no_such_dir/z.txt'
+dir: [Errno 21] Is a directory: '.'
+mode: must have exactly one of create/read/write/append mode
+closed: I/O operation on closed file.
+'one\ntwo\n' 8
+one
+['a\n', 'b\n'] [b'xy\n', b'z']

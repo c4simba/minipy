@@ -1,0 +1,9 @@
+9 ['w0:0', 'w0:1', 'w0:2'] True
+45 Thread-4 MainThread MainThread
+True True
+True True False
+reentrant
+[1, 99]
+t7:2
+main done
+late thread finished

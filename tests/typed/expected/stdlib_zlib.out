@@ -1,0 +1,15 @@
+3923700895 3150656720 0 1 871334697 0xcbf43926
+0 True True
+1 True True
+6 True True
+9 True True
+True
+True True b'\x1f\x8b\x08'
+True
+True True b''
+True b'tail' True
+True
+b'' b'x\x9c'
+error: Error -3 while decompressing data: incorrect header check
+error: Error -5 while decompressing data: incomplete or truncated stream
+True

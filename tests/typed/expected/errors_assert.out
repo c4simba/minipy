@@ -1,0 +1,3 @@
+ok
+AssertionError: x is too small: 3
+[exit 1]

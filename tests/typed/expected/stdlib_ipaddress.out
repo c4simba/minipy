@@ -1,0 +1,136 @@
+== properties
+0.0.0.0 4 True False False False False False True 0.0.0.0 0.0.0.0
+10.1.2.3 4 True False False False False False False 10.1.2.3 10.1.2.3
+100.64.1.1 4 False False False False False False False 100.64.1.1 100.64.1.1
+127.0.0.1 4 True False False False True False False 127.0.0.1 127.0.0.1
+169.254.3.4 4 True False False False False True False 169.254.3.4 169.254.3.4
+172.16.5.4 4 True False False False False False False 172.16.5.4 172.16.5.4
+192.0.0.9 4 False True False False False False False 192.0.0.9 192.0.0.9
+192.0.2.1 4 True False False False False False False 192.0.2.1 192.0.2.1
+192.168.1.1 4 True False False False False False False 192.168.1.1 192.168.1.1
+198.51.100.7 4 True False False False False False False 198.51.100.7 198.51.100.7
+224.0.0.251 4 False True True False False False False 224.0.0.251 224.0.0.251
+240.1.2.3 4 True False False True False False False 240.1.2.3 240.1.2.3
+255.255.255.255 4 True False False True False False False 255.255.255.255 255.255.255.255
+8.8.8.8 4 False True False False False False False 8.8.8.8 8.8.8.8
+:: 6 True False False True False False True 0000:0000:0000:0000:0000:0000:0000:0000 ::
+::1 6 True False False True True False False 0000:0000:0000:0000:0000:0000:0000:0001 ::1
+::ffff:127.0.0.1 6 True False False False True False False 0000:0000:0000:0000:0000:ffff:127.0.0.1 ::ffff:127.0.0.1
+::ffff:8.8.8.8 6 False True False False False False False 0000:0000:0000:0000:0000:ffff:8.8.8.8 ::ffff:8.8.8.8
+2001:db8::1 6 True False False False False False False 2001:0db8:0000:0000:0000:0000:0000:0001 2001:db8::1
+2001:4860:4860::8888 6 False True False False False False False 2001:4860:4860:0000:0000:0000:0000:8888 2001:4860:4860::8888
+fe80::1 6 True False False False False True False fe80:0000:0000:0000:0000:0000:0000:0001 fe80::1
+fec0::1 6 False True False False False False False fec0:0000:0000:0000:0000:0000:0000:0001 fec0::1
+ff02::1 6 False True True False False False False ff02:0000:0000:0000:0000:0000:0000:0001 ff02::1
+fc00::1 6 True False False False False False False fc00:0000:0000:0000:0000:0000:0000:0001 fc00::1
+2002:c000:204::1 6 True False False False False False False 2002:c000:0204:0000:0000:0000:0000:0001 2002:c000:204::1
+2001:1::1 6 False True False False False False False 2001:0001:0000:0000:0000:0000:0000:0001 2001:1::1
+64:ff9b::1.2.3.4 6 False True False True False False False 0064:ff9b:0000:0000:0000:0000:0102:0304 64:ff9b::102:304
+== IPv6 text
+2001:0db8:0000:0000:0000:ff00:0042:8329 -> 2001:db8::ff00:42:8329 2001:0db8:0000:0000:0000:ff00:0042:8329 20010db8000000000000ff0000428329 IPv6Address('2001:db8::ff00:42:8329')
+2001:db8:0:0:1:0:0:1 -> 2001:db8::1:0:0:1 2001:0db8:0000:0000:0001:0000:0000:0001 20010db8000000000001000000000001 IPv6Address('2001:db8::1:0:0:1')
+1:0:0:0:0:0:0:0 -> 1:: 0001:0000:0000:0000:0000:0000:0000:0000 00010000000000000000000000000000 IPv6Address('1::')
+0:0:0:0:0:0:0:1 -> ::1 0000:0000:0000:0000:0000:0000:0000:0001 00000000000000000000000000000001 IPv6Address('::1')
+1:2:3:4:5:6:7:8 -> 1:2:3:4:5:6:7:8 0001:0002:0003:0004:0005:0006:0007:0008 00010002000300040005000600070008 IPv6Address('1:2:3:4:5:6:7:8')
+FE80::ABCD -> fe80::abcd fe80:0000:0000:0000:0000:0000:0000:abcd fe80000000000000000000000000abcd IPv6Address('fe80::abcd')
+::ffff:c000:280 -> ::ffff:192.0.2.128 0000:0000:0000:0000:0000:ffff:192.0.2.128 00000000000000000000ffffc0000280 IPv6Address('::ffff:192.0.2.128')
+1:: -> 1:: 0001:0000:0000:0000:0000:0000:0000:0000 00010000000000000000000000000000 IPv6Address('1::')
+1:0:0:2::3 -> 1:0:0:2::3 0001:0000:0000:0002:0000:0000:0000:0003 00010000000000020000000000000003 IPv6Address('1:0:0:2::3')
+2001:db8:0:0:1:: -> 2001:db8:0:0:1:: 2001:0db8:0000:0000:0001:0000:0000:0000 20010db8000000000001000000000000 IPv6Address('2001:db8:0:0:1::')
+::1 ::100:0:0 2001::7 255
+4.0.3.0.2.0.1.0.f.f.f.f.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa
+1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa
+(IPv4Address('65.54.227.120'), IPv4Address('192.0.2.45')) 192.0.2.4 None None None
+::ffff:1.2.3.4 fe80::1%eth0 eth0 None False
+== IPv4
+192.0.2.1 IPv4Address('192.0.2.1') 3221225985 b'\xc0\x00\x02\x01' 192.0.2.1 192.0.2.1 32 192.0.3.0 192.0.2.0 True True True False True True
+192.0.2.1 192.0.2.1 11000000000000000000001000000001 0b11000000000000000000001000000001 1100_0000_0000_0000_0000_0010_0000_0001 c0000201 0XC0000201 0xc000_0201 11000000000000000000001000000001          192.0.2.1 *****192.0.2.1***** [192.0.2.1   ]
+20010db8000000000000000000000001 0x0000_0000_0000_0000_0000_0000_0000_0001
+b'\xc0\x00\x02\x01' b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01' 32 128
+== networks
+IPv4Network('192.168.0.0/22') 192.168.0.0/22 192.168.0.0 192.168.3.255 255.255.252.0 0.0.3.255 1024 22 192.168.0.0/22 192.168.0.0/255.255.252.0 192.168.0.0/0.0.3.255 4 32
+192.168.0.0 192.168.0.1 192.168.3.255 192.168.3.254 True False True True True False
+[IPv4Network('192.168.0.0/23'), IPv4Network('192.168.2.0/23')] [IPv4Network('192.168.0.0/24'), IPv4Network('192.168.1.0/24'), IPv4Network('192.168.2.0/24'), IPv4Network('192.168.3.0/24')] 192.168.0.0/21 192.168.0.0/16 192.168.0.0/19
+[IPv4Address('10.0.0.0'), IPv4Address('10.0.0.1'), IPv4Address('10.0.0.2'), IPv4Address('10.0.0.3'), IPv4Address('10.0.0.4'), IPv4Address('10.0.0.5'), IPv4Address('10.0.0.6'), IPv4Address('10.0.0.7')] [IPv4Address('10.0.0.1'), IPv4Address('10.0.0.2'), IPv4Address('10.0.0.3'), IPv4Address('10.0.0.4'), IPv4Address('10.0.0.5'), IPv4Address('10.0.0.6')]
+[IPv4Address('10.0.0.0'), IPv4Address('10.0.0.1')] [IPv4Address('10.0.0.7')] [IPv4Address('10.0.0.7')]
+10.0.0.0/8 10.0.0.0/24 10.0.0.0/8 10.0.0.0/16 10.0.0.0/8 10.0.0.0/32 4294967296
+[IPv4Network('192.0.2.8/29'), IPv4Network('192.0.2.4/30'), IPv4Network('192.0.2.2/31'), IPv4Network('192.0.2.0/32')]
+-1 0 -1
+True False False True True True True True
+IPv6Network('2001:db8::/126') 2001:db8::/126 2001:0db8:0000:0000:0000:0000:0000:0000/126 4 [IPv6Address('2001:db8::'), IPv6Address('2001:db8::1'), IPv6Address('2001:db8::2'), IPv6Address('2001:db8::3')] [IPv6Address('2001:db8::1'), IPv6Address('2001:db8::2'), IPv6Address('2001:db8::3')] ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc ::3 2001:db8::3 2001:db8::/ffff:ffff:ffff:ffff:ffff:ffff:ffff:fffc True False True
+[IPv6Network('2001:db8::/34'), IPv6Network('2001:db8:4000::/34'), IPv6Network('2001:db8:8000::/34'), IPv6Network('2001:db8:c000::/34')] 2001::/16
+2001:db8::100:0:0 2001:db8:ffff:ffff:ffff:ffff:ffff:ffff fe80::%eth0/64 [IPv6Address('::1')] [IPv6Address('::'), IPv6Address('::1')]
+== interfaces
+IPv4Interface('192.0.2.5/24') 192.0.2.5/24 192.0.2.5 192.0.2.0/24 255.255.255.0 0.0.0.255 192.0.2.5/24 192.0.2.5/255.255.255.0 192.0.2.5/0.0.0.255 192.0.2.5/24 True False True True True True
+IPv6Interface('2001:db8::5/64') 2001:db8::5/64 2001:db8::5 2001:db8::/64 2001:0db8:0000:0000:0000:0000:0000:0005/64 2001:db8::5/ffff:ffff:ffff:ffff:: False True False
+10.0.0.1/8 10.0.0.1/32 ::1/128
+== functions
+[IPv4Network('192.0.2.0/24')]
+[IPv4Network('10.0.0.0/30'), IPv4Network('10.0.0.4/31'), IPv4Network('10.0.0.6/32'), IPv4Network('10.0.0.9/32'), IPv4Network('10.0.0.10/32')]
+[IPv6Network('2001:db8::/32')]
+[IPv4Network('192.0.2.0/25'), IPv4Network('192.0.2.128/31'), IPv4Network('192.0.2.130/32')]
+[IPv6Network('2001:db8::/112'), IPv6Network('2001:db8::1:0/127'), IPv6Network('2001:db8::1:2/128')]
+[IPv4Network('0.0.0.0/0')]
+[IPv4Address('9.255.0.0'), IPv4Address('10.0.0.1'), IPv4Address('10.0.0.2')]
+[IPv4Network('9.0.0.0/8'), IPv4Network('10.0.0.0/8'), IPv4Network('10.0.0.0/16')]
+[IPv6Address('::2'), IPv6Address('::ffff:0.0.0.1'), IPv6Address('2001::1')]
+(4, IPv4Address('1.2.3.4')) (4, IPv4Address('1.2.3.0'), IPv4Address('255.255.255.0'))
+a b False 2
+True False True False False
+== errors
+ValueError '' does not appear to be an IPv4 or IPv6 address
+ValueError '1.2.3' does not appear to be an IPv4 or IPv6 address
+ValueError '1.2.3.4.5' does not appear to be an IPv4 or IPv6 address
+ValueError 'x.y.z.w' does not appear to be an IPv4 or IPv6 address
+ValueError '1.2.3.256' does not appear to be an IPv4 or IPv6 address
+ValueError '01.2.3.4' does not appear to be an IPv4 or IPv6 address
+ValueError '1.2.3.1234' does not appear to be an IPv4 or IPv6 address
+ValueError '1..3.4' does not appear to be an IPv4 or IPv6 address
+ValueError '1.2.3.4/24' does not appear to be an IPv4 or IPv6 address
+ValueError 'hello' does not appear to be an IPv4 or IPv6 address
+AddressValueError: Expected 4 octets in '1.2.3'
+AddressValueError: Only decimal digits permitted in '-4' in '1.2.3.-4'
+AddressValueError: Only decimal digits permitted in ' 4' in '1.2.3. 4'
+AddressValueError: Only decimal digits permitted in '4%x' in '1.2.3.4%x'
+AddressValueError: At least 3 parts expected in ':'
+AddressValueError: At least 3 parts expected in '1:2'
+AddressValueError: At most one '::' permitted in '1::2::3'
+AddressValueError: Leading ':' only permitted as part of '::' in ':1::2'
+AddressValueError: Trailing ':' only permitted as part of '::' in '1::2:'
+AddressValueError: Exactly 8 parts expected without '::' in '1:2:3:4:5:6:7'
+AddressValueError: Exactly 8 parts expected without '::' in '1:2:3:4:5:6:7:8:9'
+AddressValueError: At most 4 characters permitted in '12345' in '12345::'
+AddressValueError: Only hex digits permitted in 'g' in 'g::1'
+AddressValueError: Expected at most 7 other parts with '::' in '1:2:3:4:5:6:7::8'
+AddressValueError: Octet 256 (> 255) not permitted in '1.2.3.256' in '::1.2.3.256'
+AddressValueError: Invalid IPv6 address: "'fe80::1%'"
+AddressValueError: Invalid IPv6 address: "'fe80::1%a%b'"
+AddressValueError: At most 45 characters expected in '1111111111111111111111111111111111111111111111'
+AddressValueError: At most 8 colons permitted in '1:2:3:4:5:6:7:8::'
+ValueError 1.2.3.4/24 has host bits set
+ValueError '1.2.3.0/33' does not appear to be an IPv4 or IPv6 network
+ValueError '1.2.3.0/-1' does not appear to be an IPv4 or IPv6 network
+ValueError '1.2.3.0/255.0.255.0' does not appear to be an IPv4 or IPv6 network
+ValueError '1.2.3.0/24/1' does not appear to be an IPv4 or IPv6 network
+ValueError '1.2.3.0/x' does not appear to be an IPv4 or IPv6 network
+ValueError '1.2.3.0/ 24' does not appear to be an IPv4 or IPv6 network
+1.2.3.0/24
+ValueError 2001:db8::1/64 has host bits set
+ValueError '2001:db8::/129' does not appear to be an IPv4 or IPv6 network
+10.0.0.0/16
+10.0.0.0/16
+NetmaskValueError '255.0.255.255' is not a valid netmask
+AddressValueError: 4294967296 (>= 2**32) is not permitted as an IPv4 address
+AddressValueError: -1 (< 0) is not permitted as an IPv4 address
+AddressValueError: 340282366920938463463374607431768211456 (>= 2**128) is not permitted as an IPv6 address
+AddressValueError: -1 (< 0) is not permitted as an IPv4 address
+AddressValueError: 4294967296 (>= 2**32) is not permitted as an IPv4 address
+AddressValueError: b'\x01\x02' (len 2 != 4) is not permitted as an IPv4 address
+TypeError: 1.2.3.4 and ::1 are not of the same version
+ValueError: new prefix must be longer
+ValueError: new prefix must be shorter
+ValueError: 11.0.0.0/8 not contained in 10.0.0.0/8
+IndexError: address out of range
+ValueError: Address negative or too large for IPv4
+AttributeError: 'IPv4Address' object has no attribute 'ipv4_mapped'
+AttributeError: 'IPv4Address' object has no attribute 'network'

@@ -1,0 +1,101 @@
+{'verbose': True, 'num': 16, 'ratio': 2.5, 'out': 'x.txt', 'incs': ['a', 'b', 'c'], 'debug': 2, 'mode': 'slow', 'speed': 2, 'point': (3, 4), 'tags': ['t', 't'], 'go': None}
+['f1', 'f2'] True 16 2.5 x.txt ['a', 'b', 'c'] 2 slow 2 (3, 4) ['t', 't'] None
+{'verbose': False, 'num': 3, 'ratio': None, 'out': None, 'incs': None, 'debug': 0, 'mode': 'fast', 'speed': None, 'point': None, 'tags': None, 'go': None} ['-v', 'x']
+{'verbose': None, 'num': 3, 'ratio': None, 'out': None, 'incs': None, 'debug': 0, 'mode': 'fast', 'speed': None, 'point': None, 'tags': None, 'go': None} [] 4 1
+Usage: demo [options] FILE...
+
+Process some files, the way demo does it, with options that change how.
+
+Options:
+  --version             show program's version number and exit
+  -h, --help            show this help message and exit
+  -v, --verbose         talk more
+  -q, --quiet           talk less
+  -n NUM, --num=NUM     how many [default: 3]
+  -r R, --ratio=R       a ratio
+  -o FILE, --out=FILE   write the result to FILE, which is created when it
+                        does not exist yet and replaced otherwise
+  -I INCS, --include=INCS
+                        a directory to search
+  -d                    more debugging
+  --mode=MODE           speed: fast
+  --fast                
+  --slow                
+  --point=POINT         x and y
+  --tag                 
+
+  Dangerous Options:
+    Caution: use these options at your own risk.
+
+    -g, --go            go for it
+
+See the manual for more.
+
+Usage: demo [options] FILE...
+
+'Usage: demo [options] FILE...\n' demo 1.2 demo True False -n/--num None
+error: no such option: -z
+exit 2
+error: option --num: invalid integer value: 'x'
+exit 2
+error: --num option requires 1 argument
+exit 2
+error: -n option requires 1 argument
+exit 2
+error: option --mode: invalid choice: 'medium' (choose from 'fast', 'slow')
+exit 2
+error: option -r: invalid floating-point value: 'abc'
+exit 2
+error: --verbose option does not take a value
+exit 2
+error: --point option requires 2 arguments
+exit 2
+Usage: demo [options] FILE...
+
+Process some files, the way demo does it, with options that change how.
+
+Options:
+  --version             show program's version number and exit
+  -h, --help            show this help message and exit
+  -v, --verbose         talk more
+  -q, --quiet           talk less
+  -n NUM, --num=NUM     how many [default: 3]
+  -r R, --ratio=R       a ratio
+  -o FILE, --out=FILE   write the result to FILE, which is created when it
+                        does not exist yet and replaced otherwise
+  -I INCS, --include=INCS
+                        a directory to search
+  -d                    more debugging
+  --mode=MODE           speed: fast
+  --fast                
+  --slow                
+  --point=POINT         x and y
+  --tag                 
+
+  Dangerous Options:
+    Caution: use these options at your own risk.
+
+    -g, --go            go for it
+
+See the manual for more.
+exit 0
+demo 1.2
+exit 0
+{'a': True, 'bee': 'x'} ['pos', '-b', 'y'] True x
+Usage
+=====
+  t [options]
+
+Options
+=======
+-a                 
+--bee=BEE, -b BEE  bee [x]
+
+{'a': False, 'bee': 'z'} {'a': False, 'bee': 'z'}
+Options:
+  -h, --help  show this help message and exit
+  -x, --xx    the second x
+
+OptionError: invalid option string 'x': must be at least two characters long
+OptionConflictError: option -k: conflicting option string(s): -k
+OptionError: option --zz: invalid action: 'bogus'

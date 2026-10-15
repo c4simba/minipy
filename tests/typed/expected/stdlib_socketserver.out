@@ -1,0 +1,8 @@
+127.0.0.1 True
+handled 127.0.0.1 b'hello\n'
+b'echo: HELLO\n'
+handled 127.0.0.1 b'second line\n'
+b'echo: SECOND LINE\n'
+b'ABC'
+b'line one\n' b'line two\n' b'bytes\r\n' b''
+'téxt\n' 'end'

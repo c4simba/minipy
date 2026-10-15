@@ -1,0 +1,130 @@
+bytearray('x') ! TypeError string argument without an encoding
+bytearray(b'x', 'utf-8') ! TypeError encoding without a string argument
+bytearray(-1) ! ValueError negative count
+bytearray(1.5) ! TypeError cannot convert 'float' object to bytearray
+bytearray([300]) ! ValueError byte must be in range(0, 256)
+bytearray(['a']) ! TypeError 'str' object cannot be interpreted as an integer
+bytearray(b'ab')[5] ! IndexError bytearray index out of range
+bytearray(b'ab')['x'] ! TypeError bytearray indices must be integers or slices, not str
+ba.append(300) ! ValueError byte must be in range(0, 256)
+ba.append('a') ! TypeError 'str' object cannot be interpreted as an integer
+ba.extend('str') ! TypeError expected iterable of integers; got: 'str'
+ba.extend(5) ! TypeError can't extend bytearray with int
+ba.extend([1, 'x']) ! TypeError 'str' object cannot be interpreted as an integer
+bytearray().pop() ! IndexError pop from empty bytearray
+ba.pop(10) ! IndexError pop index out of range
+ba.remove(99) -> None
+ba.insert(0, 300) ! ValueError byte must be in range(0, 256)
+hash(ba) ! TypeError unhashable type: 'bytearray'
+ba + 1 ! TypeError can't concat int to bytearray
+ba + 'x' ! TypeError can't concat str to bytearray
+b'x' + ba -> b'xabc'
+ba + b'y' -> bytearray(b'abcy')
+ba * 2 -> bytearray(b'abcabc')
+2 * ba -> bytearray(b'abcabc')
+ba.__setitem__(0, 300) ! ValueError byte must be in range(0, 256)
+ba.__setitem__(slice(0, 1), 5) ! TypeError can assign only bytes, buffers, or iterables of ints in range(0, 256)
+ba.__setitem__(slice(0, 4, 2), b'xyz') ! ValueError attempt to assign bytes of size 3 to extended slice of size 2
+ba.__setitem__(0, 'a') ! TypeError 'str' object cannot be interpreted as an integer
+bytearray(b'abc').upper() -> bytearray(b'ABC')
+bytearray(b'a,b').split(b',') -> [bytearray(b'a'), bytearray(b'b')]
+bytearray(b'abc').partition(b'b') -> (bytearray(b'a'), bytearray(b'b'), bytearray(b'c'))
+bytearray(b'-').join([b'a', bytearray(b'b')]) -> bytearray(b'a-b')
+bytearray.fromhex('6162') -> bytearray(b'ab')
+bytearray(b'abc') == b'abc' -> True
+b'abc' == bytearray(b'abc') -> True
+bytearray(b'abc') < b'abd' -> True
+b'b' in bytearray(b'abc') -> True
+98 in bytearray(b'abc') -> True
+bytearray(b'abc').find(bytearray(b'c')) -> 2
+list(bytearray(b'ab')) -> [97, 98]
+bytes(bytearray(b'ab')) -> b'ab'
+repr(bytearray()) -> "bytearray(b'')"
+str(bytearray(b'a\x00')) -> "bytearray(b'a\\x00')"
+bytearray(3) -> bytearray(b'\x00\x00\x00')
+bytearray(range(3)) -> bytearray(b'\x00\x01\x02')
+bytearray('hé', 'utf-8') -> bytearray(b'h\xc3\xa9')
+bytearray(b'abc').hex() -> '616263'
+bytearray(b'abc').decode() -> 'abc'
+bytearray(b'ab').copy() -> bytearray(b'ab')
+len(bytearray(b'abc')) -> 3
+bytearray(b'abc')[1:] -> bytearray(b'bc')
+bytearray(b'abcdef')[::2] -> bytearray(b'ace')
+bool(bytearray()) -> False
+b''.join([bytearray(b'x'), b'y']) -> b'xy'
+bytearray(b'abc').count(98) -> 1
+bytearray(b'abc').startswith((b'x', bytearray(b'a'))) -> True
+int.from_bytes(bytearray(b'\x01\x02'), 'big') -> 258
+bytearray(b'abc').replace(b'b', b'XX') -> bytearray(b'aXXc')
+bytearray(b' ab ').strip() -> bytearray(b'ab')
+bytearray(b'Abc').swapcase() -> bytearray(b'aBC')
+bytearray(b'ab').isalpha() -> True
+bytearray(b'ab') + bytearray(b'cd') -> bytearray(b'abcd')
+isinstance(bytearray(), bytearray) -> True
+type(bytearray()).__name__ -> 'bytearray'
+bytearray(b'abc').center(7, b'*') -> bytearray(b'**abc**')
+bytearray(b'ab') != b'ab' -> False
+sorted([bytearray(b'b'), bytearray(b'a')]) -> [bytearray(b'a'), bytearray(b'b')]
+bytearray(b'x') in [b'x'] -> True
+{bytearray(b'a'): 1} ! TypeError cannot use 'bytearray' as a dict key (unhashable type: 'bytearray')
+f'{bytearray(b"q")}' -> "bytearray(b'q')"
+'%s' % bytearray(b'z') -> "bytearray(b'z')"
+bytearray(b'a').__len__() -> 1
+bytearray(b'hello world').title() -> bytearray(b'Hello World')
+bytearray(b'a\nb').splitlines() -> [bytearray(b'a'), bytearray(b'b')]
+bytearray(b'abc').removeprefix(b'a') -> bytearray(b'bc')
+bytearray(b'Y!')
+bytearray(b'BAedcbaedcbx') 97 67
+bytearray(b'')
+bytearray(b'>>xyz!')
+bytearray(b'0235689')
+bytearray(b'gfedcba')
+bytearray(b'gfedcbagfedcba') 14
+[97, 98, 99] bytearray(b'%d') abc True
+'0x1.8p1' 3.0
+'1.8p1' 3.0
+' -0X1P-1074 ' -5e-324
+'0x1p-1075' 0.0
+'0x1.0000000000001p0' 1.0000000000000002
+'0x1.00000000000008p0' 1.0
+'0x1.00000000000018p0' 1.0000000000000004
+'inf' inf
+'-Infinity' -inf
+'nan' nan
+'0x1p1024' OverflowError hexadecimal value too large to represent as a float
+'0x.8' 0.5
+'0x8.' 8.0
+'0x' ValueError invalid hexadecimal floating-point string
+'0xp1' ValueError invalid hexadecimal floating-point string
+'1e5' 485.0
+'0x1.fffffffffffff8p1023' OverflowError hexadecimal value too large to represent as a float
+'0x1.fffffffffffff7p1023' 1.7976931348623157e+308
+'0x0.0000000000001p-1022' 5e-324
+'0x0.00000000000008p-1022' 0.0
+'0x0.0000000000000801p-1022' 5e-324
+'0x1p-1080' 0.0
+'0x3.8p-1076' 5e-324
+'00x1' ValueError invalid hexadecimal floating-point string
+'0x1.123456789abcdef123p3' 8.568888888888889
+'0x123456789abcdef123456p-20' 1.3117684674637903e+18
+'-0x0p0' -0.0
+'0x1p+5' 32.0
+'nan ' nan
+'0x1.8000000000000000000001p0' 1.5
+1.0
+1.0
+2.5
+TypeError must be real number, not str
+TypeError must be real number, not NoneType
+5 0 5 1 2.5 0.0 1 int
+cannot use 'list' as a dict key (unhashable type: 'list')
+cannot use 'list' as a dict key (unhashable type: 'list')
+cannot use 'list' as a dict key (unhashable type: 'list')
+cannot use 'list' as a dict key (unhashable type: 'list')
+cannot use 'list' as a set element (unhashable type: 'list')
+cannot use 'list' as a set element (unhashable type: 'list')
+cannot use 'list' as a set element (unhashable type: 'list')
+unhashable type: 'list'
+cannot use 'list' as a set element (unhashable type: 'list')
+cannot use 'list' as a dict key (unhashable type: 'list')
+cannot use 'list' as a dict key (unhashable type: 'list')

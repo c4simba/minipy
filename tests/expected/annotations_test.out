@@ -1,0 +1,8 @@
+{'val': <class 'int'>, 'nxt': ForwardRef('Node') | None, 'kids': list[__main__.Node], 'k': typing.ClassVar[int]}
+{'a': <class 'int'>, 'b': 'Node', 'c': <class 'str'>, 'd': <class 'float'>, 'e': <class 'bool'>, 'return': list[int]}
+{}
+int | None int | str __main__.N | None list[int] | None
+int | None ForwardRef('N') | None int | str int | None <class 'int'>
+typing.List[int] typing.Dict[str, int] typing.ClassVar[int] typing.Callable[[int], str] typing.Any typing.Literal[1, 'a'] typing.Tuple[int, ...]
+typing.List[int] | None list[int | None] dict[str, list[__main__.N]]
+True Union True True

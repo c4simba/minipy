@@ -1,0 +1,18 @@
+1 [2, 3]
+[1, 2] 3
+h ['e', 'l', 'l'] o
+1 [2.5, 3.5]
+1 2 3
+0 1 [2, 3]
+x y
+1 2 3; 4 5 6; 
+1 [2, 3]; 4 []; 
+[1, 2, 3, 1, 2] (1, 2, 9) True ['a', 'b', 'c'] [0, 1]
+{'a': 3, 'b': 2}
+long 3
+[10, 18] 18
+9 1
+too many values to unpack (expected 2, got 3)
+not enough values to unpack (expected 3, got 1)
+not enough values to unpack (expected at least 3, got 2)
+too many values to unpack (expected 2)

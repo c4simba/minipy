@@ -1,0 +1,24 @@
+<a>
+inside A
+</a> False
+<b>
+<c>
+both C
+</c> False
+</b> False
+<d>
+</d> True
+after d
+<e>
+</e> True
+caught KeyError('k')
+<f>
+</f> False
+5
+<loop0>
+body 0
+</loop0> False
+<loop1>
+</loop1> False
+<loop2>
+</loop2> False

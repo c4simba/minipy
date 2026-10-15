@@ -1,0 +1,20 @@
+add 3
+tasks created False False
+start slow
+start fast
+done fast
+done slow
+results 20 40 True 20
+start a
+start b
+start c
+done c
+done b
+done a
+gather [2, 4, 6]
+tick 0
+tick 0
+tick 1
+tick 1
+['hi x', 'hi y']
+result 63

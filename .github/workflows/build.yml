@@ -1,0 +1,143 @@
+# Builds minipy for Linux (x86_64, aarch64: a tarball, .deb, .rpm), macOS
+# (arm64: a tarball) and KolibriOS (a zip), runs the tests, and - for a tag
+# v1.2.3 - publishes them as the release 1.2.3. The files keep one name from
+# release to release, so the latest is always at
+# https://github.com/<owner>/minipy/releases/latest/download/<file>.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04          # (glibc 2.35: the programs run on the systems of 2022 on)
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then v=${GITHUB_REF_NAME#v}
+          else v="$(make -s print-version)-dev.$GITHUB_RUN_NUMBER"; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          if [ "${{ matrix.arch }}" = x86_64 ]; then      # fasm, and i386 libc for the compiled programs' ctypes
+            sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y fasm libc6:i386 tzdata
+          fi
+      - name: Build
+        run: make -j"$(nproc)" VERSION="$VERSION"
+      - name: Tests
+        run: make test
+      - name: Typed tests (compiled to i386 Linux programs)
+        if: matrix.arch == 'x86_64'
+        run: make test-typed
+      - name: Packages
+        run: |
+          make dist deb rpm VERSION="$VERSION"
+          mkdir -p out
+          cp "build/minipy-$VERSION-linux-${{ matrix.arch }}.tar.gz" "out/minipy-linux-${{ matrix.arch }}.tar.gz"
+          cp build/minipy_*.deb "out/minipy_$(dpkg --print-architecture).deb"
+          cp build/minipy-*.rpm "out/minipy.${{ matrix.arch }}.rpm"
+      - name: The package installs and runs
+        run: |
+          sudo apt-get install -y ./out/minipy_*.deb
+          cd "$RUNNER_TEMP"
+          minipy -v && minipyc -v
+          printf 'import kolibri\nimport json\nprint(json.dumps({"enter": kolibri.KEY_ENTER}))\n' > t.py
+          minipy t.py
+          if [ "${{ matrix.arch }}" = x86_64 ]; then minipy --compile t.py -o t && ./t; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minipy-linux-${{ matrix.arch }}
+          path: out/*
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then v=${GITHUB_REF_NAME#v}
+          else v="$(make -s print-version)-dev.$GITHUB_RUN_NUMBER"; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu)" VERSION="$VERSION"
+      - name: Tests
+        run: make test
+      - name: Tarball
+        run: |
+          make dist VERSION="$VERSION"
+          mkdir -p out
+          cp "build/minipy-$VERSION-macos-arm64.tar.gz" out/minipy-macos-arm64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minipy-macos-arm64
+          path: out/*
+
+  kolibrios:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "${GITHUB_REF_NAME#v}" != "$GITHUB_REF_NAME" ]; then v=${GITHUB_REF_NAME#v}
+          else v="$(make -s print-version)-dev.$GITHUB_RUN_NUMBER"; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "PORTS_REF=$(sed -n 's/^PORTS_REF=\${PORTS_REF:-\(.*\)}$/\1/p' tools/kolibrios-toolchain.sh)" >> "$GITHUB_ENV"
+      - name: The i586-kolibrios toolchain (kept between runs)
+        id: toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/kos-toolchain
+          key: kos-toolchain-${{ env.PORTS_REF }}-${{ hashFiles('tools/kolibrios-toolchain.sh') }}
+      - name: Build the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bison flex texinfo libgmp-dev libmpfr-dev libmpc-dev
+          sh tools/kolibrios-toolchain.sh "$HOME/kos-toolchain"
+      - name: Build
+        run: |
+          make -j"$(nproc)" VERSION="$VERSION"
+          make -j"$(nproc)" kolibrios-dist KOS_PORTS=1 KOS32_SDK="$HOME/kos-toolchain" VERSION="$VERSION"
+          mkdir -p out
+          cp "build/minipy-$VERSION-kolibrios.zip" out/minipy-kolibrios.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minipy-kolibrios
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, kolibrios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "minipy ${GITHUB_REF_NAME#v}" \
+             --generate-notes dist/*
