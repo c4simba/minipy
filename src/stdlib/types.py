@@ -279,7 +279,7 @@ if not sys._compiled:
 
 
 if sys._compiled:
-    from _mpy_typing import Generic, TypeVar
+    from _ppy_typing import Generic, TypeVar
 
     _K = TypeVar("_K")
     _V = TypeVar("_V")

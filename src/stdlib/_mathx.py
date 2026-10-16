@@ -1,12 +1,12 @@
 """The math functions compiled programs get from Python code: the compiler turns
-math.fsum(xs) into __mpy__mathx__fsum(xs) and so on, for each math function the
+math.fsum(xs) into __ppy__mathx__fsum(xs) and so on, for each math function the
 code generator does not do itself. (The interpreter's math module is native.)
 
 fsum is CPython's (Shewchuk's exact partial sums); gamma and lgamma are CPython's
 Lanczos code; erf and erfc follow fdlibm (as most C libraries do); expm1 and log1p
 use Kahan's and Goldberg's formulas (a few units in the last place)."""
 import math
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")

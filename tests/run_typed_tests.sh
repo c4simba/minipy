@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests of the typed compiler (minipy --compile).
+# Tests of the typed compiler (plainpy --compile).
 #
 #   tests/typed/<name>.py      compiled (an i386 Linux executable by default) and run; its
 #                               output (stdout+stderr, plus "[exit N]" when N != 0)
@@ -14,7 +14,7 @@
 #                               diagnostic in tests/typed/expected/err_<name>.err.
 #
 # Environment:
-#   MINIPY   compiler            (default ./minipy)
+#   PLAINPY  compiler            (default ./plainpy)
 #   FASM     fasm executable     (default fasm)
 #   RUN      prefix for running the i386 programs, e.g. an emulator (default none)
 #   TARGET   linux (default), kolibri or macos; tests named *_linux / *_kolibri
@@ -28,12 +28,12 @@
 #   OUT      scratch directory   (default build/typed)
 #   UPDATE=1 rewrite the expected files from the current results
 #
-# The KolibriOS tests import lib/kolibri.py (next to minipy) and the fixtures
+# The KolibriOS tests import lib/kolibri.py (next to plainpy) and the fixtures
 # of tests/typed/lib: kui's window level and the file browser of Nectar's
 # repository (github.com/c4simba/nectar), as they were taken.
 #
 # usage: sh tests/run_typed_tests.sh [tests/typed/name.py ...]
-MINIPY=${MINIPY:-./minipy}
+PLAINPY=${PLAINPY:-./plainpy}
 FASM=${FASM:-fasm}
 TARGET=${TARGET:-linux}
 OUT=${OUT:-build/typed}
@@ -54,7 +54,7 @@ for f in $files; do
     case "$n" in
     err_*)
         [ "$TARGET" = interp ] && continue
-        "$MINIPY" --compile -S "$f" -o "$OUT/$n" >"$OUT/$n.err" 2>&1
+        "$PLAINPY" --compile -S "$f" -o "$OUT/$n" >"$OUT/$n.err" 2>&1
         rc=$?
         sed -e "s|^$DIR/||" "$OUT/$n.err" > "$OUT/$n.got"
         if [ "$UPDATE" = 1 ]; then cp "$OUT/$n.got" "$EXP/$n.err"; fi
@@ -64,7 +64,7 @@ for f in $files; do
     *)
         if [ "$TARGET" = interp ]; then
             inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"
-            "$MINIPY" "$f" <"$inp" >"$OUT/$n.raw" 2>&1
+            "$PLAINPY" "$f" <"$inp" >"$OUT/$n.raw" 2>&1
             rc=$?
             awk '/^Traceback \(most recent call last\):$/ { tb=1; next } tb && /^  / { next } { tb=0; print }' "$OUT/$n.raw" >"$OUT/$n.got"
             [ $rc -ne 0 ] && echo "[exit $rc]" >>"$OUT/$n.got"
@@ -73,7 +73,7 @@ for f in $files; do
             else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (interpreter)"; diff "$exp" "$OUT/$n.got" | head -20; fi
             continue
         fi
-        if ! "$MINIPY" --compile --target "$TARGET" --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
+        if ! "$PLAINPY" --compile --target "$TARGET" --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
             fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (does not compile)"; head -10 "$OUT/$n.log"; continue
         fi
         inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"

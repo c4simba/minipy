@@ -7,7 +7,7 @@ In compiled programs @contextmanager functions are generators the compiler wraps
 and chdir are available; ExitStack, redirect_stdout/stderr, the async forms and the
 decorator forms (ContextDecorator) are interpreter only."""
 import sys
-from _mpy_typing import TypeVar, Generic
+from _ppy_typing import TypeVar, Generic
 
 _T = TypeVar("_T")
 _E = TypeVar("_E")

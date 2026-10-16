@@ -121,15 +121,15 @@ Ty *ck_json(Ck *c, Expr *e, const char *m){
     json_ok(c,t,line,0);
     return TY_STR_T;
 }
-/* minipy.endpoint(f): f as an Endpoint (a function: its adapter) */
-Ty *ck_minipy(Ck *c, Expr *e, const char *m){
+/* plainpy.endpoint(f): f as an Endpoint (a function: its adapter) */
+Ty *ck_plainpy(Ck *c, Expr *e, const char *m){
     XInfo *xi=xinfo(e); xi->kind=X_BMOD; int line=e->line;
-    if(strcmp(m,"endpoint")) ck_err(c,line,"minipy.%s is not available",m);
-    xi->name="minipy.endpoint";
+    if(strcmp(m,"endpoint")) ck_err(c,line,"plainpy.%s is not available",m);
+    xi->name="plainpy.endpoint";
     ck_positional(c,e,1,1,"endpoint");
     Ty *want=endpoint_type();
     c->ep_value++; Ty *t=ck_expr(c,e->items[0]); c->ep_value--;
-    expect(c,want,t,line,"the argument of minipy.endpoint()");
+    expect(c,want,t,line,"the argument of plainpy.endpoint()");
     ep_arg(c,want,e->items[0],line);
     return want;
 }
@@ -198,14 +198,14 @@ Ty *ck_dataclasses(Ck *c, Expr *e, const char *m){
             else o=name_expr(xstrdup2(h),line);
             Expr *at=xnew(EXPR_ATTRIBUTE,line); at->a=o; at->name=(char*)f->name;
             v=at; }
-        Expr *arg=MPY_NEW0(Expr); *arg=*v; arg->akind=3; arg->kw=(char*)f->name;
+        Expr *arg=PPY_NEW0(Expr); *arg=*v; arg->akind=3; arg->kw=(char*)f->name;
         xpush(call,arg); }
     for(int i=1;i<e->count;i++){ int known=0; for(int k=0;k<dc->n;k++) if(!strcmp(dc->f[k].name,e->items[i]->kw)) known=1;
         if(!known) ck_err(c,line,"%s.__init__() got an unexpected keyword argument '%s'",t->cls->name,e->items[i]->kw); }
     { void *keep=e->ty; *e=*call; e->ty=keep; }
     return ck_call_inner(c,e);
 }
-/* minipy's thread module: start(fn[, args]) runs fn(*args) as a task; join, lock, acquire, release, sleep */
+/* plainpy's thread module: start(fn[, args]) runs fn(*args) as a task; join, lock, acquire, release, sleep */
 Ty *ck_thread(Ck *c, Expr *e, const char *m){
     XInfo *xi=xinfo(e); int line=e->line;
     xi->kind=X_BUILTIN;
@@ -233,10 +233,10 @@ Ty *ck_capwords(Ck *c, Expr *e){
     if(e->count<1 || e->count>2) ck_err(c,e->line,"capwords() takes 1 or 2 arguments");
     for(int i=0;i<e->count;i++) if(e->items[i]->akind && !(e->items[i]->akind==3 && !strcmp(e->items[i]->kw,"sep"))) ck_err(c,e->line,"capwords() takes s and sep");
     Expr *sep= e->count==2 && e->items[1]->kind!=EXPR_NONE ? e->items[1] : NULL;
-    Expr *r=py_front_expr(c->mod->unit->path,sep?"(0).join([__mpy_w.capitalize() for __mpy_w in (0).split(0)])":"\" \".join([__mpy_w.capitalize() for __mpy_w in (0).split()])",e->line);
+    Expr *r=py_front_expr(c->mod->unit->path,sep?"(0).join([__ppy_w.capitalize() for __ppy_w in (0).split(0)])":"\" \".join([__ppy_w.capitalize() for __ppy_w in (0).split()])",e->line);
     if(!r) ck_err(c,e->line,"internal error: capwords");
     Expr *it=r->items[0]->clauses[0].iter;
-    it->a->a=e->items[0]; if(sep){ Expr *s2=MPY_NEW0(Expr); *s2=*sep; s2->kw=NULL; s2->akind=0; it->items[0]=s2; r->a->a=sep; sep->kw=NULL; sep->akind=0; }
+    it->a->a=e->items[0]; if(sep){ Expr *s2=PPY_NEW0(Expr); *s2=*sep; s2->kw=NULL; s2->akind=0; it->items[0]=s2; r->a->a=sep; sep->kw=NULL; sep->akind=0; }
     void *keep=e->ty; *e=*r; e->ty=keep;
     return ck_expr(c,e);
 }
@@ -253,17 +253,17 @@ Ty *ck_partial(Ck *c, Expr *e){
     for(int i=1;i<e->count;i++){ Expr *a=e->items[i];
         if(a->akind==3){ int p=-1; if(fn && fn->def) for(int k=0;k<fn->nparams;k++) if(!strcmp(fn->def->params[k],a->kw)) p=k;
             if(p<0) ck_err(c,line,"partial(): keyword argument '%s' needs a function defined with that parameter",a->kw);
-            Expr *v=MPY_NEW0(Expr); *v=*a; v->kw=NULL; v->akind=0; bound[p]=v; }
+            Expr *v=PPY_NEW0(Expr); *v=*a; v->kw=NULL; v->akind=0; bound[p]=v; }
         else if(a->akind) ck_err(c,line,"partial(*args) is not supported in compiled code");
         else { while(pos<np && bound[pos]) pos++; if(pos>=np) ck_err(c,line,"partial(): too many arguments"); bound[pos++]=a; } }
-    Expr *call=xnew(EXPR_CALL,line); call->a=name_expr("__mpy_pf",line);
-    char **ps=MPY_NEW_ARR(char*,np+2); Expr **ds=MPY_NEW_ARR(Expr*,np+2); int n=0;
-    for(int i=0;i<np;i++) if(!bound[i]){ char v[24]; snprintf(v,sizeof v,"__mpy_p%d",i); ps[n++]=xstrdup2(v); }
+    Expr *call=xnew(EXPR_CALL,line); call->a=name_expr("__ppy_pf",line);
+    char **ps=PPY_NEW_ARR(char*,np+2); Expr **ds=PPY_NEW_ARR(Expr*,np+2); int n=0;
+    for(int i=0;i<np;i++) if(!bound[i]){ char v[24]; snprintf(v,sizeof v,"__ppy_p%d",i); ps[n++]=xstrdup2(v); }
     int nfree=n;
-    ps[n]=xstrdup2("__mpy_pf"); ds[n++]=fx;
+    ps[n]=xstrdup2("__ppy_pf"); ds[n++]=fx;
     for(int i=0;i<np;i++){ char v[24];
-        if(bound[i]){ snprintf(v,sizeof v,"__mpy_b%d",i); ps[n]=xstrdup2(v); ds[n++]=bound[i]; }
-        else snprintf(v,sizeof v,"__mpy_p%d",i);
+        if(bound[i]){ snprintf(v,sizeof v,"__ppy_b%d",i); ps[n]=xstrdup2(v); ds[n++]=bound[i]; }
+        else snprintf(v,sizeof v,"__ppy_p%d",i);
         xpush(call,name_expr(xstrdup2(v),line)); }
     (void)nfree;
     void *keep=e->ty; memset(e,0,sizeof *e);

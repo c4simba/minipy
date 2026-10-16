@@ -124,7 +124,7 @@ void ck_assign(Ck *c, Stmt *s){
     AAssign *a=aot_assign(u,s);
     if(a->ntarget==1 && a->target[0]->kind==EXPR_ATTRIBUTE && a->value && !a->ann){   /* obj.x = v, x a property with a setter */
         Expr *t=a->target[0]; Ty *ot=ty_find(ck_expr(c,t->a));
-        char nm[300]; snprintf(nm,sizeof nm,"__mpy_set_%s",t->name);
+        char nm[300]; snprintf(nm,sizeof nm,"__ppy_set_%s",t->name);
         if(ot->k==TY_OBJ && !aot_find_field(ot->cls,t->name) && aot_find_method(ot->cls,nm)){
             int line=s->line; Expr *v=a->value;
             if(a->aug){
@@ -138,15 +138,15 @@ void ck_assign(Ck *c, Stmt *s){
             Expr *m=xnew(EXPR_ATTRIBUTE,line); m->a=t->a; m->name=xstrdup2(nm);
             Expr *call=xnew(EXPR_CALL,line); call->a=m; xpush(call,v);
             Stmt *es=stmt_new(STMT_EXPR,NULL,line); es->expr=call;
-            Stmt **b=MPY_NEW_ARR(Stmt*,1); b[0]=es;
+            Stmt **b=PPY_NEW_ARR(Stmt*,1); b[0]=es;
             s->kind=STMT_IF; s->expr=xnew(EXPR_TRUE,line); s->body=b; s->body_count=s->body_cap=1; s->orelse_count=0; s->aux=NULL; s->aug=0; s->targets=NULL; s->ntargets=0; s->value=NULL;
             ck_stmt(c,s); return; } }
-    if(!a->aug && !a->ann && a->ntarget==1 && a->target[0]->kind==EXPR_SLICE && a->value){   /* obj[a:b] = v: obj.__mpy_setslice__(a, b, None, v) */
+    if(!a->aug && !a->ann && a->ntarget==1 && a->target[0]->kind==EXPR_SLICE && a->value){   /* obj[a:b] = v: obj.__ppy_setslice__(a, b, None, v) */
         Ty *ot=ty_find(ck_expr(c,a->target[0]->a));
-        if(ot->k==TY_OBJ && aot_find_method(ot->cls,"__mpy_setslice__")){
-            Expr *call=slice_call(a->target[0],"__mpy_setslice__",s->line); xpush(call,a->value);
+        if(ot->k==TY_OBJ && aot_find_method(ot->cls,"__ppy_setslice__")){
+            Expr *call=slice_call(a->target[0],"__ppy_setslice__",s->line); xpush(call,a->value);
             Stmt *es=stmt_new(STMT_EXPR,NULL,s->line); es->expr=call;
-            Stmt **b=MPY_NEW_ARR(Stmt*,1); b[0]=es;
+            Stmt **b=PPY_NEW_ARR(Stmt*,1); b[0]=es;
             s->kind=STMT_IF; s->expr=xnew(EXPR_TRUE,s->line); s->body=b; s->body_count=s->body_cap=1; s->orelse_count=0; s->aux=NULL; s->aug=0; s->targets=NULL; s->ntargets=0; s->value=NULL;
             ck_stmt(c,s); return; } }
     if(a->aug && a->ntarget==1 && a->target[0]->kind==EXPR_INDEX && a->value){   /* obj[k] += v on an object: its __getitem__ / __setitem__ */

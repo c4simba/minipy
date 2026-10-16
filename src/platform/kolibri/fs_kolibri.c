@@ -23,7 +23,7 @@
 #define KOS_F70_BUF   300
 #define KOS_PATH_MAX  (KOS_F70_BUF - 20 - 1)
 
-const char *mpy_fs_backend_name(void){
+const char *ppy_fs_backend_name(void){
     return "kolibrios-native";
 }
 
@@ -70,15 +70,15 @@ static int kos_file_size(const char *path, int *lo32, int *hi32){
         : "a"(70), "b"((int)bi)
         : "memory");
 
-#ifdef MPY_FS_DEBUG
-    fprintf(stderr, "[minipy] f70 sub5 path=%s result=%d\n", path, result);
-    fprintf(stderr, "[minipy] BDVK hex:");
+#ifdef PPY_FS_DEBUG
+    fprintf(stderr, "[plainpy] f70 sub5 path=%s result=%d\n", path, result);
+    fprintf(stderr, "[plainpy] BDVK hex:");
     for(int i = 0; i < 40; i++){
         if(i % 16 == 0) fprintf(stderr, "\n  %02x: ", i);
         fprintf(stderr, "%02x ", (unsigned char)bdvk[i]);
     }
     fprintf(stderr, "\n");
-    fprintf(stderr, "[minipy] size qword@32: lo=%d hi=%d\n",
+    fprintf(stderr, "[plainpy] size qword@32: lo=%d hi=%d\n",
         *(int*)(bdvk+32), *(int*)(bdvk+36));
     fflush(stderr);
 #endif
@@ -89,7 +89,7 @@ static int kos_file_size(const char *path, int *lo32, int *hi32){
 }
 
 /* Read entire file into a heap-allocated buffer. */
-char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message){
+char *ppy_fs_backend_read_file(const char *normalized_path,char **error_message){
     /* First, try to get file size */
     int lo, hi;
     int st = kos_file_size(normalized_path, &lo, &hi);
@@ -105,13 +105,13 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
         /* Read entire file at once */
         char *buf = (char*)xmalloc((size_t)fsize + 1);
         int rd = kos_read_file(normalized_path, buf, fsize, 0, 0);
-#ifdef MPY_FS_DEBUG
-        fprintf(stderr, "[minipy] read_file rd=%d exp=%d\n", rd, fsize);
+#ifdef PPY_FS_DEBUG
+        fprintf(stderr, "[plainpy] read_file rd=%d exp=%d\n", rd, fsize);
         fflush(stderr);
 #endif
         if(rd > 0){
             buf[rd] = 0;
-            mpy_fs_last_len = (size_t)rd;
+            ppy_fs_last_len = (size_t)rd;
             return buf;
         }
         free(buf);
@@ -146,7 +146,7 @@ char *mpy_fs_backend_read_file(const char *normalized_path,char **error_message)
     }
 
     buf[total] = 0;
-    mpy_fs_last_len = (size_t)total;
+    ppy_fs_last_len = (size_t)total;
     return buf;
 }
 
@@ -168,7 +168,7 @@ static int kos_f70(int sub, int a4, int a8, int size, const void *buf, const cha
 }
 
 /* Subfunction 2: create/overwrite a file with `len` bytes. */
-int mpy_fs_backend_write_file(const char *normalized_path,const char *data,size_t len,char **error_message){
+int ppy_fs_backend_write_file(const char *normalized_path,const char *data,size_t len,char **error_message){
     int r = kos_f70(2, 0, 0, (int)len, data, normalized_path);
     if(r != 0){
         if(error_message){ size_t n=strlen(normalized_path)+48; *error_message=(char*)xmalloc(n); snprintf(*error_message,n,"cannot write %s (f70 error %d)",normalized_path,r); }
@@ -177,5 +177,5 @@ int mpy_fs_backend_write_file(const char *normalized_path,const char *data,size_
     return 0;
 }
 /* Subfunction 8: delete a file. */
-int mpy_fs_backend_remove(const char *normalized_path){ return kos_f70(8, 0, 0, 0, NULL, normalized_path); }
-int mpy_fs_backend_exists(const char *normalized_path){ int lo, hi; return kos_file_size(normalized_path, &lo, &hi) == 0; }
+int ppy_fs_backend_remove(const char *normalized_path){ return kos_f70(8, 0, 0, 0, NULL, normalized_path); }
+int ppy_fs_backend_exists(const char *normalized_path){ int lo, hi; return kos_file_size(normalized_path, &lo, &hi) == 0; }

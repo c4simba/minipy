@@ -1,5 +1,5 @@
-#ifndef MPY_AOT_MODEL_H
-#define MPY_AOT_MODEL_H
+#ifndef PPY_AOT_MODEL_H
+#define PPY_AOT_MODEL_H
 
 #include "aot.h"
 
@@ -142,7 +142,7 @@ struct AFunc {
     int packargs;           /* (index + 1) its *args: sys._PackArgs - a plain parameter, the tuple of a call's extra arguments */
     int is_async;           /* async def: runs on a task's stack; await = a plain call */
     int calls_coroutines;   /* may call async functions without await (an endpoint adapter: it runs on a task) */
-    struct AFunc *ep_adapter; /* minipy.Endpoint: the adapter made for this function (dict of str -> JSON) */
+    struct AFunc *ep_adapter; /* plainpy.Endpoint: the adapter made for this function (dict of str -> JSON) */
     int is_property;        /* @property: obj.name calls it */
     int is_abstract;        /* @abstractmethod: a class without an implementation cannot be instantiated */
     int ncalls;
@@ -308,7 +308,7 @@ typedef struct AProg {
     AVar **globals; int nglobals, gcap;
     ACLib **clibs; int nclibs;           /* ctypes libraries and functions */
     ACFunc **cfuncs; int ncfuncs;
-    AFunc *uncaught_fn;     /* _mpy_exit.__mpy_uncaught: what an uncaught exception ends the program with */
+    AFunc *uncaught_fn;     /* _ppy_exit.__ppy_uncaught: what an uncaught exception ends the program with */
 } AProg;
 AClass *aot_nested_class(AProg *p, AClass *cls, const char *name);   /* Outer.Inner, or NULL */
 int aot_tuple_prefix(Ty *x, Ty *y);
@@ -351,4 +351,4 @@ int      bytes_case_mode(const char *m);   /* bytes.upper ... -> rt_bytes_case's
 int      bytes_is_mode(const char *m);     /* bytes.isalpha ... -> rt_bytes_is's number, or -1 */
 int      aot_subclass(AClass *c, AClass *base);
 
-#endif /* MPY_AOT_MODEL_H */
+#endif /* PPY_AOT_MODEL_H */

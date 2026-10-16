@@ -1,12 +1,12 @@
 """Rational numbers (CPython's fractions): Fraction(numerator, denominator), from ints,
 floats, strings ("3/4", "-1.5e2") or other Fractions, with exact arithmetic.
 
-Ints are 64-bit in minipy, so numerators and denominators are too (an operation
+Ints are 64-bit in plainpy, so numerators and denominators are too (an operation
 that needs more raises OverflowError). In compiled programs int ** Fraction is a
 float and Fraction ** Fraction a Fraction (one result type each)."""
 import math
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _N = TypeVar("_N")
 _M = TypeVar("_M")
@@ -553,8 +553,8 @@ class Fraction:
     def __round__(self, ndigits: int | None = None) -> int:
         if ndigits is not None:
             if not sys._compiled:
-                return self.__mpy_round_n(ndigits)
-            raise TypeError("round(Fraction, n): compiled code calls __mpy_round_n")
+                return self.__ppy_round_n(ndigits)
+            raise TypeError("round(Fraction, n): compiled code calls __ppy_round_n")
         d = self._denominator
         floor = self._numerator // d
         remainder = self._numerator - floor * d
@@ -567,7 +567,7 @@ class Fraction:
         else:
             return floor + 1
 
-    def __mpy_round_n(self, ndigits: int) -> "Fraction":
+    def __ppy_round_n(self, ndigits: int) -> "Fraction":
         """round(self, ndigits) (the compiler calls it for round's two-argument form)."""
         shift = 10 ** abs(ndigits)
         if ndigits > 0:

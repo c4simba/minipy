@@ -1,6 +1,6 @@
 /* ========================= Typed compiler: runtime of the C translation =========================
-   minipy --compile --target macos turns the i386 listing into C (aot/x2c.c);
-   this file is the start of every such C program (minipy carries it as a
+   plainpy --compile --target macos turns the i386 listing into C (aot/x2c.c);
+   this file is the start of every such C program (plainpy carries it as a
    string). The program keeps running as the i386 code it was: 32-bit
    registers and flags, the x87 stack (in double precision, which compiled
    code sets anyway), and a 4 GiB guest address space, guest address a at
@@ -128,7 +128,7 @@ static int x2c_errno;                                   /* errno after the last 
 static int x2c_argc; static char **x2c_argv;
 
 static void x2c_fatal(const char *fmt, ...){
-    va_list ap; va_start(ap,fmt); fprintf(stderr,"minipy (native code): "); vfprintf(stderr,fmt,ap); fprintf(stderr,"\n"); va_end(ap);
+    va_list ap; va_start(ap,fmt); fprintf(stderr,"plainpy (native code): "); vfprintf(stderr,fmt,ap); fprintf(stderr,"\n"); va_end(ap);
     exit(70);
 }
 static void x2c_bad_jump(u32 a){ x2c_fatal("jump to 0x%08x, not a code address",a); }
@@ -247,7 +247,7 @@ static u32 x2c_syscall(u8 *m, X2cRegs *r){
     }
     u32 regs[7]={r->eax,r->ebx,r->ecx,r->edx,r->esi,r->edi,r->ebp};
     int64_t v=lx_syscall(regs);
-    if(v==-ENOSYS) fprintf(stderr,"minipy (native code): Linux system call %u is not supported\n",r->eax);
+    if(v==-ENOSYS) fprintf(stderr,"plainpy (native code): Linux system call %u is not supported\n",r->eax);
     (void)m;
     return (u32)v;
 }

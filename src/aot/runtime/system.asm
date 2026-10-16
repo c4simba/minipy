@@ -1,4 +1,4 @@
-; ========================= MiniPy compiled-program runtime (fasm, i386) =========================
+; ========================= PlainPy compiled-program runtime (fasm, i386) =========================
 ; Building blocks the code generator (aot/codegen) pastes into a program -
 ; only the ones the program needs, plus their dependencies. The file is split
 ; into blocks:

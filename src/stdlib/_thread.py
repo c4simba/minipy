@@ -2,7 +2,7 @@
 started without being waited for at exit (as CPython's _thread threads)."""
 import sys
 import threading as _threading
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _F = TypeVar("_F")
 _A = TypeVar("_A")

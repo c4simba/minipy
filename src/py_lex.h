@@ -1,5 +1,5 @@
-#ifndef MPY_PY_LEX_H
-#define MPY_PY_LEX_H
+#ifndef PPY_PY_LEX_H
+#define PPY_PY_LEX_H
 
 #include "py_ast.h"
 
@@ -50,4 +50,4 @@ void py_pos(PyLexer *lx, int off, int *line, int *col);
 /* end of a string literal starting at its prefix: the offset after the closing quote, or -1 */
 int  py_scan_string(const char *src, int len, int pos, char **error);
 
-#endif /* MPY_PY_LEX_H */
+#endif /* PPY_PY_LEX_H */

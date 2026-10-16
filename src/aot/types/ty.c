@@ -7,15 +7,15 @@
 int ty_ids;
 Ty *TY_INT_T, *TY_BOOL_T, *TY_FLOAT_T, *TY_STR_T, *TY_VOID_T, *TY_BUF_T, *TY_BYTES_T, *TY_TYPE_T;
 
-Ty *ty_new(TyKind k, Ty *elem, AClass *cls){ Ty *t=MPY_NEW0(Ty); t->k=k; t->elem=elem; t->cls=cls; t->id=++ty_ids;
-    if(k==TY_GEN){ t->nelems=2; t->elems=MPY_NEW_ARR(Ty*,2); t->elems[0]=ty_var(); t->elems[1]=TY_VOID_T; }   /* what send() takes, what it returns (None) */
+Ty *ty_new(TyKind k, Ty *elem, AClass *cls){ Ty *t=PPY_NEW0(Ty); t->k=k; t->elem=elem; t->cls=cls; t->id=++ty_ids;
+    if(k==TY_GEN){ t->nelems=2; t->elems=PPY_NEW_ARR(Ty*,2); t->elems[0]=ty_var(); t->elems[1]=TY_VOID_T; }   /* what send() takes, what it returns (None) */
     return t; }
 Ty *aot_gen_part(Ty *g, int i){ g=ty_find(g); if(g->k!=TY_GEN || g->nelems!=2) return TY_VOID_T; Ty *t=ty_find(g->elems[i]); return t; }
 Ty *ty_var(void){ return ty_new(TY_VAR,NULL,NULL); }
 Ty *ty_dict(Ty *key, Ty *val){ Ty *t=ty_new(TY_DICT,val,NULL); t->key=key; return t; }
 Ty *ty_dkey(Ty *d){ d=ty_find(d); return d->key?d->key:TY_STR_T; }
 Ty *ty_tuple(Ty **elems, int n){
-    Ty *t=ty_new(TY_TUPLE,NULL,NULL); t->nelems=n; t->elems=MPY_NEW_ARR(Ty*,n>0?n:1);
+    Ty *t=ty_new(TY_TUPLE,NULL,NULL); t->nelems=n; t->elems=PPY_NEW_ARR(Ty*,n>0?n:1);
     for(int i=0;i<n;i++) t->elems[i]=elems[i];
     return t;
 }
@@ -100,7 +100,7 @@ ASym *symtab_add(SymTab *t, const char *name, SymKind kind, void *p){
     if(!s){ if(t->n==t->cap){ t->cap=t->cap?t->cap*2:16; t->v=(ASym*)xrealloc(t->v,sizeof(ASym)*(size_t)t->cap); } s=&t->v[t->n++]; s->name=xstrdup2(name); }
     s->kind=kind; s->p=p; return s;
 }
-XInfo *xinfo(Expr *e){ if(!e->ty) e->ty=MPY_NEW0(XInfo); return (XInfo*)e->ty; }
+XInfo *xinfo(Expr *e){ if(!e->ty) e->ty=PPY_NEW0(XInfo); return (XInfo*)e->ty; }
 
 AField *aot_find_field(AClass *c, const char *name){ for(;c;c=c->base) for(int i=0;i<c->nfields;i++) if(!strcmp(c->fields[i]->name,name)) return c->fields[i]; return NULL; }
 AField *aot_field_root(AField *fd){ while(fd->over) fd=fd->over; return fd; }

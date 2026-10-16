@@ -53,7 +53,7 @@ static Stmt *dc_method(Ck *c, AClass *cls, Txt *t){
 }
 static void dc_transform(Ck *c, AClass *cls, Expr *deco){
     Stmt *def=cls->def; AotUnit *u=cls->mod->unit; int line=def->line; g_dc_prog=c->p;
-    struct DcInfo *dc=MPY_NEW0(struct DcInfo); dc->init=dc->repr=dc->eq=1; int kw_only=0;
+    struct DcInfo *dc=PPY_NEW0(struct DcInfo); dc->init=dc->repr=dc->eq=1; int kw_only=0;
     if(deco->kind==EXPR_CALL) for(int i=0;i<deco->count;i++){ Expr *a=deco->items[i];
         if(a->akind!=3) ck_err(c,line,"dataclass() takes keyword arguments only");
         if(!strcmp(a->kw,"init")) dc->init=dc_flag(c,a,line,a->kw);
@@ -70,7 +70,7 @@ static void dc_transform(Ck *c, AClass *cls, Expr *deco){
     if(bdc){ for(int i=0;i<bdc->dc->n;i++) dc_add(dc,&bdc->dc->f[i]);
         if(bdc->dc->frozen && !dc->frozen) ck_err(c,line,"cannot inherit non-frozen dataclass from a frozen one");
         if(!bdc->dc->frozen && dc->frozen) ck_err(c,line,"cannot inherit frozen dataclass from a non-frozen one"); }
-    Stmt **keep=MPY_NEW_ARR(Stmt*,def->body_count+1); int nk=0;
+    Stmt **keep=PPY_NEW_ARR(Stmt*,def->body_count+1); int nk=0;
     for(int i=0;i<def->body_count;i++){ Stmt *s=def->body[i];
         int annonly=aot_is_annotation_only(u,s);
         AAssign *a= annonly || s->kind==STMT_ASSIGN ? aot_assign(u,s) : NULL;
@@ -95,8 +95,8 @@ static void dc_transform(Ck *c, AClass *cls, Expr *deco){
                 else if(!strcmp(x->kw,"metadata")) {}
                 else ck_err(c,s->line,"field() got an unexpected keyword argument '%s'",x->kw); }
             if(dflt && f.factory) ck_err(c,s->line,"cannot specify both default and default_factory");
-            if(f.factory){ Expr *fe=MPY_NEW0(Expr); *fe=*f.factory; fe->kw=NULL; fe->akind=0; f.factory=fe; }
-            if(dflt){ Expr *de=MPY_NEW0(Expr); *de=*dflt; de->kw=NULL; de->akind=0; a->value=s->value=de; v=de; }
+            if(f.factory){ Expr *fe=PPY_NEW0(Expr); *fe=*f.factory; fe->kw=NULL; fe->akind=0; f.factory=fe; }
+            if(dflt){ Expr *de=PPY_NEW0(Expr); *de=*dflt; de->kw=NULL; de->akind=0; a->value=s->value=de; v=de; }
             else { a->value=s->value=NULL; v=NULL; s->kind=STMT_EXPR; s->ann_only=1; }   /* no class attribute */
         }
         if(v){ f.has_default=1; f.defsym=cls->symname;
@@ -134,7 +134,7 @@ static void dc_transform(Ck *c, AClass *cls, Expr *deco){
         if(!body) tx(&t,"    pass\n");
         Stmt *d=dc_method(c,cls,&t); dc->init_def=d;
         int p=1;                                                         /* the annotations and defaults: the fields' */
-        if(!d->pdefaults){ d->pdefaults=MPY_NEW_ARR(Expr*,d->param_count+1); }
+        if(!d->pdefaults){ d->pdefaults=PPY_NEW_ARR(Expr*,d->param_count+1); }
         for(int pass=0;pass<2;pass++) for(int i=0;i<dc->n;i++){ DcField *f=&dc->f[i];
             if(!f->init || f->kw_only!=pass) continue;
             Expr *an=f->ann;

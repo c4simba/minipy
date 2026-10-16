@@ -26,7 +26,7 @@ Further information is available in the bundled documentation, and from
 
   http://docs.python.org/library/unittest.html
 
-Compiled programs (minipy): the tests (the TestCase subclasses of the program and their test*
+Compiled programs (plainpy): the tests (the TestCase subclasses of the program and their test*
 methods, the skip / expectedFailure decorators) are found when the program is compiled; a
 failure's report gives the line of the failing assert*() call (an error's: the test method),
 not a whole traceback. assertRaises(exc, f, *args) takes arguments of one type; subTest() keyword
@@ -93,7 +93,7 @@ if sys._compiled:
     import pprint as _pprint
     import re as _re
     import time as _time
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _T = TypeVar("_T")
     _S = TypeVar("_S")
@@ -284,7 +284,7 @@ if sys._compiled:
 
         def _exc_info_to_string(self, err: BaseException, test: "TestCase") -> str:
             """The report of an exception: where (the failing assert's line, or the test method) and what."""
-            where = '  File "' + __mpy_ut_file(test) + '", in ' + test._testMethodName + '\n'
+            where = '  File "' + __ppy_ut_file(test) + '", in ' + test._testMethodName + '\n'
             frame = test._failframe
             if not frame or not isinstance(err, AssertionError):
                 frame = where
@@ -426,17 +426,17 @@ if sys._compiled:
             return TestResult()
 
         def shortDescription(self) -> str | None:
-            doc = __mpy_ut_doc(self, self._testMethodName)
+            doc = __ppy_ut_doc(self, self._testMethodName)
             return doc.strip().split("\n")[0].strip() if doc else None
 
         def id(self) -> str:
-            return "%s.%s" % (__mpy_ut_class(self), self._testMethodName)
+            return "%s.%s" % (__ppy_ut_class(self), self._testMethodName)
 
         def __str__(self) -> str:
-            return "%s (%s.%s)" % (self._testMethodName, __mpy_ut_class(self), self._testMethodName)
+            return "%s (%s.%s)" % (self._testMethodName, __ppy_ut_class(self), self._testMethodName)
 
         def __repr__(self) -> str:
-            return "<%s testMethod=%s>" % (__mpy_ut_class(self), self._testMethodName)
+            return "<%s testMethod=%s>" % (__ppy_ut_class(self), self._testMethodName)
 
         def subTest(self, msg: str | None = None, **params: _T) -> _SubTestContext:
             """A context manager: the enclosed block is a subtest identified by msg and params."""
@@ -451,7 +451,7 @@ if sys._compiled:
             return _SubTestContext(self, sub, parent)
 
         def _callTestMethod(self) -> None:
-            if not __mpy_ut_call(self, self._testMethodName):
+            if not __ppy_ut_call(self, self._testMethodName):
                 if self._testMethodName == "runTest":
                     self.runTest()
                 else:
@@ -500,11 +500,11 @@ if sys._compiled:
                 stop_run = True
             result.startTest(self)
             try:
-                skip_why = __mpy_ut_skip(self, self._testMethodName)
+                skip_why = __ppy_ut_skip(self, self._testMethodName)
                 if skip_why is not None:
                     result.addSkip(self, skip_why)
                     return result
-                expecting_failure = __mpy_ut_xfail(self, self._testMethodName)
+                expecting_failure = __ppy_ut_xfail(self, self._testMethodName)
                 outcome = _Outcome(result)
                 start_time = _time.perf_counter()
                 self._outcome = outcome
@@ -553,7 +553,7 @@ if sys._compiled:
 
         def debug(self) -> None:
             """Run the test without collecting errors in a TestResult"""
-            skip_why = __mpy_ut_skip(self, self._testMethodName)
+            skip_why = __ppy_ut_skip(self, self._testMethodName)
             if skip_why is not None:
                 raise SkipTest(skip_why)
             self.setUp()
@@ -1062,7 +1062,7 @@ if sys._compiled:
                     self._handleModuleFixture(test, result)
                     self._handleClassSetUp(test, result)
                     result._previousTest = test
-                    if result._classSetupFailed.get(__mpy_ut_class(test), False) or result._moduleSetUpFailed:
+                    if result._classSetupFailed.get(__ppy_ut_class(test), False) or result._moduleSetUpFailed:
                         continue
                 test.run(result)
             if topLevel:
@@ -1085,16 +1085,16 @@ if sys._compiled:
 
         def _handleClassSetUp(self, test: TestCase, result: TestResult) -> None:
             previous = result._previousTest
-            currentClass = __mpy_ut_class(test)
-            if previous is not None and __mpy_ut_class(previous) == currentClass:
+            currentClass = __ppy_ut_class(test)
+            if previous is not None and __ppy_ut_class(previous) == currentClass:
                 return
             if result._moduleSetUpFailed:
                 return
-            if __mpy_ut_skip(test, "") is not None:
+            if __ppy_ut_skip(test, "") is not None:
                 return
             result._classSetupFailed[currentClass] = False
             try:
-                __mpy_ut_fixture(test, 0)
+                __ppy_ut_fixture(test, 0)
             except Exception as e:
                 result._classSetupFailed[currentClass] = True
                 self._addClassOrModuleLevelException(result, e, 'setUpClass (%s)' % (currentClass,))
@@ -1103,27 +1103,27 @@ if sys._compiled:
             previous = result._previousTest
             if previous is None:
                 return
-            previousClass = __mpy_ut_class(previous)
-            if test is not None and __mpy_ut_class(test) == previousClass:
+            previousClass = __ppy_ut_class(previous)
+            if test is not None and __ppy_ut_class(test) == previousClass:
                 return
             if result._classSetupFailed.get(previousClass, False) or result._moduleSetUpFailed:
                 return
-            if __mpy_ut_skip(previous, "") is not None:
+            if __ppy_ut_skip(previous, "") is not None:
                 return
             try:
-                __mpy_ut_fixture(previous, 1)
+                __ppy_ut_fixture(previous, 1)
             except Exception as e:
                 self._addClassOrModuleLevelException(result, e, 'tearDownClass (%s)' % (previousClass,))
 
         def _handleModuleFixture(self, test: TestCase, result: TestResult) -> None:
             previous = result._previousTest
-            currentModule = __mpy_ut_module(test)
-            if previous is not None and __mpy_ut_module(previous) == currentModule:
+            currentModule = __ppy_ut_module(test)
+            if previous is not None and __ppy_ut_module(previous) == currentModule:
                 return
             self._handleModuleTearDown(result)
             result._moduleSetUpFailed = False
             try:
-                __mpy_ut_modfix(currentModule, True)
+                __ppy_ut_modfix(currentModule, True)
             except Exception as e:
                 result._moduleSetUpFailed = True
                 self._addClassOrModuleLevelException(result, e, 'setUpModule (%s)' % (currentModule,))
@@ -1132,9 +1132,9 @@ if sys._compiled:
             previous = result._previousTest
             if previous is None or result._moduleSetUpFailed:
                 return
-            previousModule = __mpy_ut_module(previous)
+            previousModule = __ppy_ut_module(previous)
             try:
-                __mpy_ut_modfix(previousModule, False)
+                __ppy_ut_modfix(previousModule, False)
             except Exception as e:
                 self._addClassOrModuleLevelException(result, e, 'tearDownModule (%s)' % (previousModule,))
 
@@ -1167,26 +1167,26 @@ if sys._compiled:
         def loadTestsFromTestCase(self, testCaseClass: type[TestCase]) -> TestSuite:
             """Return a suite of all test cases contained in testCaseClass"""
             suite = TestSuite()
-            for t in __mpy_ut_tests(False):
+            for t in __ppy_ut_tests(False):
                 if type(t) is testCaseClass and self._included(t):
                     suite.addTest(t)
             return suite
 
         def getTestCaseNames(self, testCaseClass: type[TestCase]) -> list[str]:
             """Return a sorted sequence of method names found within testCaseClass"""
-            return [t._testMethodName for t in __mpy_ut_tests(False) if type(t) is testCaseClass and self._included(t)]
+            return [t._testMethodName for t in __ppy_ut_tests(False) if type(t) is testCaseClass and self._included(t)]
 
         def _main_tests(self) -> TestSuite:
             """(the test cases of the main module, by class)"""
             suite = TestSuite()
             current: TestSuite | None = None
             cls = ""
-            for t in __mpy_ut_tests(True):
+            for t in __ppy_ut_tests(True):
                 if not self._included(t):
                     continue
-                if current is None or __mpy_ut_class(t) != cls:
+                if current is None or __ppy_ut_class(t) != cls:
                     current = TestSuite()
-                    cls = __mpy_ut_class(t)
+                    cls = __ppy_ut_class(t)
                     suite.addTest(current)
                 current.addTest(t)
             return suite
@@ -1194,7 +1194,7 @@ if sys._compiled:
         def loadTestsFromName(self, name: str) -> TestSuite:
             """The tests named name: a class of the main module, or Class.test_method."""
             suite = TestSuite()
-            for t in __mpy_ut_tests(False):
+            for t in __ppy_ut_tests(False):
                 ident = t.id()
                 for prefix in ("__main__." + name, name):
                     if ident == prefix or (ident.startswith(prefix + ".") and self._included(t)):

@@ -149,7 +149,7 @@ if not sys._compiled:
 
     # Create constants for the compiler flags in Include/code.h
     # We try to get them from dis to avoid duplication
-    # (minipy: the flags of code objects' co_flags, as CPython's dis names them)
+    # (plainpy: the flags of code objects' co_flags, as CPython's dis names them)
     COMPILER_FLAG_NAMES = {1: "OPTIMIZED", 2: "NEWLOCALS", 4: "VARARGS", 8: "VARKEYWORDS", 16: "NESTED",
                            32: "GENERATOR", 64: "NOFREE", 128: "COROUTINE", 256: "ITERABLE_COROUTINE",
                            512: "ASYNC_GENERATOR", 0x4000000: "HAS_DOCSTRING", 0x8000000: "METHOD"}
@@ -160,7 +160,7 @@ if not sys._compiled:
 
 
     class _Machinery:
-        """(minipy: the file suffixes importlib.machinery would give)"""
+        """(plainpy: the file suffixes importlib.machinery would give)"""
         SOURCE_SUFFIXES = ['.py']
         BYTECODE_SUFFIXES = ['.pyc']
         EXTENSION_SUFFIXES = []
@@ -1516,7 +1516,7 @@ if not sys._compiled:
         builtin_vars = {}
         unbound_names = set()
         global_names = set()
-        for name in code.co_names:          # (minipy: no instructions to look at - every name)
+        for name in code.co_names:          # (plainpy: no instructions to look at - every name)
             global_names.add(name)
         for name in global_names:
             try:
@@ -1552,7 +1552,7 @@ if not sys._compiled:
 
     def _get_code_position(code, instruction_index):
         if instruction_index < 0 or not hasattr(code, "co_positions"):
-            return (None, None, None, None)     # (minipy: no instruction positions here)
+            return (None, None, None, None)     # (plainpy: no instruction positions here)
         positions_gen = code.co_positions()
         # The nth entry in code.co_positions() corresponds to instruction (2*n)th since Python 3.10+
         return next(itertools.islice(positions_gen, instruction_index // 2, None))
@@ -1662,7 +1662,7 @@ if not sys._compiled:
     # ------------------------------------------------ static version of getattr
 
     _sentinel = object()
-    def _static_getmro(klass):                   # (minipy: type's own __mro__ / __dict__ as plain attributes)
+    def _static_getmro(klass):                   # (plainpy: type's own __mro__ / __dict__ as plain attributes)
         return type.__getattribute__(klass, '__mro__')
 
     def _get_dunder_dict_of_class(klass):

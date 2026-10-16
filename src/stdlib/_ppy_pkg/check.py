@@ -1,21 +1,21 @@
 """The check for compiled programs.
 
-minipy compiles a program only with every type known: one type per variable,
+plainpy compiles a program only with every type known: one type per variable,
 parameter, field and element, `T | None` the only union. Before a package's
 module may go into a compiled program, the compiler goes through all of it
-(`minipy --compile --check`, src/aot/pkgcheck.c) and reports:
+(`plainpy --compile --check`, src/aot/pkgcheck.c) and reports:
 
     error     what it cannot compile (a Union, an unknown type, a dynamic feature ...)
     unclear   a function it cannot check: nobody calls it and its parameters
               have no types (they would come from a call)
 
 Before that every module is compiled for the interpreter (compile()): source
-minipy cannot run at all (an int literal beyond 64 bits ...) is "syntax"; such
-a package does not run in minipy, not even in the interpreter.
+plainpy cannot run at all (an int literal beyond 64 bits ...) is "syntax"; such
+a package does not run in plainpy, not even in the interpreter.
 
 A module passes when its file has neither, and every module it imports (its
 package's __init__ too) passes. The compiler then takes only modules that
-passed (.minipy/index); the interpreter runs them all."""
+passed (.plainpy/index); the interpreter runs them all."""
 import os
 import subprocess
 import sys
@@ -54,8 +54,8 @@ class Result:
         return "partial" if self.ok else "fail"
 
 
-def minipy_exe():
-    exe = sys.argv[0] if sys.argv else "minipy"
+def plainpy_exe():
+    exe = sys.argv[0] if sys.argv else "plainpy"
     if "/" in exe or "\\" in exe:
         return os.path.abspath(exe)
     return exe
@@ -110,9 +110,9 @@ def run(project, packages, folders, target=""):
         res.findings.extend(res.broken[m] for m in sorted(res.broken))
     if not owner:
         return results
-    cmd = [minipy_exe(), "--compile", "--check"] + (["--target", target] if target else []) + sorted(owner)
+    cmd = [plainpy_exe(), "--compile", "--check"] + (["--target", target] if target else []) + sorted(owner)
     env = dict(os.environ)
-    env["MINIPYPATH"] = project.site
+    env["PLAINPYPATH"] = project.site
     try:
         r = subprocess.run(cmd, cwd=project.site, env=env, capture_output=True)
         out = r.stdout.decode("utf-8", "replace")
@@ -194,7 +194,7 @@ def run(project, packages, folders, target=""):
         reason = why_not(m, set())
         res = results[owner[m].name]
         if m in res.broken:
-            reason = "does not run in minipy: " + res.broken[m].message
+            reason = "does not run in plainpy: " + res.broken[m].message
         if reason:
             res.bad[m] = reason
         else:
@@ -209,7 +209,7 @@ def report_text(res, target):
     pkg = res.pkg
     t = ["%s %s: %s (target %s)" % (pkg.name, pkg.version,
          {"ok": "passes the check for compiled programs", "partial": "passes the check for compiled programs in part",
-          "fail": "does not pass the check for compiled programs", "broken": "does not run in minipy"}[res.status()], target or "default")]
+          "fail": "does not pass the check for compiled programs", "broken": "does not run in plainpy"}[res.status()], target or "default")]
     if res.ok:
         t.append("modules that pass: " + ", ".join(res.ok))
     if res.bad:
@@ -219,7 +219,7 @@ def report_text(res, target):
     errs = [d for d in res.findings if d.kind == "error"]
     unclear = [d for d in res.findings if d.kind == "unclear"]
     if res.broken:
-        t.append("what minipy cannot run (not even the interpreter):")
+        t.append("what plainpy cannot run (not even the interpreter):")
         t.extend("  " + res.broken[m].text() for m in sorted(res.broken))
     if errs:
         t.append("errors:")
@@ -237,7 +237,7 @@ def summary(res, target, report_path):
     if st == "ok":
         return "  %s %s: passes the check - usable in compiled programs" % (pkg.name, pkg.version)
     if st == "broken":
-        lines = ["  %s %s: does not run in minipy (modules %s)" % (pkg.name, pkg.version, ", ".join(sorted(res.broken)))]
+        lines = ["  %s %s: does not run in plainpy (modules %s)" % (pkg.name, pkg.version, ", ".join(sorted(res.broken)))]
         lines.extend("    " + res.broken[m].text() for m in sorted(res.broken)[:MAX_SHOWN])
         lines.append("    (report: %s)" % report_path)
         return "\n".join(lines)
@@ -257,8 +257,8 @@ def summary(res, target, report_path):
 
 
 def write_index(project, packages, folders, results):
-    """.minipy/index: a line per module of every package, what the compiler reads."""
-    lines = ["# module package version status (written by minipy sync / minipy check)"]
+    """.plainpy/index: a line per module of every package, what the compiler reads."""
+    lines = ["# module package version status (written by plainpy sync / plainpy check)"]
     for pkg in packages:
         res = results.get(pkg.name)
         for name, rel in store.modules(folders[pkg.name]):

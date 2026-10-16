@@ -79,13 +79,13 @@ Ty *ck_call_inner(Ck *c, Expr *e){
     if((f->kind==EXPR_NAME || f->kind==EXPR_ATTRIBUTE) && e->count==1 && !e->items[0]->akind){ AClass *ek=class_expr(c,f);   /* Color(1): the member of that value */
         if(ek && ek->is_enum){ Expr *at=xnew(EXPR_ATTRIBUTE,e->line); at->a=f; at->name="_lookup_"; e->a=f=at; } }
     if(!e->cm_done && (f->kind==EXPR_NAME || f->kind==EXPR_ATTRIBUTE) && cm_callee(c,f)){   /* cm(...): contextlib._GeneratorCM(the generator) */
-        Expr *inner=MPY_NEW0(Expr); *inner=*e; inner->ty=NULL; inner->cm_done=1;
-        if(!lookup(c,"__mpy_contextlib__GeneratorCM")) ck_err(c,e->line,"internal error: @contextmanager without contextlib");
-        Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr(xstrdup2("__mpy_contextlib__GeneratorCM"),e->line); xpush(call,inner);
+        Expr *inner=PPY_NEW0(Expr); *inner=*e; inner->ty=NULL; inner->cm_done=1;
+        if(!lookup(c,"__ppy_contextlib__GeneratorCM")) ck_err(c,e->line,"internal error: @contextmanager without contextlib");
+        Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr(xstrdup2("__ppy_contextlib__GeneratorCM"),e->line); xpush(call,inner);
         void *keep=e->ty; *e=*call; e->ty=keep; e->cm_done=1;
         return ck_call_inner(c,e); }
     eg_class_arg(c,e);
-    if(re_literal_call(c,e,"findall")>=2) e->a=f=name_expr(xstrdup2("__mpy_re__findall_t"),e->line);   /* re.findall(LIT, ...): tuples */
+    if(re_literal_call(c,e,"findall")>=2) e->a=f=name_expr(xstrdup2("__ppy_re__findall_t"),e->line);   /* re.findall(LIT, ...): tuples */
     if(e->a->kind==EXPR_NAME || e->a->kind==EXPR_ATTRIBUTE){ const char *sf=struct_func(c,e->a);
         if(sf){ Ty *r=ck_struct(c,e,sf); if(r) return r; }
         const char *tf=tempfile_func(c,e->a);
@@ -94,11 +94,11 @@ Ty *ck_call_inner(Ck *c, Expr *e){
             int text=0;
             if(mode){ if(!(mode->kind==EXPR_LITERAL && mode->tok->kind==T_STRING && mode->tok->i!=2)) ck_err(c,e->line,"tempfile.%s(): the mode must be a literal in compiled code",tf);
                 text=!strchr(mode->tok->text,'b'); }
-            char nm[96]; snprintf(nm,sizeof nm,"__mpy_tempfile__%s%c",tf,text?'T':'B');
+            char nm[96]; snprintf(nm,sizeof nm,"__ppy_tempfile__%s%c",tf,text?'T':'B');
             e->a=name_expr(xstrdup2(nm),e->line); } }
     if(f->kind==EXPR_NAME){
         if(f->name[0]=='\001') return ck_builtin(c,e,f->name+1);         /* made by the compiler: always the builtin */
-        if(!strncmp(f->name,"__mpy_ut_",9) && !lookup(c,f->name)) ut_generate(c,e->line);   /* (unittest: the program's tests) */
+        if(!strncmp(f->name,"__ppy_ut_",9) && !lookup(c,f->name)) ut_generate(c,e->line);   /* (unittest: the program's tests) */
         ASym *s=lookup(c,f->name);
         if(!s) return ck_builtin(c,e,f->name);
         if(s->kind==AS_FUNC){ AFunc *fn=(AFunc*)s->p;
@@ -119,7 +119,7 @@ Ty *ck_call_inner(Ck *c, Expr *e){
         if(s->kind==AS_SYS && !strcmp((const char*)s->p,"string.capwords")) return ck_capwords(c,e);
         if(s->kind==AS_SYS && !strncmp((const char*)s->p,"ctypes.",7)) return ck_ctypes_fn(c,e,(const char*)s->p+7);
         if(s->kind==AS_SYS && !strncmp((const char*)s->p,"json.",5)) return ck_json(c,e,(const char*)s->p+5);
-        if(s->kind==AS_SYS && !strncmp((const char*)s->p,"minipy.",7)) return ck_minipy(c,e,(const char*)s->p+7);
+        if(s->kind==AS_SYS && !strncmp((const char*)s->p,"plainpy.",8)) return ck_plainpy(c,e,(const char*)s->p+8);
         if(s->kind==AS_SYS && !strncmp((const char*)s->p,"dataclasses.",12)) return ck_dataclasses(c,e,(const char*)s->p+12);
         if(s->kind==AS_CFUNC) return ck_ccall(c,e,(ACFunc*)s->p);
         if(s->kind==AS_VAR){
@@ -141,7 +141,7 @@ Ty *ck_call_inner(Ck *c, Expr *e){
     if(is_bmod(c,f->a,"asyncio")) return ck_asyncio(c,e,m);
     if(is_bmod(c,f->a,"ctypes")) return ck_ctypes_fn(c,e,m);
     if(is_bmod(c,f->a,"json")) return ck_json(c,e,m);
-    if(is_bmod(c,f->a,"minipy")) return ck_minipy(c,e,m);
+    if(is_bmod(c,f->a,"plainpy")) return ck_plainpy(c,e,m);
     if(is_bmod(c,f->a,"dataclasses")) return ck_dataclasses(c,e,m);
     if(is_bmod(c,f->a,"functools") && !strcmp(m,"partial")) return ck_partial(c,e);
     if(is_bmod(c,f->a,"string") && !strcmp(m,"capwords")) return ck_capwords(c,e);

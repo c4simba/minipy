@@ -37,7 +37,7 @@ static AClass *resolve_base(Ck *c, AClass *cls, const char *name, int line){
 static void mro_of(AClass *k, AClass ***out, int *n){
     if(k->mro){ *out=k->mro; *n=k->nmro; return; }
     static AClass *buf[64]; int m=0; for(AClass *x=k;x && m<64;x=x->base) buf[m++]=x;
-    *out=MPY_NEW_ARR(AClass*,m); memcpy(*out,buf,sizeof(AClass*)*(size_t)m); *n=m;
+    *out=PPY_NEW_ARR(AClass*,m); memcpy(*out,buf,sizeof(AClass*)*(size_t)m); *n=m;
 }
 static int c3(Ck *c, AClass *cls, AClass **bases, int nb, int line){
     AClass **seq[17]; int len[17], pos[17], ns=0;
@@ -54,7 +54,7 @@ static int c3(Ck *c, AClass *cls, AClass **bases, int nb, int line){
         if(!pick) ck_err(c,line,"Cannot create a consistent method resolution order (MRO) for bases");
         if(n<64) out[n++]=pick;
         for(int i=0;i<ns;i++) if(pos[i]<len[i] && seq[i][pos[i]]==pick) pos[i]++; }
-    cls->mro=MPY_NEW_ARR(AClass*,n); memcpy(cls->mro,out,sizeof(AClass*)*(size_t)n); cls->nmro=n;
+    cls->mro=PPY_NEW_ARR(AClass*,n); memcpy(cls->mro,out,sizeof(AClass*)*(size_t)n); cls->nmro=n;
     return n;
 }
 typedef struct { AClass *cls; AClass *from; const char *self; Ck *c; int line; } SuperCtx;
@@ -111,7 +111,7 @@ void several_bases(Ck *c, AClass *cls){
     c3(c,cls,bases,nb,line);
     AClass *vb[64]; int nv=0;
     for(int i=1;i<cls->nmro;i++){ AClass *k=cls->mro[i]; if(!aot_subclass(cls->base,k) && nv<64) vb[nv++]=k; }
-    cls->vbases=MPY_NEW_ARR(AClass*,nv+1); memcpy(cls->vbases,vb,sizeof(AClass*)*(size_t)nv); cls->nvbases=nv;
+    cls->vbases=PPY_NEW_ARR(AClass*,nv+1); memcpy(cls->vbases,vb,sizeof(AClass*)*(size_t)nv); cls->nvbases=nv;
     Stmt **add=NULL; int nadd=0, cadd=0;
     #define ADD(st) do{ if(nadd==cadd){ cadd=cadd?cadd*2:16; add=(Stmt**)xrealloc(add,sizeof(Stmt*)*(size_t)cadd); } add[nadd++]=(st); }while(0)
     for(int i=1;i<cls->nmro;i++){ AClass *k=cls->mro[i]; if(!k->def) continue;

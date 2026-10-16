@@ -1,6 +1,6 @@
 /* ========================= Typed compiler: runtime routines =========================
    The runtime routines of compiled programs are fasm source (aot/runtime,
-   carried in minipy.lib). The code generator asks for routines by name; only
+   carried in plainpy.lib). The code generator asks for routines by name; only
    those, their dependencies and their data end up in the program. */
 
 #include "model.h"
@@ -19,8 +19,8 @@ static int parse_target(const char *w){ if(!strcmp(w,"linux")) return AOT_TARGET
 
 /* Split the library into its ";;; kind name [target] [: deps]" blocks. */
 static void rt_parse(AotRt *rt){
-    const char *p=mpy_lib_text("rtlib"); int cap=0;                  /* (in minipy.lib) */
-    if(!p){ fprintf(stderr,"minipyc: minipy.lib has no runtime routines\n"); exit(1); }
+    const char *p=ppy_lib_text("rtlib"); int cap=0;                  /* (in plainpy.lib) */
+    if(!p){ fprintf(stderr,"plainpyc: plainpy.lib has no runtime routines\n"); exit(1); }
     RtBlock *cur=NULL;
     while(*p){
         const char *eol=strchr(p,'\n'); if(!eol) eol=p+strlen(p);
@@ -50,7 +50,7 @@ static void rt_parse(AotRt *rt){
 }
 
 AotRt *aot_rt_new(AotTarget target){
-    AotRt *rt=MPY_NEW0(AotRt);
+    AotRt *rt=PPY_NEW0(AotRt);
     rt->target=target==AOT_TARGET_MACOS?AOT_TARGET_LINUX:target;          /* macos runs the Linux routines (aot/x2c.c) */
     rt_parse(rt); return rt;
 }
@@ -67,7 +67,7 @@ void aot_rt_use(AotRt *rt, const char *name){
         found=1;
         for(int d=0;d<b->ndeps;d++) aot_rt_use(rt,b->deps[d]);
     }
-    if(!found){ fprintf(stderr,"minipy: internal error: runtime routine %s is missing\n",name); exit(1); }
+    if(!found){ fprintf(stderr,"plainpy: internal error: runtime routine %s is missing\n",name); exit(1); }
 }
 
 /* Append the used blocks of one kind, in library order. */

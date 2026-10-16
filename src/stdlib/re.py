@@ -9,7 +9,7 @@ that Pattern._run executes with an explicit backtracking stack.
 In compiled programs: patterns are str only; findall gives a list of str (patterns
 with at most one group); flags are plain ints."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _G = TypeVar("_G")
 _P = TypeVar("_P")

@@ -1,5 +1,5 @@
-#ifndef MPY_TOKENS_H
-#define MPY_TOKENS_H
+#ifndef PPY_TOKENS_H
+#define PPY_TOKENS_H
 
 #include "util.h"
 
@@ -21,4 +21,4 @@ typedef enum {
    an f-string's format piece: "%<printf spec>", a NUL, "%<Python spec>", with i=1; bytes: i=2) */
 typedef struct { TokKind kind; char *text; int64_t len; int64_t i; double f; int is_float; int line; } Tok;   /* len: text's bytes (a str may hold NULs) */
 
-#endif /* MPY_TOKENS_H */
+#endif /* PPY_TOKENS_H */

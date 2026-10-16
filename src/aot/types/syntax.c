@@ -4,12 +4,12 @@
 
 #include "check.h"
 
-Expr *xnew(ExprKind k, int line){ Expr *e=MPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
+Expr *xnew(ExprKind k, int line){ Expr *e=PPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
 void xpush(Expr *e, Expr *item){
     if(e->count==e->cap){ e->cap=e->cap?e->cap*2:4; e->items=(Expr**)xrealloc(e->items,sizeof(Expr*)*(size_t)e->cap); }
     e->items[e->count++]=item;
 }
-MPY_NORETURN static void parse_fail(AotUnit *u, int line, const char *msg){
+PPY_NORETURN static void parse_fail(AotUnit *u, int line, const char *msg){
     fprintf(stderr,"%s:%d: error: %s\n",u->path?u->path:"<source>",line,msg); exit(1);
 }
 
@@ -21,7 +21,7 @@ int aot_is_annotation_only(AotUnit *u, Stmt *s){ (void)u; return s->kind==STMT_E
 /* targets "=" ... value | target augop value | target ":" annotation ["=" value] */
 AAssign *aot_assign(AotUnit *u, Stmt *s){
     if(s->aux) return (AAssign*)s->aux;
-    AAssign *a=MPY_NEW0(AAssign);
+    AAssign *a=PPY_NEW0(AAssign);
     if(s->ntargets>16) parse_fail(u,s->line,"too many assignment targets");
     for(int i=0;i<s->ntargets;i++) a->target[a->ntarget++]=s->targets[i];
     a->value=s->value; a->aug=(TokKind)s->aug; a->ann=s->ann;
@@ -29,14 +29,14 @@ AAssign *aot_assign(AotUnit *u, Stmt *s){
 }
 AWith *aot_with(AotUnit *u, Stmt *s){
     if(s->aux) return (AWith*)s->aux;
-    AWith *w=MPY_NEW0(AWith);
+    AWith *w=PPY_NEW0(AWith);
     if(s->ntargets>8) parse_fail(u,s->line,"too many with items");
     for(int i=0;i<s->ntargets;i++){ w->e[w->n]=s->targets[i]; w->as[w->n]=s->withas[i]; w->n++; }
     s->aux=w; return w;
 }
 ADel *aot_del(AotUnit *u, Stmt *s){
     if(s->aux) return (ADel*)s->aux;
-    ADel *d=MPY_NEW0(ADel);
+    ADel *d=PPY_NEW0(ADel);
     if(s->ntargets>16) parse_fail(u,s->line,"too many del targets");
     for(int i=0;i<s->ntargets;i++) d->t[d->n++]=s->targets[i];
     s->aux=d; return d;
@@ -45,7 +45,7 @@ ADel *aot_del(AotUnit *u, Stmt *s){
 APrint *aot_print(AotUnit *u, Stmt *s){
     if(s->kind!=STMT_EXPR || s->ann_only || !s->expr || s->expr->kind!=EXPR_CALL || s->expr->a->kind!=EXPR_NAME || strcmp(s->expr->a->name,"print")) return NULL;
     if(s->aux) return (APrint*)s->aux;
-    APrint *pr=MPY_NEW0(APrint);
+    APrint *pr=PPY_NEW0(APrint);
     Expr *call=s->expr;
     for(int i=0;i<call->count;i++){ Expr *v=call->items[i];
         if(v->akind==3){

@@ -8,7 +8,7 @@ In compiled programs datetime is not a subclass of date (both derive from _YMD),
 a datetime is not accepted where a date is wanted; tzinfo subclasses work."""
 import sys
 import time as _time
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _T = TypeVar("_T")
 _U = TypeVar("_U")

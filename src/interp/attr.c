@@ -214,7 +214,7 @@ static Value special_attr(Value o, const char *n, int *found){
             if(!strcmp(n,"__kwdefaults__")) return f->kwdefaults?v_obj(f->kwdefaults):v_none();
             if(!strcmp(n,"__globals__")) return v_obj(f->globals);
             if(!strcmp(n,"__closure__")) return f->closure?v_obj(f->closure):v_none();
-            if(!strcmp(n,"__minipy_types__")){ Value d=mp_dict(); CodeObj *co=f->code;     /* (minipy.endpoint) the type each parameter names */
+            if(!strcmp(n,"__plainpy_types__")){ Value d=mp_dict(); CodeObj *co=f->code;    /* (plainpy.endpoint) the type each parameter names */
                 if(co->annots) for(int i=0;i<co->argc+co->kwonly;i++) if(co->annots[i]) mp_dict_set(AS_DICT(d),v_obj(co->varnames[i]),mp_str(co->annots[i]));
                 return d; }
             if(!strcmp(n,"__annotations__")){ Value d=mp_dict(); CodeObj *co=f->code;
@@ -224,7 +224,7 @@ static Value special_attr(Value o, const char *n, int *found){
                 if(!f->code->nann) return v_none();
                 NativeObj *b=(NativeObj*)mp_alloc(T_native,sizeof(NativeObj)); b->name="__annotate__"; b->fn=fn_annotate; b->self=o; b->is_method=1;
                 return v_obj(b); }
-            if(!strcmp(n,"__mpy_annotation_texts__")){ Value d=mp_dict(); CodeObj *co=f->code;   /* (annotationlib: Format.STRING / FORWARDREF) */
+            if(!strcmp(n,"__ppy_annotation_texts__")){ Value d=mp_dict(); CodeObj *co=f->code;   /* (annotationlib: Format.STRING / FORWARDREF) */
                 for(int i=0;i<co->nann;i++) mp_dict_set(AS_DICT(d),mp_str(co->annname[i]),mp_str(co->anntext[i]));
                 return d; }
             break; }

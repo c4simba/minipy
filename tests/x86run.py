@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run i386 programs made by `minipy --compile` on any host (an arm64 Mac, say).
+"""Run i386 programs made by `plainpy --compile` on any host (an arm64 Mac, say).
 
     python3 tests/x86run.py [--trace-syscalls] program [args...]
 
@@ -54,7 +54,7 @@ class Exit(Exception):
     def __init__(self, code): self.code = code
 
 def kpck_unpack(data):
-    """A file packed by kpack (or minipy --compile --target kolibri): unpacked
+    """A file packed by kpack (or plainpy --compile --target kolibri): unpacked
     as the KolibriOS kernel does it (unpacker.inc) - the LZMA stream (lc=3,
     lp=0, pb=2, no header, its first code dword little-endian), then the
     calltrick: E8 / E9 (method 0x80: and 0F 8x) followed by the marker byte
@@ -593,7 +593,7 @@ class Emu:
     PID, SLOT = 4242, 4
     TMP0 = '/tmp0/1'
     TMP0_FILES = {'hello.txt': b'Hello from the RAM disk!\nSecond line.\n',
-                  'docs/readme.txt': b'MiniPy on KolibriOS\n\nA file browser example.\n',
+                  'docs/readme.txt': b'PlainPy on KolibriOS\n\nA file browser example.\n',
                   'docs/notes.txt': b'notes',
                   'docs/old/': None,
                   'kernel.mnt': bytes(range(256)) * 12,

@@ -78,7 +78,7 @@ void gc_analyze(void){
     gg->gc_cls=(unsigned char*)xmalloc((size_t)ncls); memset(gg->gc_cls,0,(size_t)ncls);
     gg->gc_sub=(signed char*)xmalloc((size_t)ncls); memset(gg->gc_sub,-1,(size_t)ncls);
     gg->gc_clo=(unsigned char*)xmalloc((size_t)nfn); memset(gg->gc_clo,0,(size_t)nfn);
-    if(getenv("MPY_NO_GC")) return;
+    if(getenv("PPY_NO_GC")) return;
     int *clo=(int*)xmalloc(sizeof(int)*(size_t)nfn), n=ncls;
     for(int i=0;i<nfn;i++) clo[i]=-1;
     for(int i=0;i<p->nfuncs;i++){ AFunc *fn=p->funcs[i]; if(!fn->unused && (fn->ncaps || dyn_defaults(fn))) clo[fn->id]=n++; }
@@ -103,7 +103,7 @@ void gc_analyze(void){
     for(int i=0;i<p->nclasses;i++) if(g.cyc[p->classes[i]->id]){ gg->gc_cls[p->classes[i]->id]=1; gg->gc_on=1; }
     for(int i=0;i<nfn;i++) if(clo[i]>=0 && g.cyc[clo[i]]){ gg->gc_clo[i]=1; gg->gc_on=1; }
     gg->gc_func=g.cyc[g.fnode];
-    if(getenv("MPY_GC_TRACE")){
+    if(getenv("PPY_GC_TRACE")){
         for(int i=0;i<p->nclasses;i++) if(gg->gc_cls[p->classes[i]->id]) fprintf(stderr,"gc: class %s\n",p->classes[i]->name);
         for(int i=0;i<p->nfuncs;i++) if(gg->gc_clo[p->funcs[i]->id]) fprintf(stderr,"gc: closures of %s\n",p->funcs[i]->name);
         if(gg->gc_func) fprintf(stderr,"gc: function values\n"); }

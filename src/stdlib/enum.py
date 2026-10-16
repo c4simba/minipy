@@ -1801,7 +1801,7 @@ if not sys._compiled:
 if sys._compiled:
     # Compiled programs: the bases. The compiler writes each enum's members, value, repr and
     # lookups (Color(1), Color["RED"], iterating Color); a member's value has one type per enum.
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _C = TypeVar("_C")
 

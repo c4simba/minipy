@@ -1,10 +1,10 @@
-"""Miscellaneous operating system interfaces: the parts of CPython's os minipy has.
+"""Miscellaneous operating system interfaces: the parts of CPython's os plainpy has.
 
-Files, folders and descriptors work on every platform minipy runs on, KolibriOS
+Files, folders and descriptors work on every platform plainpy runs on, KolibriOS
 included (see _os for the system calls under them); os.path is posixpath."""
 import sys
 import _os
-from _mpy_typing import Callable
+from _ppy_typing import Callable
 import posixpath as path
 from _os import (O_RDONLY, O_WRONLY, O_RDWR, O_ACCMODE, O_CREAT, O_EXCL, O_NOCTTY, O_TRUNC, O_APPEND, O_NONBLOCK,
                  O_DIRECTORY, O_CLOEXEC, SEEK_SET, SEEK_CUR, SEEK_END, F_OK, R_OK, W_OK, X_OK,

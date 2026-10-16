@@ -407,7 +407,7 @@ if sys._compiled:
     # replaceable; catch_warnings() always gives a list (filled when record=True).
     import re as _re
     import linecache as _linecache
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _M = TypeVar("_M")
     _S = TypeVar("_S")

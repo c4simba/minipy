@@ -5,7 +5,7 @@ always makes GNUTranslations (no class_), install() is not available (use _ = t.
 import os
 import sys
 import struct
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["NullTranslations", "GNUTranslations", "Catalog", "bindtextdomain", "find", "translation", "install",
            "textdomain", "dgettext", "dngettext", "gettext", "ngettext", "pgettext", "dpgettext", "npgettext",

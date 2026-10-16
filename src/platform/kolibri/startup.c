@@ -46,11 +46,11 @@ void *kos_realloc(void *p, size_t n){
 
 extern void _pei386_runtime_relocator(void);
 
-void mpy_platform_init(void){
-    fprintf(stderr, "[minipy] start\n"); fflush(stderr);
-    fprintf(stderr, "[minipy] calling reloc\n"); fflush(stderr);
+void ppy_platform_init(void){
+    fprintf(stderr, "[plainpy] start\n"); fflush(stderr);
+    fprintf(stderr, "[plainpy] calling reloc\n"); fflush(stderr);
     _pei386_runtime_relocator();
-    fprintf(stderr, "[minipy] reloc ok\n"); fflush(stderr);
+    fprintf(stderr, "[plainpy] reloc ok\n"); fflush(stderr);
     /* Initialize process heap (required before any malloc) - f68.11 */
     {
         int heap_ptr;
@@ -58,7 +58,7 @@ void mpy_platform_init(void){
             : "=a"(heap_ptr)
             : "a"(68), "b"(11)
             : "memory");
-        fprintf(stderr, "[minipy] heap init: ptr=0x%x\n", heap_ptr);
+        fprintf(stderr, "[plainpy] heap init: ptr=0x%x\n", heap_ptr);
         fflush(stderr);
     }
     /* Bring the console up now (needs the heap) so *all* output -- including
@@ -67,36 +67,36 @@ void mpy_platform_init(void){
     kol_console_init();
 }
 
-void mpy_platform_shutdown(void){
+void ppy_platform_shutdown(void){
     kol_console_deinit();
 }
 
-#ifndef MPY_FS_DEFAULT_IMPORT_DIR
-#define MPY_FS_DEFAULT_IMPORT_DIR "."
+#ifndef PPY_FS_DEFAULT_IMPORT_DIR
+#define PPY_FS_DEFAULT_IMPORT_DIR "."
 #endif
-#ifndef MPY_DEFAULT_SCRIPT
-#define MPY_DEFAULT_SCRIPT MPY_FS_DEFAULT_IMPORT_DIR "/main.py"
+#ifndef PPY_DEFAULT_SCRIPT
+#define PPY_DEFAULT_SCRIPT PPY_FS_DEFAULT_IMPORT_DIR "/main.py"
 #endif
 
-const char *mpy_platform_default_script(void){ return MPY_DEFAULT_SCRIPT; }
+const char *ppy_platform_default_script(void){ return PPY_DEFAULT_SCRIPT; }
 
 /* MENUET header buffers (see kos-app-fix.lds): the kernel copies the launch
    command line into ___kosapp_cmdline and the program path into ___kosapp_name.
    The PE toolchain prepends one underscore, so the C names carry two. */
 extern char __kosapp_cmdline[];
 extern char __kosapp_name[];
-const char *mpy_platform_cmdline(void){ return __kosapp_cmdline; }
-const char *mpy_platform_exe_path(void){ return __kosapp_name; }
-void mpy_platform_make_executable(const char *path){ (void)path; }
+const char *ppy_platform_cmdline(void){ return __kosapp_cmdline; }
+const char *ppy_platform_exe_path(void){ return __kosapp_name; }
+void ppy_platform_make_executable(const char *path){ (void)path; }
 
-void mpy_platform_banner(const char *script_path){
+void ppy_platform_banner(const char *script_path){
     kol_console_init();
-    kol_console_puts("MiniPy - KolibriOS\n\r");
+    kol_console_puts("PlainPy - KolibriOS\n\r");
     kol_console_puts(script_path ? script_path : "(default)");
     kol_console_puts("\n\r");
 }
 
-int mpy_platform_exec(const char *path, char **argv){
+int ppy_platform_exec(const char *path, char **argv){
     static char args[1024]; size_t n=0;                      /* (its arguments as one string: KolibriOS has no argv) */
     for(int i=1;argv[i];i++){
         size_t l=strlen(argv[i]); int quote=strchr(argv[i],' ')!=NULL;
@@ -107,12 +107,12 @@ int mpy_platform_exec(const char *path, char **argv){
         if(quote) args[n++]='"';
     }
     args[n]=0;
-    return mpy_platform_run(path,args)<0 ? -1 : 0;
+    return ppy_platform_run(path,args)<0 ? -1 : 0;
 }
 
 /* f70.7 starts the program; KolibriOS has no wait(), so poll fn 18.21 (slot of
    a PID, 0 once the process is gone) until it exits. */
-int mpy_platform_run(const char *program, const char *args){
+int ppy_platform_run(const char *program, const char *args){
     unsigned char bi[300] __attribute__((aligned(16)));
     memset(bi, 0, sizeof bi);
     *(int*)(bi + 0) = 7;               /* subfunction: start program */

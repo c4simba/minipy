@@ -6,7 +6,7 @@ namedtuple makes subclasses of tuple, as in CPython. Compiled programs get class
 of their own that do the same (isinstance(Counter(), dict) is False there); they
 have no namedtuple or ChainMap (a dataclass or typing.NamedTuple instead)."""
 import sys
-from _mpy_typing import Callable, Generic, TypeVar
+from _ppy_typing import Callable, Generic, TypeVar
 
 T = TypeVar("T")
 K = TypeVar("K")

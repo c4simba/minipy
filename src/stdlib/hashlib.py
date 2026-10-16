@@ -1,6 +1,6 @@
 """Secure hashes and message digests (CPython's hashlib, in Python): md5, sha1,
 sha224, sha256, sha384, sha512, new(), pbkdf2_hmac(), file_digest().
-(SHA-512's 64-bit words are kept as two 32-bit halves: minipy's ints are 64-bit
+(SHA-512's 64-bit words are kept as two 32-bit halves: plainpy's ints are 64-bit
 signed numbers.)"""
 
 algorithms_guaranteed = frozenset(["md5", "sha1", "sha224", "sha256", "sha384", "sha512"])

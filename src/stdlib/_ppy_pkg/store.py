@@ -1,10 +1,10 @@
-"""The store: every package minipy downloaded, once per machine.
+"""The store: every package plainpy downloaded, once per machine.
 
-    ~/.minipy/store/<name>-<version>-<sha256[:16]>/   a wheel unpacked (read only)
-    ~/.minipy/cache/<sha256>.whl                       the wheel as downloaded
+    ~/.plainpy/store/<name>-<version>-<sha256[:16]>/  a wheel unpacked (read only)
+    ~/.plainpy/cache/<sha256>.whl                      the wheel as downloaded
 
-(MINIPY_HOME instead of ~/.minipy.) A project uses the store through links in
-its .minipy/site - nothing copied, no virtual environment; `minipy vendor`
+(PLAINPY_HOME instead of ~/.plainpy.) A project uses the store through links in
+its .plainpy/site - nothing copied, no virtual environment; `plainpy vendor`
 copies them instead (a project to take elsewhere, KolibriOS)."""
 import hashlib
 import os
@@ -18,10 +18,10 @@ class StoreError(Exception):
 
 
 def home():
-    h = os.environ.get("MINIPY_HOME", "")
+    h = os.environ.get("PLAINPY_HOME", "")
     if h:
         return h
-    return os.path.join(os.environ.get("HOME", "."), ".minipy")
+    return os.path.join(os.environ.get("HOME", "."), ".plainpy")
 
 
 def _sha256(path):
@@ -40,7 +40,7 @@ def fetch(pkg):
     """The package's folder in the store: downloaded (its sha256 checked) and
     unpacked unless it is there already."""
     dest = path_of(pkg)
-    if os.path.exists(os.path.join(dest, ".minipy-store")):
+    if os.path.exists(os.path.join(dest, ".plainpy-store")):
         return dest
     cache = os.path.join(home(), "cache")
     os.makedirs(cache, exist_ok=True)
@@ -67,7 +67,7 @@ def fetch(pkg):
         z.close()
     except (zipfile.BadZipFile, OSError) as e:
         raise StoreError("%s: cannot unpack: %s" % (pkg.filename, e))
-    with open(os.path.join(tmp, ".minipy-store"), "w") as f:
+    with open(os.path.join(tmp, ".plainpy-store"), "w") as f:
         f.write("%s %s %s\n" % (pkg.name, pkg.version, pkg.sha256))
     if os.path.exists(dest):
         shutil.rmtree(dest)

@@ -115,7 +115,7 @@ int self_nonnull(AFunc *fn){
     return fn && fn->cls && fn->def && !fn->is_static && !fn->is_clsm && fn->nparams>0 && !fn->value_used && !fn->ndeco && !fn->unbound_called
         && !fn->is_property && !fn->is_async && !fn->is_gen && !fn->outer && !fn->lam && !fn->genexp
         && (strncmp(fn->name,"__",2) || !strcmp(fn->name,"__init__"))
-        && !fn->params[0]->nbind && !fn->params[0]->cell && !getenv("MPY_SELF_CHECKS");
+        && !fn->params[0]->nbind && !fn->params[0]->cell && !getenv("PPY_SELF_CHECKS");
 }
 int known_object(F *f, Expr *x){              /* x is self of such a method */
     if(!x || x->kind!=EXPR_NAME || !self_nonnull(f->fn)) return 0;

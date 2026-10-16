@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Compiled minipy against CPython: the same programs, timed both ways.
+"""Compiled plainpy against CPython: the same programs, timed both ways.
 
     python3 tests/bench/run.py [--runs N] [--interp] [name ...]
 
 Each tests/bench/<name>.py is a plain Python program that runs for a few
 seconds in CPython and prints a line that does not depend on the machine.
-It is compiled with `./minipy --compile` (for the system minipy runs on:
+It is compiled with `./plainpy --compile` (for the system plainpy runs on:
 macos on a Mac, linux elsewhere), then CPython and the compiled program run
 --runs times each (3 by default); the best (lowest) wall time of each counts,
 which leaves out most of what else the machine does. Their outputs must be
-the same. --interp times minipy's interpreter too (`./minipy name.py`).
+the same. --interp times plainpy's interpreter too (`./plainpy name.py`).
 
     benchmark   CPython    compiled   speed-up
     loops         3.51 s     1.15 s      3.1x
@@ -27,7 +27,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-MINIPY = os.environ.get("MINIPY", os.path.join(ROOT, "minipy"))
+PLAINPY = os.environ.get("PLAINPY", os.path.join(ROOT, "plainpy"))
 OUT = os.path.join(ROOT, "build", "bench")
 PYTHON = os.environ.get("PYTHON", sys.executable)
 
@@ -74,7 +74,7 @@ def main():
     for name in names:
         src = os.path.join(HERE, name + ".py")
         exe = os.path.join(OUT, name)
-        c = subprocess.run([MINIPY, "--compile", src, "-o", exe], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        c = subprocess.run([PLAINPY, "--compile", src, "-o", exe], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if c.returncode != 0:
             print("%-10s does not compile:\n%s" % (name, c.stdout.decode(errors="replace")))
             continue
@@ -82,7 +82,7 @@ def main():
         tc, outc = best_time([exe], runs)
         line = "%-10s %8.2f s %8.2f s %8.1fx" % (name, tp, tc, tp / tc)
         if interp:
-            ti, outi = best_time([MINIPY, src], runs)
+            ti, outi = best_time([PLAINPY, src], runs)
             line += " %10.2f s" % ti
             if outi != outp:
                 line += "  (interpreter: other output)"

@@ -2,7 +2,7 @@
 check_output, getoutput, getstatusoutput, CompletedProcess, CalledProcessError, TimeoutExpired,
 PIPE, STDOUT, DEVNULL, list2cmdline.
 
-Linux (and the hosts where minipy runs Linux's system calls): fork + execve, pipes, waitpid.
+Linux (and the hosts where plainpy runs Linux's system calls): fork + execve, pipes, waitpid.
 KolibriOS: the program is started (function 70.7) with the arguments as one string; no pipes, and
 its exit status is not known (0 when it has ended).
 
@@ -14,7 +14,7 @@ import os
 import time
 import select
 import _os
-from _mpy_typing import Generic, TypeVar
+from _ppy_typing import Generic, TypeVar
 
 __all__ = ["Popen", "PIPE", "STDOUT", "call", "check_call", "getstatusoutput", "getoutput", "check_output", "run",
            "CalledProcessError", "DEVNULL", "SubprocessError", "TimeoutExpired", "CompletedProcess", "list2cmdline"]

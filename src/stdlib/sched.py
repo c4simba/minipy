@@ -11,7 +11,7 @@ import heapq
 import threading
 from time import monotonic as _time
 import time as _timemod
-from _mpy_typing import Callable, TypeVar
+from _ppy_typing import Callable, TypeVar
 
 __all__ = ["scheduler"]
 

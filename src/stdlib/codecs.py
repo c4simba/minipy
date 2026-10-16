@@ -7,7 +7,7 @@ encoding; the interpreter loads it when one is asked for). Error handlers:
 strict, ignore, replace, backslashreplace, xmlcharrefreplace (encoding). The
 compiler sends every encode()/decode() of a program here."""
 import sys
-from _mpy_typing import Callable
+from _ppy_typing import Callable
 
 BOM_UTF8 = b"\xef\xbb\xbf"
 BOM_UTF16_LE = b"\xff\xfe"

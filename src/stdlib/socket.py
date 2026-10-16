@@ -1,6 +1,6 @@
 """socket: network connections over IPv4 (TCP and UDP), as CPython's socket.
 
-Linux: the socket system calls (minipy emulates them on other hosts). KolibriOS:
+Linux: the socket system calls (plainpy emulates them on other hosts). KolibriOS:
 function 75. Its stack has no getsockname/getpeername (they give the address
 the socket was bound/connected to), UDP sends go to the address connect() gave
 (sendto connects first), and shutdown() is only remembered.
@@ -8,7 +8,7 @@ the socket was bound/connected to), UDP sends go to the address connect() gave
 Timeouts (settimeout) wait with poll(); on KolibriOS receiving and accepting
 are retried every 10 ms until the time is up, other calls block.
 
-Host names resolve through /etc/hosts and minipy's own DNS query to the name
+Host names resolve through /etc/hosts and plainpy's own DNS query to the name
 server of /etc/resolv.conf (KolibriOS: the one its network settings hold)."""
 import sys
 import _os

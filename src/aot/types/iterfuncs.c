@@ -18,13 +18,13 @@ void take_sort_kwargs(Ck *c, Expr *e, int allow_reverse){
 }
 /* key=len / key=abs / key=str.lower: the same as lambda k: len(k) / ... */
 static Expr *key_as_lambda(Ck *c, Expr *key){
-    if(key->kind==EXPR_CALL && key->count==1 && !key->items[0]->akind){            /* cmp_to_key(f): lambda k: __mpy_CmpKey(k, f) */
+    if(key->kind==EXPR_CALL && key->count==1 && !key->items[0]->akind){            /* cmp_to_key(f): lambda k: __ppy_CmpKey(k, f) */
         Expr *fn=key->a; ASym *s=fn->kind==EXPR_NAME ? lookup(c,fn->name) : NULL;
         if((s && s->kind==AS_SYS && !strcmp((const char*)s->p,"functools.cmp_to_key")) || (fn->kind==EXPR_ATTRIBUTE && is_bmod(c,fn->a,"functools") && !strcmp(fn->name,"cmp_to_key"))){
-            Expr *call=xnew(EXPR_CALL,key->line); call->a=name_expr("__mpy_CmpKey",key->line);
+            Expr *call=xnew(EXPR_CALL,key->line); call->a=name_expr("__ppy_CmpKey",key->line);
             xpush(call,name_expr("__key",key->line)); xpush(call,key->items[0]);
             Expr *lam=xnew(EXPR_LAMBDA,key->line); lam->a=call;
-            lam->eparams=MPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
+            lam->eparams=PPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
             return lam; } }
     if(key->kind==EXPR_CALL && key->count>=1){                                   /* operator.itemgetter(i, ...), attrgetter('a'), methodcaller('m', ...) */
         Expr *fn=key->a; const char *opn=NULL;
@@ -47,7 +47,7 @@ static Expr *key_as_lambda(Ck *c, Expr *key){
                 if(n==1) body=parts[0];
                 else { body=xnew(EXPR_TUPLE,line); for(int i=0;i<n;i++) xpush(body,parts[i]); } }
             Expr *lam=xnew(EXPR_LAMBDA,line); lam->a=body;
-            lam->eparams=MPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
+            lam->eparams=PPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
             return lam; } }
     int builtin_name = key->kind==EXPR_NAME && !lookup(c,key->name);
     int str_method = key->kind==EXPR_ATTRIBUTE && key->a->kind==EXPR_NAME && !strcmp(key->a->name,"str") && !lookup(c,"str");
@@ -57,7 +57,7 @@ static Expr *key_as_lambda(Ck *c, Expr *key){
     if(builtin_name){ call->a=key; xpush(call,param); }
     else { Expr *m=xnew(EXPR_ATTRIBUTE,key->line); m->a=param; m->name=key->name; call->a=m; }
     Expr *lam=xnew(EXPR_LAMBDA,key->line); lam->a=call;
-    lam->eparams=MPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
+    lam->eparams=PPY_NEW_ARR(char*,1); lam->eparams[0]="__key"; lam->neparam=1;
     return lam;
 }
 Ty *ck_sort_key(Ck *c, Expr *key, Ty *elem, int line){
@@ -110,7 +110,7 @@ Ty *ck_mapfilter(Ck *c, Expr *e, const char *name){
     for(int i=0;i<e->count;i++) if(e->items[i]->akind) ck_err(c,e->line,"%s() takes positional arguments",name);
     if(nit<1 || (isfilter && nit!=1)) ck_err(c,e->line,isfilter?"filter() takes a function and an iterable":"map() takes a function and iterables");
     if(nit>8) ck_err(c,e->line,"map() over more than 8 iterables is not supported in compiled code");
-    Expr *fn=e->items[0], *body; char **vars=MPY_NEW_ARR(char*,8);
+    Expr *fn=e->items[0], *body; char **vars=PPY_NEW_ARR(char*,8);
     static const char *hidden[8]={"__m0","__m1","__m2","__m3","__m4","__m5","__m6","__m7"};
     if(fn->kind==EXPR_LAMBDA){
         if(fn->neparam!=nit) ck_err(c,e->line,"the lambda of %s() takes %d argument%s",name,nit,nit==1?"":"s");
@@ -128,12 +128,12 @@ Ty *ck_mapfilter(Ck *c, Expr *e, const char *name){
     Expr *it=e->items[1];
     if(nit>=2){ it=xnew(EXPR_CALL,e->line); it->a=name_expr("zip",e->line); for(int j=1;j<=nit;j++) xpush(it,e->items[j]); }
     e->kind=EXPR_COMPREHENSION; e->comp_kind='L';
-    e->clauses=MPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
+    e->clauses=PPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
     CompClause *cl=&e->clauses[0]; cl->vars=vars; cl->nvars=nit; cl->iter=it;
     if(nit>2){                                          /* map(f, a, b, c): for (x, y, z) in zip(a, b, c) */
         Expr *tu=xnew(EXPR_TUPLE,e->line); for(int j=0;j<nit;j++) xpush(tu,name_expr(vars[j],e->line));
-        char **one=MPY_NEW_ARR(char*,1); one[0]="__mt"; cl->vars=one; cl->nvars=1; cl->target=tu; }
-    if(isfilter){ cl->conds=MPY_NEW_ARR(Expr*,1); cl->conds[0]=body; cl->ncond=1; e->a=name_expr(vars[0],e->line); }
+        char **one=PPY_NEW_ARR(char*,1); one[0]="__mt"; cl->vars=one; cl->nvars=1; cl->target=tu; }
+    if(isfilter){ cl->conds=PPY_NEW_ARR(Expr*,1); cl->conds[0]=body; cl->ncond=1; e->a=name_expr(vars[0],e->line); }
     else e->a=body;
     XInfo *xi=xinfo(e); xi->kind=X_NONE;
     return ck_comprehension(c,e);
@@ -141,7 +141,7 @@ Ty *ck_mapfilter(Ck *c, Expr *e, const char *name){
 /* e (a call) becomes the comprehension [elem for vars in iter] ('L') or {k: v ...} ('D') */
 void make_comprehension(Expr *e, int kind, Expr *elem, Expr *val, char **vars, int nvars, Expr *iter){
     e->kind=EXPR_COMPREHENSION; e->comp_kind=kind; e->a=elem; e->b=val;
-    e->clauses=MPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
+    e->clauses=PPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
     CompClause *cl=&e->clauses[0]; cl->vars=vars; cl->nvars=nvars; cl->iter=iter;
     xinfo(e)->kind=X_NONE;
 }
@@ -152,7 +152,7 @@ Ty *ck_pairs(Ck *c, Expr *e, const char *name){
     if(name[0]=='e' && (e->count<1||e->count>2)) ck_err(c,e->line,"enumerate() takes 1 or 2 arguments");
     Expr *it=xnew(EXPR_CALL,e->line); it->a=name_expr(name,e->line);
     for(int i=0;i<e->count;i++) xpush(it,e->items[i]);
-    char **vars=MPY_NEW_ARR(char*,1); vars[0]="__p0";            /* [t for t in zip(...)]: the tuples */
+    char **vars=PPY_NEW_ARR(char*,1); vars[0]="__p0";            /* [t for t in zip(...)]: the tuples */
     make_comprehension(e,'L',name_expr("__p0",e->line),NULL,vars,1,it);
     return ck_comprehension(c,e);
 }
@@ -161,8 +161,8 @@ Ty *ck_iter(Ck *c, Expr *e){
     ck_positional(c,e,1,1,"iter");
     Expr *it=e->items[0];
     e->kind=EXPR_COMPREHENSION; e->comp_kind='G';
-    e->clauses=MPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
-    CompClause *cl=&e->clauses[0]; cl->vars=MPY_NEW_ARR(char*,1); cl->vars[0]="__it"; cl->nvars=1; cl->iter=it;
+    e->clauses=PPY_NEW0(CompClause); e->nclause=1; e->ccap=1;
+    CompClause *cl=&e->clauses[0]; cl->vars=PPY_NEW_ARR(char*,1); cl->vars[0]="__it"; cl->nvars=1; cl->iter=it;
     e->a=name_expr("__it",e->line);
     xinfo(e)->kind=X_NONE;
     return ck_genexp(c,e);
@@ -180,7 +180,7 @@ Ty *ck_reduce(Ck *c, Expr *e){
         if(ty_find(el)->k==TY_OBJ && numeric(acc) && assignable(c,el,acc)) acc=el; }      /* sum of complex numbers: 0 is 0j */
     Expr *fn=e->items[0];
     if(!xi->cvars){
-        xi->cvars=MPY_NEW_ARR(AVar*,2);
+        xi->cvars=PPY_NEW_ARR(AVar*,2);
         const char *n0="__r0", *n1="__r1";
         if(fn->kind==EXPR_LAMBDA){ if(fn->neparam!=2) ck_err(c,line,"the function of reduce() takes two arguments"); n0=fn->eparams[0]; n1=fn->eparams[1]; xi->key=fn->a; }
         else { if(fn->kind!=EXPR_NAME && fn->kind!=EXPR_ATTRIBUTE) ck_err(c,line,"reduce() needs a lambda or a function name in compiled code");
@@ -202,7 +202,7 @@ Ty *ck_open(Ck *c, Expr *e){
     Expr *md=NULL;
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i]; if((!a->akind && i==1) || (a->akind==3 && !strcmp(a->kw,"mode"))) md=a; }
     int binary= md && md->kind==EXPR_LITERAL && md->tok->kind==T_STRING && md->tok->i!=2 && strchr(md->tok->text,'b');
-    e->a=name_expr(binary?"__mpy_open_binary":"__mpy_open_text",e->line);
+    e->a=name_expr(binary?"__ppy_open_binary":"__ppy_open_text",e->line);
     xinfo(e)->kind=X_NONE;
     return ck_call_inner(c,e);
 }

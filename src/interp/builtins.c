@@ -7,7 +7,7 @@
 #include "interp.h"
 #include "fs.h"
 #include <math.h>
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
 #include <unistd.h>
 #endif
 
@@ -55,7 +55,7 @@ static SBuf outbuf;
 static int out_tty=-1;
 void mp_flush_stdout(void){
     if(!outbuf.n) return;
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     printf("%.*s",(int)outbuf.n,outbuf.s);
 #else
     fwrite(outbuf.s,1,(size_t)outbuf.n,stdout); fflush(stdout);
@@ -64,7 +64,7 @@ void mp_flush_stdout(void){
 }
 void mp_write_out(const char *s, int64_t n){
     sb_put(&outbuf,s,n);
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     mp_flush_stdout();
 #else
     if(out_tty<0) out_tty=isatty(1);
@@ -73,7 +73,7 @@ void mp_write_out(const char *s, int64_t n){
 }
 void mp_write_err(const char *s, int64_t n){
     mp_flush_stdout();
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     printf("%.*s",(int)n,s);
 #else
     fwrite(s,1,(size_t)n,stderr); fflush(stderr);
@@ -488,7 +488,7 @@ BI(iter){ no_kw("iter",kw); nargs("iter",argc,1,2);
     if(argc==2) return mp_iter_kind(IT_CALL,argv[0],argv[1],v_undef());
     return mp_iter(argv[0]); }
 Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
-BI(mpy_tstr){                                       /* t"...": a string.templatelib.Template */
+BI(ppy_tstr){                                       /* t"...": a string.templatelib.Template */
     (void)kw; static Value fn; if(fn.k!=V_OBJ){ Value nm=mp_str("string.templatelib"), fl=mp_list(0,NULL); mp_list_append(fl,mp_str("_from_parts"));
         Value a[4]={nm,v_none(),v_none(),fl}; Value mod=mp_builtin_import(4,a,NULL); fn=mp_getattr_s(mod,"_from_parts"); mp_gc_add_root(&fn); }
     return mp_call1(fn,mp_tuple(argc,argv)); }
@@ -669,7 +669,7 @@ BI(input){
     no_kw("input",kw); nargs("input",argc,0,1);
     if(argc){ Value s=mp_tostr(argv[0]); mp_write_out(AS_STR(s)->s,AS_STR(s)->len); }
     mp_flush_stdout();
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     char buf[1024]; kol_console_gets(buf,(int)sizeof buf);
     size_t n=strlen(buf); while(n && (buf[n-1]=='\n'||buf[n-1]=='\r')) buf[--n]=0;
     return mp_strn(buf,(int64_t)n);
@@ -784,13 +784,13 @@ Value mp_open(Value path, Value modev){
     const char *p=mp_cstr(path);
     if(mode=='r' || mode=='a'){
         char *err=NULL;
-        mpy_fs_last_len=0;
-        char *data=mpy_fs_try_read_file(p,&err);
+        ppy_fs_last_len=0;
+        char *data=ppy_fs_try_read_file(p,&err);
         if(!data){
             free(err);
             if(mode=='r'){ Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_call(v_obj(E_FileNotFoundError),3,args,NULL)); }
         } else {
-            size_t n=mpy_fs_last_len ? mpy_fs_last_len : strlen(data);
+            size_t n=ppy_fs_last_len ? ppy_fs_last_len : strlen(data);
             f->buf=data; f->len=(int64_t)n; f->cap=(int64_t)n+1;
             if(!binary && f->len>=3 && (unsigned char)data[0]==0xEF && (unsigned char)data[1]==0xBB && (unsigned char)data[2]==0xBF && 0){}
         }
@@ -798,7 +798,7 @@ Value mp_open(Value path, Value modev){
     }
     if(mode=='w'){
         char *err=NULL;
-        if(mpy_fs_write_file(p,"",0,&err)){ free(err); Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_call(v_obj(E_FileNotFoundError),3,args,NULL)); }
+        if(ppy_fs_write_file(p,"",0,&err)){ free(err); Value args[3]={v_int(2),mp_str("No such file or directory"),path}; mp_raise(mp_call(v_obj(E_FileNotFoundError),3,args,NULL)); }
     }
     if(!f->buf){ f->buf=(char*)xmalloc(64); f->cap=64; }
     return v_obj(f);
@@ -806,7 +806,7 @@ Value mp_open(Value path, Value modev){
 int mp_file_flush(FileObj *f){
     if(f->mode=='r') return 0;
     char *err=NULL;
-    if(mpy_fs_write_file(mp_cstr(f->name),f->buf?f->buf:"",(size_t)f->len,&err)){ free(err); mp_raise_t(E_OSError,"cannot write %s",mp_cstr(f->name)); }
+    if(ppy_fs_write_file(mp_cstr(f->name),f->buf?f->buf:"",(size_t)f->len,&err)){ free(err); mp_raise_t(E_OSError,"cannot write %s",mp_cstr(f->name)); }
     return 0;
 }
 
@@ -815,7 +815,7 @@ static Value so_write(int argc, Value *argv, TupleObj *kw){ (void)kw; if(argc<2|
     if(err) mp_write_err(AS_STR(argv[1])->s,AS_STR(argv[1])->len); else mp_write_out(AS_STR(argv[1])->s,AS_STR(argv[1])->len); return v_int(AS_STR(argv[1])->cplen); }
 static Value so_flush(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; mp_flush_stdout(); return v_none(); }
 static Value so_isatty(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw;
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     return v_bool(1);
 #else
     return v_bool(isatty(argv[0].u.o==sys_stderr.u.o?2:1));
@@ -950,7 +950,7 @@ void mp_init(void){
     reg("exit",bi_exit); reg("quit",bi_exit);
     mp_dict_set_s(mp_builtins,"__doc__",mp_str("Built-in functions, types, exceptions, and other objects."));
     mp_dict_set_s(mp_builtins,"__package__",mp_str("")); mp_dict_set_s(mp_builtins,"__spec__",v_none()); mp_dict_set_s(mp_builtins,"__loader__",v_none());
-    reg("filter",bi_filter); reg("reversed",bi_reversed); reg("iter",bi_iter); reg("next",bi_next); reg("anext",bi_anext); reg("__mpy_tstr__",bi_mpy_tstr); reg("aiter",bi_aiter); reg("isinstance",bi_isinstance);
+    reg("filter",bi_filter); reg("reversed",bi_reversed); reg("iter",bi_iter); reg("next",bi_next); reg("anext",bi_anext); reg("__ppy_tstr__",bi_ppy_tstr); reg("aiter",bi_aiter); reg("isinstance",bi_isinstance);
     reg("issubclass",bi_issubclass); reg("hasattr",bi_hasattr); reg("getattr",bi_getattr); reg("setattr",bi_setattr); reg("delattr",bi_delattr);
     reg("callable",bi_callable); reg("hash",bi_hash); reg("id",bi_id); reg("chr",bi_chr); reg("ord",bi_ord); reg("hex",bi_hex); reg("oct",bi_oct);
     reg("bin",bi_bin); reg("divmod",bi_divmod); reg("pow",bi_pow); reg("round",bi_round); reg("format",bi_format); reg("print",bi_print);

@@ -1,6 +1,6 @@
 """Helpers for introspecting and wrapping annotations (CPython 3.14's annotationlib).
 
-minipy keeps the source text of every annotation (as `from __future__ import
+plainpy keeps the source text of every annotation (as `from __future__ import
 annotations` would) and evaluates it when asked: the FORWARDREF and STRING
 formats come from those texts, not from running __annotate__ with fake globals."""
 import builtins
@@ -207,11 +207,11 @@ class ForwardRef:
         ))
 
     def __or__(self, other):
-        from _mpy_generic import Union
+        from _ppy_generic import Union
         return Union[self, other]
 
     def __ror__(self, other):
-        from _mpy_generic import Union
+        from _ppy_generic import Union
         return Union[other, self]
 
     def __repr__(self):
@@ -234,7 +234,7 @@ def _texts(obj):
         d = obj.__dict__.get("__annotations__", None)
         return d if isinstance(d, dict) else None
     try:
-        return obj.__mpy_annotation_texts__
+        return obj.__ppy_annotation_texts__
     except AttributeError:
         return None
 

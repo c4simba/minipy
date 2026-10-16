@@ -18,7 +18,7 @@ void ck_stmt(Ck *c, Stmt *s){
         if(e->kind==EXPR_CALL && e->a->kind==EXPR_ATTRIBUTE && !strcmp(e->a->name,"__setattr__") && e->a->a->kind==EXPR_NAME && !strcmp(e->a->a->name,"object")
            && !lookup(c,"object") && e->count==3 && e->items[1]->kind==EXPR_LITERAL && e->items[1]->tok->kind==T_STRING && e->items[1]->tok->i!=2){
             Expr *t=xnew(EXPR_ATTRIBUTE,e->line); t->a=e->items[0]; t->name=e->items[1]->tok->text; t->akind=7;    /* (7: not a frozen dataclass's check) */
-            s->kind=STMT_ASSIGN; s->targets=MPY_NEW_ARR(Expr*,1); s->targets[0]=t; s->ntargets=1; s->value=e->items[2]; s->expr=NULL; s->aux=NULL; } }
+            s->kind=STMT_ASSIGN; s->targets=PPY_NEW_ARR(Expr*,1); s->targets[0]=t; s->ntargets=1; s->value=e->items[2]; s->expr=NULL; s->aux=NULL; } }
     switch(s->kind){
         case STMT_EXPR:{
             APrint *pr=aot_print(u,s);
@@ -46,7 +46,7 @@ void ck_stmt(Ck *c, Stmt *s){
                 return; }
             if(aot_is_annotation_only(u,s)){ ck_assign(c,s); return; }
             { Expr *x=aot_expr(u,&s->expr);                                  /* sys.exit(code): raise SystemExit(code) */
-              if(x->kind==EXPR_CALL && x->a->kind==EXPR_ATTRIBUTE && !strcmp(x->a->name,"exit") && is_sys(c,x->a->a) && lookup(c,"__mpy_sysexit_int") && x->count<=1 && lookup(c,"SystemExit") && lookup(c,"SystemExit")->kind==AS_CLASS && ((AClass*)lookup(c,"SystemExit")->p)->builtin){
+              if(x->kind==EXPR_CALL && x->a->kind==EXPR_ATTRIBUTE && !strcmp(x->a->name,"exit") && is_sys(c,x->a->a) && lookup(c,"__ppy_sysexit_int") && x->count<=1 && lookup(c,"SystemExit") && lookup(c,"SystemExit")->kind==AS_CLASS && ((AClass*)lookup(c,"SystemExit")->p)->builtin){
                   x->a=name_expr("SystemExit",x->line); s->kind=STMT_RAISE; s->expr=x; s->expr2=NULL; s->aux=NULL; ck_stmt(c,s); return; } }
             { Expr *x=aot_expr(u,&s->expr); Expr *save=c->discard; c->discard=x; ck_expr(c,x); c->discard=save; }   /* (its value unused) */
             return; }
@@ -57,14 +57,14 @@ void ck_stmt(Ck *c, Stmt *s){
                 if(st<0){ st=static_none_param(c,s->expr);
                     if(st==-2){ pending(c,s->line,"the parameter tested"); return; } }   /* (its branches may need what the calls give it) */
                 if(st>=0){ s->expr=xnew(st?EXPR_TRUE:EXPR_FALSE,s->line);
-                    if(st) s->orelse_count=0; else { s->body=MPY_NEW_ARR(Stmt*,1); s->body[0]=stmt_new(STMT_PASS,NULL,s->line); s->body_count=s->body_cap=1; } } }
+                    if(st) s->orelse_count=0; else { s->body=PPY_NEW_ARR(Stmt*,1); s->body[0]=stmt_new(STMT_PASS,NULL,s->line); s->body_count=s->body_cap=1; } } }
             no_void(c,ck_cond(c,aot_expr(u,&s->expr)),s->line);
             if(s->kind==STMT_IF && s->body_count){ const char *nm; AClass *k; int r=isinstance_test(c,aot_expr(u,&s->expr),&nm,&k,1);
                 if(r<0) return;                                  /* (the variable's type is not known yet) */
                 if(r && !stores_name(c,s->body,s->body_count,nm)){   /* if isinstance(x, C): x is a C in the body */
                     if(!s->name2 || strncmp(s->name2,".narrow",7)){ char h[64]; named_hidden(c,"narrow",h,sizeof h); s->name2=xstrdup2(h);
                         Stmt *as=st_assign(nx(s->name2,s->line),ex_call("\001downcast",nx(k->symname,s->line),nx(nm,s->line),s->line),s->line);
-                        Stmt **nb=MPY_NEW_ARR(Stmt*,s->body_count+1); nb[0]=as; for(int i=0;i<s->body_count;i++) nb[i+1]=s->body[i];
+                        Stmt **nb=PPY_NEW_ARR(Stmt*,s->body_count+1); nb[0]=as; for(int i=0;i<s->body_count;i++) nb[i+1]=s->body[i];
                         s->body=nb; s->body_count++; s->body_cap=s->body_count; }
                     ck_stmt(c,s->body[0]);
                     int save=c->ncscope; cs_push(c,nm,(AVar*)lookup(c,s->name2)->p,s->line);
@@ -114,8 +114,8 @@ void ck_stmt(Ck *c, Stmt *s){
                     Ty *o=ty_find(ck_expr(c,t->a)); Expr *bounds[3]={t->b,t->c,t->d};
                     for(int k=0;k<3;k++) if(bounds[k] && bounds[k]->kind!=EXPR_NONE) expect(c,TY_INT_T,ck_expr(c,bounds[k]),s->line,"a slice bound");
                     if(o->k==TY_VAR){ pending(c,s->line,"the list"); continue; }
-                    if(o->k==TY_OBJ && aot_find_method(o->cls,"__mpy_delslice__") && d->n==1){   /* del obj[a:b]: obj.__mpy_delslice__(a, b, None) */
-                        s->kind=STMT_EXPR; s->expr=slice_call(t,"__mpy_delslice__",s->line); s->aux=NULL; s->ntargets=0; s->targets=NULL;
+                    if(o->k==TY_OBJ && aot_find_method(o->cls,"__ppy_delslice__") && d->n==1){   /* del obj[a:b]: obj.__ppy_delslice__(a, b, None) */
+                        s->kind=STMT_EXPR; s->expr=slice_call(t,"__ppy_delslice__",s->line); s->aux=NULL; s->ntargets=0; s->targets=NULL;
                         ck_stmt(c,s); return; }
                     if(o->k!=TY_LIST || o->tup) ck_err(c,s->line,"'%s' object does not support item deletion",ty_name(o));
                     xinfo(t)->ty=o; continue; }

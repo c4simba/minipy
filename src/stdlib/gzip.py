@@ -7,7 +7,7 @@ import sys
 import struct
 import time
 import zlib
-from _mpy_typing import Iterator, TypeVar
+from _ppy_typing import Iterator, TypeVar
 
 __all__ = ["BadGzipFile", "GzipFile", "open", "compress", "decompress"]
 

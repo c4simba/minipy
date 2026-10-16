@@ -1,6 +1,6 @@
 """The system layer under os, os.path and io: files, folders and the process.
 
-Everywhere but KolibriOS these are the i386 Linux system calls (minipy emulates
+Everywhere but KolibriOS these are the i386 Linux system calls (plainpy emulates
 them on other hosts, with Linux's numbers, flags and errno values). On
 KolibriOS they are the file system functions 70/80 and the current folder
 functions of 30. KolibriOS has no file descriptors: open() hands out numbers

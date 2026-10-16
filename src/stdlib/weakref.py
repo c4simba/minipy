@@ -184,7 +184,7 @@ if sys._compiled:
     # Compiled programs: the same API, typed; the references are ordinary ones (as the
     # interpreter's): an object lives while something refers to it.
     import atexit as _atexit
-    from _mpy_typing import Generic, Iterator, TypeVar
+    from _ppy_typing import Generic, Iterator, TypeVar
 
     _T = TypeVar("_T")
     _K = TypeVar("_K")

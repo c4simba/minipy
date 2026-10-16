@@ -1,9 +1,9 @@
 """The project: pyproject.toml (PEP 621: [project] dependencies) and the
-folder minipy keeps next to it, .minipy:
+folder plainpy keeps next to it, .plainpy:
 
-    .minipy/site/       the packages' top-level modules: links into the store (or copies)
-    .minipy/index       a line per module: "module package version status" (the compiler reads it)
-    .minipy/check/      what the check found, a report per package
+    .plainpy/site/      the packages' top-level modules: links into the store (or copies)
+    .plainpy/index      a line per module: "module package version status" (the compiler reads it)
+    .plainpy/check/     what the check found, a report per package
 
 pyproject.toml is edited in place: only the dependencies array is rewritten."""
 import json
@@ -21,7 +21,7 @@ class Project:
         self.root = root
         self.pyproject = os.path.join(root, "pyproject.toml")
         self.lockfile = os.path.join(root, "pylock.toml")
-        self.dot = os.path.join(root, ".minipy")
+        self.dot = os.path.join(root, ".plainpy")
         self.site = os.path.join(self.dot, "site")
         self.index = os.path.join(self.dot, "index")
         self.reports = os.path.join(self.dot, "check")
@@ -47,8 +47,8 @@ class Project:
         return [Requirement(d) for d in self.dependencies()]
 
     def settings(self):
-        """[tool.minipy]: index-url, ..."""
-        return self.data().get("tool", {}).get("minipy", {})
+        """[tool.plainpy]: index-url, ..."""
+        return self.data().get("tool", {}).get("plainpy", {})
 
     def set_dependencies(self, deps):
         with open(self.pyproject, "rb") as f:
@@ -127,7 +127,7 @@ def find(start, create=False):
             break
         d = up
     if not create:
-        raise ProjectError("no pyproject.toml here or above (`minipy add PACKAGE` makes one)")
+        raise ProjectError("no pyproject.toml here or above (`plainpy add PACKAGE` makes one)")
     root = os.path.abspath(start)
     name = canonical(os.path.basename(root)) or "project"
     write_text(os.path.join(root, "pyproject.toml"),

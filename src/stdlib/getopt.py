@@ -1,7 +1,7 @@
 """Parser for command line options (CPython's getopt): getopt(args, shortopts, longopts),
 gnu_getopt(...), GetoptError. Typed: options come back as (option, value) pairs of str."""
 import os
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["GetoptError", "error", "getopt", "gnu_getopt"]
 

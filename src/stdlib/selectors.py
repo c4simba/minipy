@@ -6,7 +6,7 @@ select(timeout) -> [(key, events)]. Compiled programs: a selector's file objects
 so are their data."""
 import sys
 import select
-from _mpy_typing import Generic, TypeVar
+from _ppy_typing import Generic, TypeVar
 
 __all__ = ["EVENT_READ", "EVENT_WRITE", "SelectorKey", "BaseSelector", "SelectSelector", "PollSelector",
            "DefaultSelector"]

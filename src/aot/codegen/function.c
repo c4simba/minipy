@@ -70,7 +70,7 @@ static void gen_genexp_body(F *f, AFunc *fn){
     for(int i=n-1;i>=0;i--){ iter_end(f,&its[i]); LBL(f,its[i].exit); iter_release(f,&its[i]); }
 }
 void emit_function(AFunc *fn){
-    F *f=MPY_NEW0(F); f->fn=fn; f->lret=new_label();
+    F *f=PPY_NEW0(F); f->fn=fn; f->lret=new_label();
     f->ret=fn->is_gen ? TY_VOID_T : fn->ret;
     cg_path=fn->mod->unit->path?fn->mod->unit->path:fn->mod->name;
     int off=8, argpos[16];
@@ -78,8 +78,8 @@ void emit_function(AFunc *fn){
     int argbytes=off-8;
     if(fn->ncaps || (fn->outer && dyn_defaults(fn))){ layout_caps(fn); f->env=frame_slot(f,4); }
     if(is_fn_body(fn)){
-        if(!getenv("MPY_NO_BORROW")) plan_borrowed(f);
-        if(!getenv("MPY_NO_MOVE")) plan_moves(f);
+        if(!getenv("PPY_NO_BORROW")) plan_borrowed(f);
+        if(!getenv("PPY_NO_MOVE")) plan_moves(f);
         for(int i=0;i<fn->nvars;i++){ AVar *v=fn->vars[i];
             if(i<fn->nparams && !v->cell) continue;
             if(v->cell){ v->offset=frame_slot(f,4); add_ref_slot(f,v->offset); }

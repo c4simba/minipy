@@ -9,7 +9,7 @@ find / findall / findtext / iterfind take ElementPath's paths: tag, *, ., .., //
 Compiled programs: the tags of Comment() / ProcessingInstruction() elements are strings ("\\0!comment",
 "\\0?pi"), not those functions; tostring(e, encoding="unicode") is a str, other encodings bytes."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["Comment", "dump", "Element", "ElementTree", "fromstring", "fromstringlist", "indent", "iselement",
            "parse", "ParseError", "PI", "ProcessingInstruction", "register_namespace", "SubElement", "tostring",

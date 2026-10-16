@@ -1,5 +1,5 @@
-#ifndef MPY_INTERP_H
-#define MPY_INTERP_H
+#ifndef PPY_INTERP_H
+#define PPY_INTERP_H
 
 #include "util.h"
 #include "py_ast.h"
@@ -15,7 +15,7 @@
    dicts / sets, tuples, lists) and the collector, ops.c the operators,
    builtins.c the built-in functions, methods/ the methods of the built-in
    types, modules/ import and sys, math, time, random, json, asyncio,
-   functools, thread, minipy and _ctypes. The typed compiler (src/aot) gives
+   functools, thread, plainpy and _ctypes. The typed compiler (src/aot) gives
    compiled programs the same behaviour; tests/typed runs every program both
    ways. */
 
@@ -166,7 +166,7 @@ typedef struct Thread {
     int id;
 } Thread;
 extern Thread *mp_ts;           /* the running thread (the GIL holder) */
-extern mpy_lock mp_gil;
+extern ppy_lock mp_gil;
 #define MP_MAX_THREADS 64
 extern Thread *mp_threads[MP_MAX_THREADS];
 extern int mp_nthreads;
@@ -320,7 +320,7 @@ Value mp_reversed_builtin(Value x);               /* (builtins.c) reversed() of 
 int mp_builtin_eq(Value a, Value b);
 Value mp_getattr_generic(Value o, Value name);
 Value mp_exc_suggestion(Value e, int with_frames);  /* (raise.c) ". Did you mean: 'x'?" for the exception's last line */
-MPY_NORETURN void mp_raise_attr(Value obj, Value name, const char *fmt, ...);   /* AttributeError with name and obj */    /* (raise.c) object.__getattribute__ */
+PPY_NORETURN void mp_raise_attr(Value obj, Value name, const char *fmt, ...);   /* AttributeError with name and obj */    /* (raise.c) object.__getattribute__ */
 Value mp_format_exception(Value e);                /* (traceback.c) a traceback's text */
 Value mp_stack_list(void);
 Value mp_frame_source(const char *file, int line, Value code, int ip);   /* (traceback.c) a traceback entry's source lines, with carets */
@@ -358,8 +358,8 @@ void    mp_gen_close_quietly(Value g);               /* close() it; what that ra
 Value   mp_await_iter(Value awaitable);          /* the iterator `await` drives */
 
 /* exceptions */
-MPY_NORETURN void mp_raise(Value exc);           /* an instance or a class */
-MPY_NORETURN void mp_raise_t(Type *t, const char *fmt, ...);
+PPY_NORETURN void mp_raise(Value exc);           /* an instance or a class */
+PPY_NORETURN void mp_raise_t(Type *t, const char *fmt, ...);
 Value   mp_exc(Type *t, const char *fmt, ...);   /* an instance */
 Value   mp_exc_args(Type *t, Value args);
 int     mp_exc_matches(Value exc, Value spec);   /* except spec: a class or a tuple of them */
@@ -422,4 +422,4 @@ typedef enum {
     I_LOAD_LOCALS, I_SETUP_ANNOTATIONS, I_DEL_SUBSCR_SLICE, I_CALL_INTRINSIC, I_LOAD_CELL, I__COUNT
 } IOp;
 
-#endif /* MPY_INTERP_H */
+#endif /* PPY_INTERP_H */

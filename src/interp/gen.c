@@ -118,7 +118,7 @@ void mp_gen_close(Value gv){
 static Type *T_agwrap;
 static Value ag_native;
 Value ag_wrap(Value v){ BoxObj *b=(BoxObj*)mp_alloc(T_agwrap,sizeof(BoxObj)); b->v=v; return v_obj(b); }
-static MPY_NORETURN void ag_stop(Value v){ mp_raise(mp_exc_args(E_StopIteration,mp_tuple(1,&v))); }
+static PPY_NORETURN void ag_stop(Value v){ mp_raise(mp_exc_args(E_StopIteration,mp_tuple(1,&v))); }
 static Value ag_step(int argc, Value *argv, TupleObj *kw){
     (void)argc; (void)kw;
     IterObj *io=(IterObj*)argv[0].u.o; Value sent=argv[1];

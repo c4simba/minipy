@@ -14,8 +14,8 @@
 
    This header is internal to src/aot/types: the checker's state (Ck) and the
    functions its files share, grouped by the file defining them. */
-#ifndef MPY_AOT_TYPES_CHECK_H
-#define MPY_AOT_TYPES_CHECK_H
+#ifndef PPY_AOT_TYPES_CHECK_H
+#define PPY_AOT_TYPES_CHECK_H
 
 #include "aot/model.h"
 #include "pystdlib.h"
@@ -37,7 +37,7 @@ typedef struct Ck {
     struct { const char *name; ASym sym; AFunc *fn; } cscope[256];   /* comprehension / except / key variables, class attributes in scope (of fn) */
     int ncscope;
     Expr *coro_ok;          /* the coroutine call being awaited / handed to asyncio */
-    int ep_value;           /* checking an argument for a minipy.Endpoint: an async function may be a value */
+    int ep_value;           /* checking an argument for a plainpy.Endpoint: an async function may be a value */
     int in_except;          /* inside an except clause (bare raise) */
     Ty **seen; int nseen, cseen;     /* strict pass: every expression type (unconstrained elements -> int) */
     jmp_buf fail;
@@ -87,7 +87,7 @@ Expr *xnew(ExprKind k, int line);
 void xpush(Expr *e, Expr *item);
 
 /* ---- unify.c: checker state, unification */
-MPY_NORETURN void ck_err(Ck *c, int line, const char *fmt, ...);
+PPY_NORETURN void ck_err(Ck *c, int line, const char *fmt, ...);
 void ck_try_begin(Ck *c, CkTry *t);
 void ck_try_end(Ck *c, CkTry *t);
 void ck_try_fail(Ck *c, CkTry *t);
@@ -250,7 +250,7 @@ void int_push(int **v, int *n, int x);
 void fspath_arg(Ck *c, Expr *a, Ty *want, Ty **t);
 void ck_args(Ck *c, Expr *e, AFunc *fn, int skip, XInfo *xi);
 
-/* ---- endpoint.c: minipy.Endpoint */
+/* ---- endpoint.c: plainpy.Endpoint */
 void sb_add(SrcBuf *b, const char *fmt, ...);
 void lit_source(Ck *c, Expr *d, SrcBuf *b, int line);
 void ep_arg(Ck *c, Ty *pt, Expr *a, int line);
@@ -312,7 +312,7 @@ int unicode_variant(Ck *c, Expr *e, AModule *mod, const char *m);
 int lit_variant(Ck *c, Expr *e, AModule *mod, const char *m);
 Ty *ck_text_loads(Ck *c, Expr *e, AModule *mod, int load);
 Ty *ck_json(Ck *c, Expr *e, const char *m);
-Ty *ck_minipy(Ck *c, Expr *e, const char *m);
+Ty *ck_plainpy(Ck *c, Expr *e, const char *m);
 Ty *ck_call(Ck *c, Expr *e);
 Ty *ck_coro(Ck *c, Expr *x);
 AVar *named_hidden(Ck *c, const char *base, char *out, size_t n);
@@ -363,4 +363,4 @@ void ck_class_attrs(Ck *c, AClass *cls);
 Ty *default_of(Ty *v, Ty *t);
 void default_elems(Ty *t);
 
-#endif /* MPY_AOT_TYPES_CHECK_H */
+#endif /* PPY_AOT_TYPES_CHECK_H */

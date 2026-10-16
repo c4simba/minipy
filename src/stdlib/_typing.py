@@ -5,7 +5,7 @@ As in CPython (Objects/typevarobject.c), the hard parts are done by typing.py:
 substitution (_typevar_subst ...), Generic[...] (_generic_class_getitem) and
 Generic subclasses (_generic_init_subclass)."""
 import sys
-from _mpy_generic import GenericAlias, Union
+from _ppy_generic import GenericAlias, Union
 
 __all__ = ["_idfunc", "TypeVar", "ParamSpec", "TypeVarTuple", "ParamSpecArgs", "ParamSpecKwargs",
            "TypeAliasType", "Generic", "Union", "NoDefault"]

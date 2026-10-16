@@ -1,6 +1,6 @@
 """Conversions between binary data and ASCII (CPython's binascii): hex, base64, CRCs."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 S = TypeVar("S")
 

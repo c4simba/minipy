@@ -1,4 +1,4 @@
-"""The typing names minipy's own standard library uses (`from _mpy_typing import ...`).
+"""The typing names plainpy's own standard library uses (`from _ppy_typing import ...`).
 
 The compiler reads this module name as typing. The interpreter gets light
 stand-ins that do not import typing.py: typing imports collections, functools,

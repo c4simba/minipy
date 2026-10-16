@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate minipy's Unicode character data from this Python's unicodedata.
+"""Generate plainpy's Unicode character data from this Python's unicodedata.
 
 One description of the code points feeds both the interpreter
 (src/interp/unicode.h) and compiled programs (the rt_unicode, rt_noprint and

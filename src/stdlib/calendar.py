@@ -9,7 +9,7 @@ DECEMBER are ints (CPython's are IntEnum members: Day, Month), month_name / day_
 an index (not a slice), and LocaleTextCalendar / LocaleHTMLCalendar use the English names."""
 import sys
 import datetime
-from _mpy_typing import Iterator, TypeVar
+from _ppy_typing import Iterator, TypeVar
 
 _T = TypeVar("_T")
 

@@ -9,7 +9,7 @@ Not here: name aliases and named sequences in lookup() (only the characters' own
 ucd_3_2_0 (the Unicode 3.2 database). The tables (_ucd.py) are read the first time a
 function needs them."""
 import _ucd
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _D = TypeVar("_D")
 

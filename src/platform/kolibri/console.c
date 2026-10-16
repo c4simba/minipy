@@ -53,9 +53,9 @@
 
 /* Echoing every line to the debug board is an unbuffered, per-character syscall
    path that badly throttles bulk output, so it's off by default. Build with
-   -DMPY_CONSOLE_ECHO_STDERR=1 to re-enable it for debugging. */
-#ifndef MPY_CONSOLE_ECHO_STDERR
-#define MPY_CONSOLE_ECHO_STDERR 0
+   -DPPY_CONSOLE_ECHO_STDERR=1 to re-enable it for debugging. */
+#ifndef PPY_CONSOLE_ECHO_STDERR
+#define PPY_CONSOLE_ECHO_STDERR 0
 #endif
 
 static char *g_cbuf = NULL;    /* shared buffer base (header + ring) */
@@ -99,7 +99,7 @@ static int kol_send(unsigned char cmd, const void *payload, unsigned len){
         while(kol_ring_free() < total){
             int k;
             for(k = 0; k < 1024 && kol_ring_free() < total; k++)
-                mpy_thread_yield();
+                ppy_thread_yield();
             if(kol_ring_free() >= total) break;
             if(--slow < 0) return 0;
             kol_poll_delay();
@@ -250,7 +250,7 @@ void kol_console_deinit(void){
 
 void kol_console_puts(const char *s){
     if(!s)return;
-#if MPY_CONSOLE_ECHO_STDERR
+#if PPY_CONSOLE_ECHO_STDERR
     fprintf(stderr,"%s",s);                        /* debug-board echo (slow; off by default) */
 #endif
     if(!g_cok||!g_cbuf)return;

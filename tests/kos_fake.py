@@ -33,7 +33,7 @@ def log(text):
 ROOT = "/tmp0/1"
 FILES = {
     "/tmp0/1/hello.txt": "Hello from the RAM disk!\nSecond line.\n",
-    "/tmp0/1/docs/readme.txt": "MiniPy on KolibriOS\n\nA file browser example.\n",
+    "/tmp0/1/docs/readme.txt": "PlainPy on KolibriOS\n\nA file browser example.\n",
     "/tmp0/1/docs/notes.txt": "notes",
     "/tmp0/1/kernel.mnt": "",
 }

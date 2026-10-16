@@ -1,5 +1,5 @@
-# FastAPI for MiniPy: the routing part of FastAPI's API, for compiled programs
-# (minipy --compile) and the interpreter. Serve an app with uvicorn.run(app).
+# FastAPI for PlainPy: the routing part of FastAPI's API, for compiled programs
+# (plainpy --compile) and the interpreter. Serve an app with uvicorn.run(app).
 #
 #   from fastapi import FastAPI
 #
@@ -17,12 +17,12 @@
 # models), dependencies, response models, OpenAPI (/docs).
 #
 # How a function becomes a route: `fn: Endpoint` - passing a function where a
-# minipy.Endpoint is expected gives an adapter the compiler writes for it
+# plainpy.Endpoint is expected gives an adapter the compiler writes for it
 # (parameters from a dict of strings, the result as JSON).
 import json
 import sys
 from typing import Callable, Optional
-from minipy import Endpoint, endpoint
+from plainpy import Endpoint, endpoint
 
 class HTTPException(Exception):
     def __init__(self, status_code: int, detail: str = ""):

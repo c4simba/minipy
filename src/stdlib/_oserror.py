@@ -6,12 +6,12 @@ repr() shows (errno, strerror), and OSError(errno, ...) itself makes the
 subclass for that error number (FileNotFoundError for 2 ...): the platform's
 numbers (Linux's on Linux and KolibriOS, the host's on macOS), as CPython's."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 E = TypeVar("E")
 
 
-def __mpy_oserror(e: E, errno: int, strerror: str, filename: str | None, filename2: str | None) -> E:
+def __ppy_oserror(e: E, errno: int, strerror: str, filename: str | None, filename2: str | None) -> E:
     _fill_oserror(e, errno, strerror, filename, filename2)       # (the work in one function: each class's copy is small)
     return e
 
@@ -30,7 +30,7 @@ def _fill_oserror(e: OSError, errno: int, strerror: str, filename: str | None, f
     e._argrepr = str(errno) + ", " + repr(strerror)
 
 
-def __mpy_oserror_new(errno: int, strerror: str, filename: str | None, filename2: str | None) -> OSError:
+def __ppy_oserror_new(errno: int, strerror: str, filename: str | None, filename2: str | None) -> OSError:
     e: OSError = OSError()
     if sys.platform == "darwin":
         if errno == 35 or errno == 37 or errno == 36:
@@ -94,7 +94,7 @@ def __mpy_oserror_new(errno: int, strerror: str, filename: str | None, filename2
     return e
 
 
-def __mpy_decode_error(e: E, encoding: str, obj: bytes, start: int, end: int, reason: str) -> E:
+def __ppy_decode_error(e: E, encoding: str, obj: bytes, start: int, end: int, reason: str) -> E:
     """UnicodeDecodeError(encoding, object, start, end, reason)."""
     _fill_decode_error(e, encoding, obj, start, end, reason)
     return e
@@ -113,7 +113,7 @@ def _fill_decode_error(e: UnicodeDecodeError, encoding: str, obj: bytes, start: 
     e._argrepr = repr(encoding) + ", " + repr(obj) + ", " + str(start) + ", " + str(end) + ", " + repr(reason)
 
 
-def __mpy_encode_error(e: E, encoding: str, obj: str, start: int, end: int, reason: str) -> E:
+def __ppy_encode_error(e: E, encoding: str, obj: str, start: int, end: int, reason: str) -> E:
     """UnicodeEncodeError(encoding, object, start, end, reason)."""
     _fill_encode_error(e, encoding, obj, start, end, reason)
     return e

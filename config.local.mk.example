@@ -11,6 +11,6 @@
 # RT_LINUX_CC = gcc -m32
 
 # Where the KolibriOS runtime image and fasm live on KolibriOS (used by the
-# KolibriOS minipy for --compile):
-# KOS_AOT_RT   = /sys/lib/minipy-rt.bin
+# KolibriOS plainpy for --compile):
+# KOS_AOT_RT   = /sys/lib/plainpy-rt.bin
 # KOS_AOT_FASM = /sys/develop/fasm

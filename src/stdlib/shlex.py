@@ -3,7 +3,7 @@
 The lexer reads a str (in the interpreter also a file object, read whole); source
 inclusion (the source attribute) is not supported."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _P = TypeVar("_P")
 

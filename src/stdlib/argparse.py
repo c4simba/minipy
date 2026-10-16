@@ -2798,7 +2798,7 @@ if sys._compiled:
     # non-literal values, parse_intermixed_args, fromfile_prefix_chars, custom Action classes.
     import os as _os
     import textwrap as _textwrap
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _T = TypeVar("_T")
     _N = TypeVar("_N")

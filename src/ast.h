@@ -1,5 +1,5 @@
-#ifndef MPY_AST_H
-#define MPY_AST_H
+#ifndef PPY_AST_H
+#define PPY_AST_H
 
 #include "tokens.h"
 
@@ -145,4 +145,4 @@ void     stmt_add_decorator(Stmt *s, const char *name, Expr *e);
 
 const char *stmt_kind_name(StmtKind k);   /* for messages */
 
-#endif /* MPY_AST_H */
+#endif /* PPY_AST_H */

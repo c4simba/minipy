@@ -132,7 +132,7 @@ void plan_moves(F *f){
     AFunc *fn=f->fn;
     if(!fn->def || !fn->nvars) return;
     Live L; memset(&L,0,sizeof L); L.fn=fn; L.u=fn->mod->unit; L.W=(fn->nvars+31)/32;
-    f->live=MPY_NEW0(LiveTab); L.tab=f->live;
+    f->live=PPY_NEW0(LiveTab); L.tab=f->live;
     unsigned *live=bs_new(&L);
     live_stmts(&L,f,fn->body,fn->nbody,live);
     free(live);

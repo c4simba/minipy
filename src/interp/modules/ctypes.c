@@ -3,7 +3,7 @@
 
 #include "modules.h"
 
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
 static int ct_errno;
 static Value ct_dlopen(int argc, Value *argv, TupleObj *kw){
     (void)kw;

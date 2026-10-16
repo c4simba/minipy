@@ -2,7 +2,7 @@
 # what the wrappers pass in registers and structures ("[kos]"/"[gui]" lines,
 # logged by the fake kernel) and how they decode the answers (the prints)
 import sys
-import kolibri as k        # lib/kolibri.py, next to minipy
+import kolibri as k        # lib/kolibri.py, next to plainpy
 
 def show(label: str, value: str) -> None:
     print(label + ": " + value)

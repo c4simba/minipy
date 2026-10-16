@@ -246,7 +246,7 @@
 [gui] text x=14 y=99 color=0xe8e8e8 'notes.txt' flags=0xb0
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
@@ -277,7 +277,7 @@
 [gui] text x=14 y=99 color=0xe8e8e8 'notes.txt' flags=0xb0
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
@@ -308,7 +308,7 @@
 [gui] text x=14 y=99 color=0xe8e8e8 'notes.txt' flags=0xb0
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
@@ -340,13 +340,13 @@
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] bar x=10 w=300 y=116 h=18 color=0x2f5f8f
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
 [gui] line 609,60 - 609,387 color=0x34465a
 [gui] text x=330 y=68 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=330 y=92 color=0x8899aa 'size      45'
+[gui] text x=330 y=92 color=0x8899aa 'size      46'
 [gui] text x=330 y=106 color=0x8899aa 'modified  2026-01-02 03:04'
 [gui] text x=330 y=120 color=0x8899aa 'created   2026-01-02 03:04'
 [gui] text x=330 y=134 color=0x8899aa 'flags     ---a-'
@@ -372,17 +372,17 @@
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] bar x=10 w=300 y=116 h=18 color=0x2f5f8f
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
 [gui] line 609,60 - 609,387 color=0x34465a
 [gui] text x=330 y=68 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=330 y=92 color=0x8899aa 'size      45'
+[gui] text x=330 y=92 color=0x8899aa 'size      46'
 [gui] text x=330 y=106 color=0x8899aa 'modified  2026-01-02 03:04'
 [gui] text x=330 y=120 color=0x8899aa 'created   2026-01-02 03:04'
 [gui] text x=330 y=134 color=0x8899aa 'flags     ---a-'
-[gui] text x=330 y=158 color=0xe8e8e8 'MiniPy on KolibriOS' flags=0xb0
+[gui] text x=330 y=158 color=0xe8e8e8 'PlainPy on KolibriOS' flags=0xb0
 [gui] text x=330 y=174 color=0xe8e8e8 '' flags=0xb0
 [gui] text x=330 y=190 color=0xe8e8e8 'A file browser example.' flags=0xb0
 [gui] bar x=0 w=620 y=410 h=1 color=0x34465a
@@ -406,7 +406,7 @@
 [gui] text x=14 y=99 color=0xe8e8e8 'notes.txt' flags=0xb0
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a
@@ -438,7 +438,7 @@
 [gui] text x=14 y=99 color=0xe8e8e8 'notes.txt' flags=0xb0
 [gui] text x=298 y=103 color=0x8899aa '5'
 [gui] text x=14 y=117 color=0xe8e8e8 'readme.txt' flags=0xb0
-[gui] text x=292 y=121 color=0x8899aa '45'
+[gui] text x=292 y=121 color=0x8899aa '46'
 [gui] line 320,60 - 609,60 color=0x34465a
 [gui] line 320,387 - 609,387 color=0x34465a
 [gui] line 320,60 - 320,387 color=0x34465a

@@ -834,7 +834,7 @@ if not sys._compiled:
 if sys._compiled:
     import thread as _th
     import time as _tm
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _A = TypeVar("_A")
     _F = TypeVar("_F")

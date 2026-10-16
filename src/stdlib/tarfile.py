@@ -3268,7 +3268,7 @@ if sys._compiled:
     import stat
     import time
     import gzip
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _F = TypeVar("_F")
     _M = TypeVar("_M")

@@ -138,7 +138,7 @@ Value mp_exc_suggestion(Value e, int with_frames){
     return sb_value(&b);
 }
 /* a NameError (or UnboundLocalError) for name in frame f: its name, and the closest name f sees */
-MPY_NORETURN void raise_name(Type *t, Frame *f, const char *name, const char *fmt, ...){
+PPY_NORETURN void raise_name(Type *t, Frame *f, const char *name, const char *fmt, ...){
     char buf[1024]; va_list ap; va_start(ap,fmt); vsnprintf(buf,sizeof buf,fmt,ap); va_end(ap);
     Value m=mp_str(buf), e=mp_exc_args(t,mp_tuple(1,&m)), nm=mp_str(name);
     exc_set(e,"name",nm);
@@ -157,7 +157,7 @@ MPY_NORETURN void raise_name(Type *t, Frame *f, const char *name, const char *fm
     mp_raise(e);
 }
 /* AttributeError "...'name'" with its name and obj (and whether self raised it) */
-MPY_NORETURN void mp_raise_attr(Value obj, Value name, const char *fmt, ...){
+PPY_NORETURN void mp_raise_attr(Value obj, Value name, const char *fmt, ...){
     char buf[1024]; va_list ap; va_start(ap,fmt); vsnprintf(buf,sizeof buf,fmt,ap); va_end(ap);
     Value m=mp_str(buf), e=mp_exc_args(E_AttributeError,mp_tuple(1,&m));
     exc_set(e,"name",name); exc_set(e,"obj",obj);
@@ -171,7 +171,7 @@ Value mp_exc(Type *t, const char *fmt, ...){
     Value m=mp_str(buf);
     return mp_exc_args(t,mp_tuple(1,&m));
 }
-static MPY_NORETURN void do_raise(Value e){
+static PPY_NORETURN void do_raise(Value e){
     Thread *ts=mp_ts;
     ts->exc=e;
     Catch *c=ts->catch;
@@ -184,7 +184,7 @@ Value instantiate_exc(Value e){
     if(!mp_isinstance(e,E_BaseException)) e=mp_exc(E_TypeError,"exceptions must derive from BaseException");
     return e;
 }
-MPY_NORETURN void mp_raise(Value e){
+PPY_NORETURN void mp_raise(Value e){
     e=instantiate_exc(e);
     Thread *ts=mp_ts;
     if(ts->nhandled>0){                            /* raised while handling one: its __context__ */
@@ -199,8 +199,8 @@ MPY_NORETURN void mp_raise(Value e){
     }
     do_raise(e);
 }
-MPY_NORETURN void reraise(Value e){ do_raise(e); }
-MPY_NORETURN void mp_raise_t(Type *t, const char *fmt, ...){
+PPY_NORETURN void reraise(Value e){ do_raise(e); }
+PPY_NORETURN void mp_raise_t(Type *t, const char *fmt, ...){
     char buf[1024]; va_list ap; va_start(ap,fmt); vsnprintf(buf,sizeof buf,fmt,ap); va_end(ap);
     Value m=mp_str(buf);
     mp_raise(mp_exc_args(t,mp_tuple(1,&m)));

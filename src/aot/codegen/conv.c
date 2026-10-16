@@ -7,7 +7,7 @@
 Ty *gpart(Ty *g, int i){ Ty *t=aot_gen_part(g,i); return t->k==TY_VAR ? TY_VOID_T : t; }   /* a generator's send / return type (void: None) */
 
 const char *cg_path="?";        /* source of the function being generated (messages) */
-MPY_NORETURN void cg_fail(int line, const char *msg){
+PPY_NORETURN void cg_fail(int line, const char *msg){
     fprintf(stderr,"%s:%d: error: %s\n",cg_path,line,msg); exit(1);
 }
 /* The variable a name stores to inside the current function. */
@@ -66,9 +66,9 @@ void conv(F *f, Ty *from, Ty *to){ if(aot_is_complex(to) && !aot_is_complex(from
 static int is_endpoint_ty(Ty *t){ t=ty_find(t); return t->k==TY_FUNC && (t->tup&4); }
 void gen_as(F *f, Expr *e, Ty *want, int owned){
     if(e->kind==EXPR_NONE){ gen_none(f,want); return; }
-    if(is_endpoint_ty(want) && !is_endpoint_ty(TY(e))){                /* a function as a minipy.Endpoint: its adapter */
+    if(is_endpoint_ty(want) && !is_endpoint_ty(TY(e))){                /* a function as a plainpy.Endpoint: its adapter */
         XInfo *x=xinfo(e);
-        if(x->kind!=X_FUNCREF || !x->fn || !x->fn->ep_adapter) cg_fail(e->line,"a minipy.Endpoint is made from a function given by its name");
+        if(x->kind!=X_FUNCREF || !x->fn || !x->fn->ep_adapter) cg_fail(e->line,"a plainpy.Endpoint is made from a function given by its name");
         AFunc *ad=x->fn->ep_adapter; use_fn(ad); gg->fv_used[ad->id]=1;
         E(f,"mov eax,%s",fnl(ad,LB_VALUE));
         return;

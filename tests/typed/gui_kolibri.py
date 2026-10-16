@@ -12,12 +12,12 @@ def redraw(title: str):
     sys.syscall(8, pk(20, 120), pk(90, 30), 2, 0x5588CC)
     sys.syscall(12, 2)
 
-redraw("Typed MiniPy")
+redraw("Typed PlainPy")
 running = True
 while running:
     event = sys.syscall(10)[0]
     if event == 1:
-        redraw("Typed MiniPy")
+        redraw("Typed PlainPy")
     elif event == 3:
         button = sys.syscall(17)[0] >> 8
         print("button", button)

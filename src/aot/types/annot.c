@@ -33,7 +33,7 @@ void make_builtin_exceptions(AProg *p, AModule *m){
     static Expr none_init; none_init.kind=EXPR_NONE;
     memset(&builtin_syms,0,sizeof builtin_syms); exc_root=NULL;
     for(int i=0;tree[i][0];i++){
-        AClass *cls=MPY_NEW0(AClass); cls->name=xstrdup2(tree[i][0]); cls->mod=m; cls->builtin=1; cls->id=p->nclasses;
+        AClass *cls=PPY_NEW0(AClass); cls->name=xstrdup2(tree[i][0]); cls->mod=m; cls->builtin=1; cls->id=p->nclasses;
         cls->qualname=cls->name; cls->symname=cls->name;
         if(tree[i][1]) cls->base=(AClass*)symtab_find(&builtin_syms,tree[i][1])->p;
         else { exc_root=cls; add_field(cls,"_msg",TY_STR_T,NULL);
@@ -44,8 +44,8 @@ void make_builtin_exceptions(AProg *p, AModule *m){
         p->classes[p->nclasses++]=cls;
         symtab_add(&builtin_syms,cls->name,AS_CLASS,cls);
         if(!strcmp(cls->name,"StopIteration")){ Ty *v=ty_var(); v->opt=1; add_field(cls,"value",v,NULL); }   /* a generator's return value (None) */
-        if(!strcmp(cls->name,"SystemExit")){ add_field(cls,"code",optional(TY_INT_T),&none_init); add_field(cls,"_msgexit",ty_copy(TY_BOOL_T),NULL); }   /* (_mpy_exit.py) */
-        if(!strcmp(cls->name,"SystemExit")){ add_field(cls,"code",optional(TY_INT_T),&none_init); add_field(cls,"_msgexit",ty_copy(TY_BOOL_T),NULL); }   /* (_mpy_exit.py) */
+        if(!strcmp(cls->name,"SystemExit")){ add_field(cls,"code",optional(TY_INT_T),&none_init); add_field(cls,"_msgexit",ty_copy(TY_BOOL_T),NULL); }   /* (_ppy_exit.py) */
+        if(!strcmp(cls->name,"SystemExit")){ add_field(cls,"code",optional(TY_INT_T),&none_init); add_field(cls,"_msgexit",ty_copy(TY_BOOL_T),NULL); }   /* (_ppy_exit.py) */
         if(!strcmp(cls->name,"OSError")){                     /* OSError(errno, strerror, filename): _oserror.py */
             add_field(cls,"errno",optional(TY_INT_T),&none_init); add_field(cls,"strerror",optional(TY_STR_T),&none_init);
             add_field(cls,"filename",optional(TY_STR_T),&none_init); add_field(cls,"filename2",optional(TY_STR_T),&none_init);
@@ -59,7 +59,7 @@ void make_builtin_exceptions(AProg *p, AModule *m){
 /* abc.ABC: a plain base class (made once a module imports it) */
 AClass *abc_class(Ck *c){
     ASym *s=symtab_find(&builtin_syms,"ABC"); if(s) return (AClass*)s->p;
-    AProg *p=c->p; AClass *cls=MPY_NEW0(AClass); cls->name=xstrdup2("ABC"); cls->qualname=cls->name; cls->symname=cls->name; cls->mod=p->mods[0]; cls->builtin=1; cls->filled=1; cls->id=p->nclasses;
+    AProg *p=c->p; AClass *cls=PPY_NEW0(AClass); cls->name=xstrdup2("ABC"); cls->qualname=cls->name; cls->symname=cls->name; cls->mod=p->mods[0]; cls->builtin=1; cls->filled=1; cls->id=p->nclasses;
     if(p->nclasses==p->ccap){ p->ccap=p->ccap?p->ccap*2:16; p->classes=(AClass**)xrealloc(p->classes,sizeof(AClass*)*(size_t)p->ccap); }
     p->classes[p->nclasses++]=cls;
     symtab_add(&builtin_syms,cls->name,AS_CLASS,cls);
@@ -67,13 +67,13 @@ AClass *abc_class(Ck *c){
 }
 AModule *find_module(AProg *p, const char *name){
     for(int i=0;i<p->nmods;i++) if(!strcmp(p->mods[i]->name,name)) return p->mods[i];
-    const char *al=mpy_stdlib_alias(name);                       /* os.path: posixpath */
+    const char *al=ppy_stdlib_alias(name);                       /* os.path: posixpath */
     return al ? find_module(p,al) : NULL;
 }
 
 /* Optional[t]: a copy that may be None */
 Ty *optional(Ty *t){ Ty *f=ty_find(t); if(f->k==TY_VAR){ f->opt=1; return f; } Ty *n=ty_copy(f); n->opt=1; return n; }
-/* minipy.Endpoint: Callable[[dict[str, str]], str] that any function converts
+/* plainpy.Endpoint: Callable[[dict[str, str]], str] that any function converts
    to (an adapter made by the compiler, see ep_adapter) */
 Ty *endpoint_type(void){
     Ty *ps[1]; ps[0]=ty_dict(TY_STR_T,TY_STR_T);
@@ -89,7 +89,7 @@ static Ty *tparam_ty(Ck *c, AModule *m, const char *name){
     AFunc *f=c->sig_fn ? c->sig_fn : c->fn;
     AClass *cls=c->sig_cls ? c->sig_cls : f ? f->cls : NULL;
     if(cls && cls->def && names_has(cls->def->tparams,cls->def->ntparams,name)){          /* the class's: shared by its methods */
-        if(!cls->tpv){ cls->tpv=MPY_NEW_ARR(Ty*,cls->def->ntparams); for(int i=0;i<cls->def->ntparams;i++) cls->tpv[i]=ty_var(); }
+        if(!cls->tpv){ cls->tpv=PPY_NEW_ARR(Ty*,cls->def->ntparams); for(int i=0;i<cls->def->ntparams;i++) cls->tpv[i]=ty_var(); }
         for(int i=0;i<cls->def->ntparams;i++) if(!strcmp(cls->def->tparams[i],name)) return cls->tpv[i]; }
     ASym *s=module_sym(m,name);
     int tv= s && s->kind==AS_TYPEVAR;
@@ -131,7 +131,7 @@ Ty *type_of(Ck *c, Expr *e, int line){
                 if(j) { m=in->mod; name=in->symname; continue; }
                 m=in->mod; name=in->symname; break; }
             if(s && s->kind==AS_SYS && (!strcmp((const char*)s->p,"typing")||!strcmp((const char*)s->p,"dataclasses"))){ name=next; continue; }
-            if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"minipy") && !strcmp(next,"Endpoint")){
+            if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"plainpy") && !strcmp(next,"Endpoint")){
                 if(j || targ) ck_err(c,line,"unexpected token in type annotation");
                 return endpoint_type(); }
             if(!s || s->kind!=AS_MODULE) ck_err(c,line,"'%s' is not a module",name);
@@ -240,14 +240,14 @@ Ty *type_of(Ck *c, Expr *e, int line){
                   if(own) return ty_new(TY_OBJ,NULL,cur); } }
             AClass *pick=NULL;
             for(int j=-1;j<k->ninsts && !pick;j++){ AClass *cand=j<0?k:k->insts[j];
-                if(!cand->tpv){ cand->tpv=MPY_NEW_ARR(Ty*,nargs); for(int i=0;i<nargs;i++) cand->tpv[i]=ty_var(); }
+                if(!cand->tpv){ cand->tpv=PPY_NEW_ARR(Ty*,nargs); for(int i=0;i<nargs;i++) cand->tpv[i]=ty_var(); }
                 int ok=1; for(int i=0;i<nargs && ok;i++){ Ty *q=ty_find(cand->tpv[i]), *a=ty_find(args[i]); if(q->k!=TY_VAR && a->k!=TY_VAR && !ty_same(q,a)) ok=0; }
                 if(ok) pick=cand; }
-            if(!pick){ pick=class_instance(c,k); if(!pick->tpv){ pick->tpv=MPY_NEW_ARR(Ty*,nargs); for(int i=0;i<nargs;i++) pick->tpv[i]=ty_var(); } }
+            if(!pick){ pick=class_instance(c,k); if(!pick->tpv){ pick->tpv=PPY_NEW_ARR(Ty*,nargs); for(int i=0;i<nargs;i++) pick->tpv[i]=ty_var(); } }
             for(int i=0;i<nargs;i++) unify(c,pick->tpv[i],args[i]);
             return ty_new(TY_OBJ,NULL,pick); }
         return ty_new(TY_OBJ,NULL,k); }
-    if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"minipy.Endpoint")) return endpoint_type();
+    if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"plainpy.Endpoint")) return endpoint_type();
     ck_err(c,line,"unknown type '%s'",name);
 }
 Ty *annotation(Ck *c, Expr *e){ return e ? type_of(c,e,e->line) : NULL; }

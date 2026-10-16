@@ -24,7 +24,7 @@ if not sys._compiled:
 
     def updatecache(filename, module_globals=None):
         cache.pop(filename, None)
-        if not filename or (filename.startswith("<") and filename.endswith(">") and not filename.startswith("<minipy:")):
+        if not filename or (filename.startswith("<") and filename.endswith(">") and not filename.startswith("<plainpy:")):
             return []
         parts = sys._getline(filename, 0).split("\n")              # (the files the interpreter ran: it keeps their text)
         if parts[-1] == "":
@@ -58,7 +58,7 @@ if not sys._compiled:
 
 if sys._compiled:
     # Compiled programs: the lines of files on disk (UTF-8).
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _G = TypeVar("_G")
 

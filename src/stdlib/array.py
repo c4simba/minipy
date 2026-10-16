@@ -13,7 +13,7 @@ Compiled programs: the type code is a literal, which decides the type of the ite
 is an array[float]. Slice assignment takes an array of the same type code."""
 import sys
 import struct
-from _mpy_typing import Generic, TypeVar
+from _ppy_typing import Generic, TypeVar
 
 __all__ = ["ArrayType", "array", "typecodes"]
 
@@ -93,7 +93,7 @@ def _char(v: str) -> str:
 
 
 def _pack(tc: str, x: _X) -> bytes:
-    """The bytes of item x (little-endian, as on the machines minipy runs on)."""
+    """The bytes of item x (little-endian, as on the machines plainpy runs on)."""
     if isinstance(x, str):
         return ord(x).to_bytes(4, "little")
     elif isinstance(x, float):
@@ -329,7 +329,7 @@ class array(Generic[_T]):
     def __setitem__(self, i: int, v: _T) -> None:
         if not sys._compiled:
             if isinstance(i, slice):
-                self.__mpy_setslice__(i.start, i.stop, i.step, v)
+                self.__ppy_setslice__(i.start, i.stop, i.step, v)
                 return
             i = _index(i)
         n = len(self._items)
@@ -340,7 +340,7 @@ class array(Generic[_T]):
     def __delitem__(self, i: int) -> None:
         if not sys._compiled:
             if isinstance(i, slice):
-                self.__mpy_delslice__(i.start, i.stop, i.step)
+                self.__ppy_delslice__(i.start, i.stop, i.step)
                 return
             i = _index(i)
         n = len(self._items)
@@ -348,10 +348,10 @@ class array(Generic[_T]):
             raise IndexError("array assignment index out of range")
         del self._items[i]
 
-    def __mpy_getslice__(self, start: int | None, stop: int | None, step: int | None):
+    def __ppy_getslice__(self, start: int | None, stop: int | None, step: int | None):
         return self._make([self._items[k] for k in _slice_range(len(self._items), start, stop, step)])
 
-    def __mpy_setslice__(self, start: int | None, stop: int | None, step: int | None, v: _A) -> None:
+    def __ppy_setslice__(self, start: int | None, stop: int | None, step: int | None, v: _A) -> None:
         if not isinstance(v, array):
             raise TypeError('can only assign array (not "' + type(v).__name__ + '") to array slice')
         if v.typecode != self.typecode:
@@ -371,7 +371,7 @@ class array(Generic[_T]):
         for j in range(len(new)):
             self._items[idx[j]] = new[j]
 
-    def __mpy_delslice__(self, start: int | None, stop: int | None, step: int | None) -> None:
+    def __ppy_delslice__(self, start: int | None, stop: int | None, step: int | None) -> None:
         gone = set(_slice_range(len(self._items), start, stop, step))
         self._items = [self._items[k] for k in range(len(self._items)) if k not in gone]
 

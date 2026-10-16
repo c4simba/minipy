@@ -45,7 +45,7 @@ void int_push(int **v, int *n, int x){ if(!(*n&7)) *v=(int*)xrealloc(*v,sizeof(i
 void fspath_arg(Ck *c, Expr *a, Ty *want, Ty **t){
     Ty *w=ty_find(want), *o=ty_find(*t);
     if(w->k!=TY_STR || o->k!=TY_OBJ || !aot_find_method(o->cls,"__fspath__")) return;
-    Expr *inner=MPY_NEW0(Expr); *inner=*a; inner->akind=0; inner->kw=NULL;
+    Expr *inner=PPY_NEW0(Expr); *inner=*a; inner->akind=0; inner->kw=NULL;
     Expr *at=xnew(EXPR_ATTRIBUTE,a->line); at->a=inner; at->name="__fspath__";
     int ak=a->akind, line=a->line; char *kw=a->kw;
     memset(a,0,sizeof *a); a->kind=EXPR_CALL; a->line=line; a->a=at; a->akind=ak; a->kw=kw;
@@ -62,9 +62,9 @@ static void percent_args(Ck *c, Expr *e, AFunc *fn, int skip){
     if(msg->kind!=EXPR_LITERAL || msg->tok->kind!=T_STRING || msg->tok->i)
         ck_err(c,e->line,"%s(): a message with arguments must be a literal format string in compiled code (or format it yourself: f\"...\")",fn->name);
     int n=npos-pm-1;
-    Expr *tup=xnew(EXPR_TUPLE,e->line); tup->count=n; tup->items=MPY_NEW_ARR(Expr*,n);
+    Expr *tup=xnew(EXPR_TUPLE,e->line); tup->count=n; tup->items=PPY_NEW_ARR(Expr*,n);
     for(int j=0;j<n;j++){ tup->items[j]=e->items[first+1+j]; }
-    Expr *m=MPY_NEW0(Expr); *m=*msg; m->akind=0; m->kw=NULL; m->ty=NULL;
+    Expr *m=PPY_NEW0(Expr); *m=*msg; m->akind=0; m->kw=NULL; m->ty=NULL;
     Expr *bin=xnew(EXPR_BINARY,e->line); bin->op=T_PERCENT; bin->a=m; bin->b=tup;
     e->items[first]=bin;
     for(int j=first+1+n;j<e->count;j++) e->items[j-n]=e->items[j];

@@ -2,7 +2,7 @@
 # The i586-kolibrios cross toolchain of KolibriOS's ports
 # (https://git.kolibrios.org/KolibriOS/ports): binutils, gcc (C) and newlib,
 # built from that repository's sources into PREFIX - what `make kolibrios`
-# compiles minipy for KolibriOS with:
+# compiles plainpy for KolibriOS with:
 #
 #   sh tools/kolibrios-toolchain.sh [PREFIX]          (default build/kos-toolchain)
 #   make kolibrios KOS32_PREFIX=PREFIX

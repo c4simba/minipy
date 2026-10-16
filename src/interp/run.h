@@ -9,8 +9,8 @@
 
    This header is internal to those files: what they share, grouped by the
    file defining it. */
-#ifndef MPY_INTERP_RUN_H
-#define MPY_INTERP_RUN_H
+#ifndef PPY_INTERP_RUN_H
+#define PPY_INTERP_RUN_H
 
 #include "interp.h"
 #include <math.h>
@@ -25,9 +25,9 @@ void  mp_set_merge(SetObj *s, SetObj *o);
 int   mp_native_send(Value it, Value v, Value *out);   /* modules/pysrc.c: 1 yielded, 0 returned (out: the value) */
 
 /* ---- raise.c: raising exceptions */
-MPY_NORETURN void raise_name(Type *t, Frame *f, const char *name, const char *fmt, ...);
+PPY_NORETURN void raise_name(Type *t, Frame *f, const char *name, const char *fmt, ...);
 Value instantiate_exc(Value e);
-MPY_NORETURN void reraise(Value e);
+PPY_NORETURN void reraise(Value e);
 void tb_add(Value e, Frame *f);
 
 /* ---- attr.c: attributes */
@@ -51,4 +51,4 @@ int send_into(Value recv, Value v, Value *out);
 /* ---- eval.c: the eval loop */
 Value eval(Frame *f, Value sent, int resume, int throwing);
 
-#endif /* MPY_INTERP_RUN_H */
+#endif /* PPY_INTERP_RUN_H */

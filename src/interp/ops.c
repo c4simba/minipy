@@ -520,7 +520,7 @@ static Value binop_ex(int op, Value a, Value b, int inplace){
         if(r.k!=V_UNDEF) return r;
     }
     if(op==OP_BitOr && (IS_TYPE(a)||a.k==V_NONE) && (IS_TYPE(b)||b.k==V_NONE) && !(a.k==V_NONE && b.k==V_NONE)){   /* int | None: a union type */
-        Value nm=mp_str("_mpy_generic"); Value mod=mp_builtin_import(1,&nm,NULL);
+        Value nm=mp_str("_ppy_generic"); Value mod=mp_builtin_import(1,&nm,NULL);
         return mp_call2(mp_getattr_s(mod,"_union2"),a,b); }
     if(inplace){ const char *sy=op==OP_Pow?"**":op_sym(op);
         mp_raise_t(E_TypeError,"unsupported operand type(s) for %s=: '%s' and '%s'",sy,mp_type_name(a),mp_type_name(b)); }
@@ -825,7 +825,7 @@ Value mp_getitem(Value o, Value key){
             case LY_TYPE:{                                /* list[int] ...: C.__class_getitem__, else a GenericAlias */
                 Value m=mp_type_lookup_s((Type*)o.u.o,"__class_getitem__");          /* (an implicit classmethod) */
                 if(m.k!=V_UNDEF){ if(IS(m,T_classmethod)||IS(m,T_staticmethod)) return mp_call1(mp_getattr_s(o,"__class_getitem__"),key); return mp_call2(m,o,key); }
-                Value nm=mp_str("_mpy_generic"); Value mod=mp_builtin_import(1,&nm,NULL);
+                Value nm=mp_str("_ppy_generic"); Value mod=mp_builtin_import(1,&nm,NULL);
                 return mp_call2(mp_getattr_s(mod,"GenericAlias"),o,key); }
             default: break;
         }

@@ -13,7 +13,7 @@
 
 typedef struct { const char *path; jmp_buf jb; int hidden; Stmt *def; } Cv;    /* hidden: names made for desugaring (.t1, ...); def: the function being made */
 
-MPY_NORETURN static void fail(Cv *c, int line, const char *fmt, ...){
+PPY_NORETURN static void fail(Cv *c, int line, const char *fmt, ...){
     va_list ap; va_start(ap,fmt);
     fprintf(stderr,"%s:%d: error: ",c->path?c->path:"<source>",line);
     vfprintf(stderr,fmt,ap); fputc('\n',stderr);
@@ -28,14 +28,14 @@ static int compiled_test(PyNode *t){
     if(t->kind==PK_Attribute && !strcmp(t->id[0],"_compiled") && t->n[0]->kind==PK_Name && !strcmp(t->n[0]->id[0],"sys")) return neg?-1:1;
     return 0;
 }
-static Expr *enew(ExprKind k, int line){ Expr *e=MPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
+static Expr *enew(ExprKind k, int line){ Expr *e=PPY_NEW0(Expr); e->kind=k; e->line=line; return e; }
 static void push(Expr ***arr, int *cnt, int *cap, Expr *v){
     if(*cnt==*cap){ *cap=*cap?*cap*2:4; *arr=(Expr**)xrealloc(*arr,sizeof(Expr*)*(size_t)*cap); }
     (*arr)[(*cnt)++]=v;
 }
 static void item(Expr *e, Expr *v){ push(&e->items,&e->count,&e->cap,v); }
 static Tok *tok(TokKind k, const char *text, size_t len, int line){
-    Tok *t=MPY_NEW0(Tok); t->kind=k; t->line=line;
+    Tok *t=PPY_NEW0(Tok); t->kind=k; t->line=line;
     t->text=(char*)xmalloc(len+1); memcpy(t->text,text,len); t->text[len]=0; t->len=(int64_t)len;
     return t;
 }
@@ -274,7 +274,7 @@ static Expr *ex(Cv *c, PyNode *n){
         case PK_Lambda:{
             Expr *e=enew(EXPR_LAMBDA,line); PyNode *a=n->n[0];
             int npos=a->L[0].n+a->L[1].n, nd=a->L[4].n, total=npos+(a->n[0]?1:0)+a->L[2].n+(a->n[1]?1:0);
-            e->edefaults=MPY_NEW_ARR(Expr*,total>0?total:1); e->estar=e->edstar=-1;
+            e->edefaults=PPY_NEW_ARR(Expr*,total>0?total:1); e->estar=e->edstar=-1;
             #define LPARAM(nm,dflt) do{ e->eparams=(char**)xrealloc(e->eparams,sizeof(char*)*(size_t)(e->neparam+1)); e->edefaults[e->neparam]=(dflt)?ex(c,dflt):NULL; e->eparams[e->neparam++]=xstrdup2(nm); }while(0)
             for(int i=0;i<npos;i++){ PyNode *p= i<a->L[0].n ? a->L[0].v[i] : a->L[1].v[i-a->L[0].n]; LPARAM(p->id[0], i>=npos-nd ? a->L[4].v[i-(npos-nd)] : NULL); }
             if(a->n[0]){ e->estar=e->neparam; LPARAM(a->n[0]->id[0],NULL); }
@@ -350,7 +350,7 @@ static Stmt *def(Cv *c, PyNode *n){
         stmt_add_decorator(s,nm,ex(c,d)); }
     PyNode *a=n->n[0];
     int npos=a->L[0].n+a->L[1].n, total=npos+(a->n[0]?1:0)+a->L[2].n+(a->n[1]?1:0);
-    s->pdefaults=MPY_NEW_ARR(Expr*,total>0?total:1);
+    s->pdefaults=PPY_NEW_ARR(Expr*,total>0?total:1);
     for(int i=0;i<total;i++) s->pdefaults[i]=NULL;
     #define PARAM(argnode,dflt) do{ PyNode *an_=(argnode); int ix_=s->param_count; name_add_unique(&s->params,&s->param_count,&s->param_cap,an_->id[0]); \
         if(s->param_count==ix_) fail(c,an_->line,"duplicate parameter '%s'",an_->id[0]); \
@@ -477,7 +477,7 @@ static void stmt(Cv *c, PyNode *n, Stmt *into, int orelse){
             OUT(s); return; }
         case PK_With: case PK_AsyncWith:{
             Stmt *s=snew(STMT_WITH,NULL,n); s->is_async=n->kind==PK_AsyncWith;
-            s->withas=MPY_NEW_ARR(char*,n->L[3].n>0?n->L[3].n:1); s->withtgt=MPY_NEW_ARR(Expr*,n->L[3].n>0?n->L[3].n:1);
+            s->withas=PPY_NEW_ARR(char*,n->L[3].n>0?n->L[3].n:1); s->withtgt=PPY_NEW_ARR(Expr*,n->L[3].n>0?n->L[3].n:1);
             for(int i=0;i<n->L[3].n;i++){ PyNode *w=n->L[3].v[i];
                 add_target(s,ex(c,w->n[0]));
                 s->withas[i]=NULL; s->withtgt[i]=NULL;
@@ -510,9 +510,9 @@ static void stmt(Cv *c, PyNode *n, Stmt *into, int orelse){
         case PK_ImportFrom:{
             Stmt *s=snew(STMT_FROM_IMPORT,NULL,n);
             s->module=n->id[0]?xstrdup2(n->id[0]):NULL; s->level=n->op>0?n->op:0;      /* (relative: resolved against the importing module's package) */
-            if(s->module && !strcmp(s->module,"_mpy_typing")){ free(s->module); s->module=xstrdup2("typing"); }   /* (the stdlib's typing names: typing itself here) */
+            if(s->module && !strcmp(s->module,"_ppy_typing")){ free(s->module); s->module=xstrdup2("typing"); }   /* (the stdlib's typing names: typing itself here) */
             s->nnames=n->L[3].n;
-            s->names=MPY_NEW_ARR(char*,s->nnames>0?s->nnames:1); s->asnames=MPY_NEW_ARR(char*,s->nnames>0?s->nnames:1);
+            s->names=PPY_NEW_ARR(char*,s->nnames>0?s->nnames:1); s->asnames=PPY_NEW_ARR(char*,s->nnames>0?s->nnames:1);
             for(int i=0;i<s->nnames;i++){ PyNode *al=n->L[3].v[i]; s->names[i]=xstrdup2(al->id[0]); s->asnames[i]=al->id[1]?xstrdup2(al->id[1]):NULL; }
             s->name2=xstrdup2(s->names[0]); s->name=xstrdup2(s->asnames[0]?s->asnames[0]:s->names[0]);
             OUT(s); return; }

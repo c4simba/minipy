@@ -1,5 +1,5 @@
 """sys.stdout, sys.stderr and sys.stdin in compiled programs (the compiler reads
-sys.stdout as __mpy_stdout, ...; the interpreter has its own). Writes go through
+sys.stdout as __ppy_stdout, ...; the interpreter has its own). Writes go through
 print(), so they stay in order with it; reads through input()."""
 import sys
 import _os
@@ -106,6 +106,6 @@ class _StdStream:
         return "<_io.TextIOWrapper name='" + self.name + "' mode='" + self.mode + "' encoding='utf-8'>"
 
 
-__mpy_stdout = _StdStream(1, "<stdout>", "w")
-__mpy_stderr = _StdStream(2, "<stderr>", "w")
-__mpy_stdin = _StdStream(0, "<stdin>", "r")
+__ppy_stdout = _StdStream(1, "<stdout>", "w")
+__ppy_stderr = _StdStream(2, "<stderr>", "w")
+__ppy_stdin = _StdStream(0, "<stdin>", "r")

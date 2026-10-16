@@ -15,7 +15,7 @@ Compiled programs: ip_address(), ip_network() and ip_interface() give the
 version-independent types (an address, a network); their objects are of the
 IPv4/IPv6 classes all the same (isinstance tells them apart)."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __version__ = '1.0'
 

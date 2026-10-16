@@ -2,7 +2,7 @@
 
 The compiled form has no key= argument (the interpreter's has, as CPython)."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 T = TypeVar("T")
 

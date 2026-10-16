@@ -1,10 +1,10 @@
-#ifndef MPY_AOT_H
-#define MPY_AOT_H
+#ifndef PPY_AOT_H
+#define PPY_AOT_H
 
 #include "ast.h"
 
 /* ========================= Typed ahead-of-time compiler =========================
-   minipyc [options] file.py      (minipy --compile ... runs it; aot/main.c)
+   plainpyc [options] file.py     (plainpy --compile ... runs it; aot/main.c)
 
    source --(py_parse, py_front)--> AST of the entry module and, transitively,
    of every module it imports --(aot/types)--> every name, parameter, return
@@ -38,13 +38,13 @@ typedef struct AotUnit {
     int failed;      /* (check mode) its source or imports were rejected: left out */
 } AotUnit;
 
-/* minipy --compile --check: the checker reports every error it finds (one
+/* plainpy --compile --check: the checker reports every error it finds (one
    per function, class or module) instead of stopping at the first. */
 extern int aot_check_mode;
 extern int aot_check_errors;     /* (check mode) errors reported so far */
 
-/* minipy --compile --check MODULE...: those modules (and what they import)
-   checked for compiled programs (src/aot/pkgcheck.c; `minipy check` runs it) */
+/* plainpy --compile --check MODULE...: those modules (and what they import)
+   checked for compiled programs (src/aot/pkgcheck.c; `plainpy check` runs it) */
 int aot_check_modules(char **modules, int nmodules, AotTarget target);
 
 typedef struct {
@@ -59,16 +59,16 @@ typedef struct {
 int aot_compile(const AotCodegenOptions *opt, AotUnit **units, int nunits, char **out, size_t *outlen);
 
 /* macos: the listing as a C program (aot/x2c.c). Returns 0 on success; on
-   error prints "minipy: ..." to stderr and returns 1. */
+   error prints "plainpy: ..." to stderr and returns 1. */
 int aot_x2c(const char *listing, size_t len, char **out, size_t *outlen);
 
 /* aot/peep.c: the text of one generated function, rewritten into shorter
-   code with the same effect (a new heap string); MPY_NO_PEEP=1 copies it.
-   aot_peephole_report: what it did, on stderr when MPY_PEEP_STATS=1. */
+   code with the same effect (a new heap string); PPY_NO_PEEP=1 copies it.
+   aot_peephole_report: what it did, on stderr when PPY_PEEP_STATS=1. */
 char *aot_peephole(const char *text, size_t len, size_t *outlen);
 void aot_peephole_report(void);
 /* aot/peep.c: the generated code of a whole program with the call
-   sequences it repeats moved into shared routines (MPY_NO_OUTLINE=1: as is) */
+   sequences it repeats moved into shared routines (PPY_NO_OUTLINE=1: as is) */
 char *aot_outline(const char *text, size_t len, size_t *outlen);
 /* before a program's functions: forget the last program's; then name each
    compiled function that reads edx on entry (its closure) */
@@ -83,4 +83,4 @@ int aot_kpack(const unsigned char *in, size_t n, unsigned char **out, size_t *ou
 /* Dotted module name of a `from X.Y import ...` statement. */
 char *aot_from_import_module(AotUnit *u, Stmt *s);
 
-#endif /* MPY_AOT_H */
+#endif /* PPY_AOT_H */

@@ -2,7 +2,7 @@
 is lambda x: x[1], ... In compiled programs attrgetter and methodcaller (which look
 attributes up by name) are not available."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 A = TypeVar("A")
 B = TypeVar("B")

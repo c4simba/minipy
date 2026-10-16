@@ -4,7 +4,7 @@ the tables suffix_map, encodings_map, types_map, common_types. init() reads the 
 mime.types files (knownfiles) as CPython does."""
 import os
 import posixpath
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _F = TypeVar("_F")
 

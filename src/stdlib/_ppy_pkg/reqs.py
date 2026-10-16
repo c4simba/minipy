@@ -3,7 +3,7 @@
     Requirement('requests[socks]>=2.31; python_version >= "3.8"')
     marker_true(marker, environment(), extra="socks")
 
-minipy's environment: Python 3.14, implementation "minipy" (not CPython: a
+plainpy's environment: Python 3.14, implementation "plainpy" (not CPython: a
 package's `platform_python_implementation == "CPython"` extras - C speedups
 - are left out), the host's sys_platform."""
 import sys
@@ -83,8 +83,8 @@ def environment(platform=""):
     system = {"darwin": "Darwin", "linux": "Linux", "kolibrios": "KolibriOS", "win32": "Windows"}.get(plat, plat)
     return {
         "python_version": "3.14", "python_full_version": "3.14.0",
-        "implementation_name": "minipy", "implementation_version": "3.14.0",
-        "platform_python_implementation": "MiniPy",
+        "implementation_name": "plainpy", "implementation_version": "3.14.0",
+        "platform_python_implementation": "PlainPy",
         "os_name": "nt" if plat == "win32" else "posix", "sys_platform": plat, "platform_system": system,
         "platform_machine": "", "platform_release": "", "platform_version": "",
     }

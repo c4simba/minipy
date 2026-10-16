@@ -8,7 +8,7 @@ import os
 import sys
 import io
 import fnmatch
-from _mpy_typing import Callable
+from _ppy_typing import Callable
 
 
 def _fs(p) -> str:

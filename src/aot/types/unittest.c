@@ -6,7 +6,7 @@
 
 /* ---- unittest in compiled programs: the TestCase subclasses of the program and their test methods
    are known here; functions written for them (in unittest's namespace) make the tests and run them by
-   name: __mpy_ut_tests(main_only), __mpy_ut_call(t, name), __mpy_ut_skip / _xfail / _doc / _fixture /
+   name: __ppy_ut_tests(main_only), __ppy_ut_call(t, name), __ppy_ut_skip / _xfail / _doc / _fixture /
    _class / _module / _modfix. A skip decorator's expression is evaluated in the module it is written in
    (a function __ut_s<class id>(name, own) there). */
 static int g_ut_done;
@@ -61,12 +61,12 @@ static int ut_test_names(AClass *tc, AClass *k, const char **names, int max){
 }
 /* compile functions of source src in a copy of module base's namespace; each def registered as a built-in name */
 static void ut_compile(Ck *c, AModule *base, const char *src, Expr **subst, int nsubst, int line, AClass **ks, int nk){
-    AotUnit *u=MPY_NEW0(AotUnit); u->name=base->unit->name; u->path=base->unit->path; u->src=xstrdup2(src);
-    if(getenv("MPY_UTDEBUG")) fprintf(stderr,"---- (in %s)\n%s",base->name,src);
+    AotUnit *u=PPY_NEW0(AotUnit); u->name=base->unit->name; u->path=base->unit->path; u->src=xstrdup2(src);
+    if(getenv("PPY_UTDEBUG")) fprintf(stderr,"---- (in %s)\n%s",base->name,src);
     u->ast=py_front(u->path,u->src);
-    if(!u->ast){ if(getenv("MPY_UTDEBUG")) fprintf(stderr,"%s",src); ck_err(c,line,"internal error: the unittest functions do not compile"); }
+    if(!u->ast){ if(getenv("PPY_UTDEBUG")) fprintf(stderr,"%s",src); ck_err(c,line,"internal error: the unittest functions do not compile"); }
     for(int k=0;k<nsubst;k++){ char nm[32]; snprintf(nm,sizeof nm,"__ut_x%d",k); subst_stmts(u->ast->body,u->ast->body_count,nm,subst[k]); }
-    AModule *m=MPY_NEW0(AModule); *m=*base; m->unit=u;
+    AModule *m=PPY_NEW0(AModule); *m=*base; m->unit=u;
     m->syms.n=base->syms.n; m->syms.cap=base->syms.n+8; m->syms.v=(ASym*)xmalloc(sizeof(ASym)*(size_t)m->syms.cap);
     memcpy(m->syms.v,base->syms.v,sizeof(ASym)*(size_t)base->syms.n);
     for(int i=0;i<nk;i++){ ASym *have=symtab_find(&m->syms,ks[i]->symname);       /* (isinstance(t, C) narrows t by C's name) */
@@ -119,7 +119,7 @@ void ut_generate(Ck *c, int line){
         free(f.s); free(sub); }
     /* the tests: those of the main module's classes (in the order of their names there), then the others' */
     AModule *mainm=p->mods[0];
-    sb_add(&o,"def __mpy_ut_tests(main_only: bool) -> list[TestCase]:\n    out: list[TestCase] = []\n");
+    sb_add(&o,"def __ppy_ut_tests(main_only: bool) -> list[TestCase]:\n    out: list[TestCase] = []\n");
     { const char **sn=NULL; AClass **sk=NULL; int nsn=0;
       for(int q=0;q<mainm->syms.n;q++){ ASym *sy=&mainm->syms.v[q]; if(sy->kind!=AS_CLASS || sy->name[0]==' ') continue;
           for(int i=0;i<nk;i++) if(ks[i]==(AClass*)sy->p){ sn=(const char**)xrealloc(sn,sizeof(char*)*(size_t)(nsn+1)); sk=(AClass**)xrealloc(sk,sizeof(AClass*)*(size_t)(nsn+1)); sn[nsn]=sy->name; sk[nsn]=ks[i]; nsn++; } }
@@ -134,7 +134,7 @@ void ut_generate(Ck *c, int line){
       free(sn); free(sk); }
     sb_add(&o,"    return out\n");
     /* call a test method by its name */
-    sb_add(&o,"def __mpy_ut_call(t: TestCase, name: str) -> bool:\n");
+    sb_add(&o,"def __ppy_ut_call(t: TestCase, name: str) -> bool:\n");
     for(int i=0;i<nk;i++){ const char *names[256]; int n=ut_test_names(tc,ks[i],names,256);
         if(!n && !aot_find_method(ks[i],"runTest")) continue;
         sb_add(&o,"    if isinstance(t, __ut_k%d):\n",ks[i]->id);
@@ -143,7 +143,7 @@ void ut_generate(Ck *c, int line){
         sb_add(&o,"        return False\n"); }
     sb_add(&o,"    return False\n");
     /* skip reasons (decorators), expected failures, docstrings */
-    sb_add(&o,"def __mpy_ut_skip(t: TestCase, name: str) -> str | None:\n");
+    sb_add(&o,"def __ppy_ut_skip(t: TestCase, name: str) -> str | None:\n");
     for(int i=0;i<nk;i++){ AClass *mro[32]; int nm=ut_mro(ks[i],mro,32);
         sb_add(&o,"    if isinstance(t, __ut_k%d):\n",ks[i]->id);
         for(int j=0;j<nm;j++){ int q=-1; for(int z=0;z<nk;z++) if(ks[z]==mro[j]) q=z;
@@ -157,7 +157,7 @@ void ut_generate(Ck *c, int line){
             sb_add(&o,"%s)\n        if r is not None:\n            return r\n",none?"False":""); }
         sb_add(&o,"        return None\n"); }
     sb_add(&o,"    return None\n");
-    sb_add(&o,"def __mpy_ut_xfail(t: TestCase, name: str) -> bool:\n");
+    sb_add(&o,"def __ppy_ut_xfail(t: TestCase, name: str) -> bool:\n");
     for(int i=0;i<nk;i++){ AClass *mro[32]; int nm=ut_mro(ks[i],mro,32); int cls_x=0; SrcBuf names={0};
         for(int j=0;j<nm;j++){ AotUnit *ku=mro[j]->mod?mro[j]->mod->unit:NULL; const char *ksrc=ku?ku->src:NULL;
             if(mro[j]->def) for(int d=0;d<mro[j]->def->decorator_count;d++){ const char *dn=ut_deco_name(ksrc,aot_expr(ku,&mro[j]->def->decorator_exprs[d])); if(dn && !strcmp(dn,"expectedFailure")) cls_x=1; }
@@ -170,7 +170,7 @@ void ut_generate(Ck *c, int line){
         else sb_add(&o,"    if isinstance(t, __ut_k%d):\n        return %s\n",ks[i]->id,names.s&&names.n?names.s:"False");
         free(names.s); }
     sb_add(&o,"    return False\n");
-    sb_add(&o,"def __mpy_ut_doc(t: TestCase, name: str) -> str:\n");
+    sb_add(&o,"def __ppy_ut_doc(t: TestCase, name: str) -> str:\n");
     for(int i=0;i<nk;i++){ AClass *mro[32]; int nm=ut_mro(ks[i],mro,32); SrcBuf b={0};
         const char *names[256]; int n=ut_test_names(tc,ks[i],names,256);
         for(int t=0;t<n;t++){ AFunc *fm=NULL; for(int j=0;j<nm && !fm;j++) fm=ut_own_method(mro[j],names[t]);
@@ -180,21 +180,21 @@ void ut_generate(Ck *c, int line){
         free(b.s); }
     sb_add(&o,"    return \"\"\n");
     /* setUpClass / tearDownClass (0 / 1) of the test's class */
-    sb_add(&o,"def __mpy_ut_fixture(t: TestCase, what: int) -> None:\n");
+    sb_add(&o,"def __ppy_ut_fixture(t: TestCase, what: int) -> None:\n");
     for(int i=0;i<nk;i++) sb_add(&o,"    if isinstance(t, __ut_k%d):\n        if what == 0:\n            __ut_k%d.setUpClass()\n        else:\n            __ut_k%d.tearDownClass()\n        return\n",ks[i]->id,ks[i]->id,ks[i]->id);
     sb_add(&o,"    pass\n");
     /* its class's name (module.Qualname) and module */
-    sb_add(&o,"def __mpy_ut_class(t: TestCase) -> str:\n");
+    sb_add(&o,"def __ppy_ut_class(t: TestCase) -> str:\n");
     for(int i=0;i<nk;i++) sb_add(&o,"    if isinstance(t, __ut_k%d):\n        return \"%s.%s\"\n",ks[i]->id,ks[i]->mod==mainm?"__main__":ks[i]->mod->name,ks[i]->qualname?ks[i]->qualname:ks[i]->name);
     sb_add(&o,"    return \"\"\n");
-    sb_add(&o,"def __mpy_ut_file(t: TestCase) -> str:\n");
+    sb_add(&o,"def __ppy_ut_file(t: TestCase) -> str:\n");
     for(int i=0;i<nk;i++){ sb_add(&o,"    if isinstance(t, __ut_k%d):\n        return ",ks[i]->id); ut_str_lit(&o,ks[i]->mod->unit&&ks[i]->mod->unit->path?ks[i]->mod->unit->path:"?"); sb_add(&o,"\n"); }
     sb_add(&o,"    return \"?\"\n");
-    sb_add(&o,"def __mpy_ut_module(t: TestCase) -> str:\n");
+    sb_add(&o,"def __ppy_ut_module(t: TestCase) -> str:\n");
     for(int i=0;i<nk;i++) sb_add(&o,"    if isinstance(t, __ut_k%d):\n        return \"%s\"\n",ks[i]->id,ks[i]->mod==mainm?"__main__":ks[i]->mod->name);
     sb_add(&o,"    return \"\"\n");
     /* setUpModule / tearDownModule of a module of tests */
-    sb_add(&o,"def __mpy_ut_modfix(module: str, setup: bool) -> bool:\n");
+    sb_add(&o,"def __ppy_ut_modfix(module: str, setup: bool) -> bool:\n");
     for(int mi=0;mi<p->nmods;mi++){ AModule *m=p->mods[mi]; int has=0; for(int i=0;i<nk;i++) if(ks[i]->mod==m) has=1;
         if(!has) continue;
         for(int w=0;w<2;w++){ ASym *fs=module_sym(m,w?"tearDownModule":"setUpModule"); if(!fs || fs->kind!=AS_FUNC) continue;

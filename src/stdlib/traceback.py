@@ -468,7 +468,7 @@ if sys._compiled:
     # Compiled programs keep no tracebacks: an exception shows as the last lines CPython prints
     # for it ("ValueError: bad"), after its chain (__cause__ / __context__); the stack functions
     # show the line they are called from.
-    from _mpy_typing import Iterator, TypeVar
+    from _ppy_typing import Iterator, TypeVar
 
     _E = TypeVar("_E")
     _V = TypeVar("_V")

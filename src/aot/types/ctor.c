@@ -12,7 +12,7 @@ static Ty *ck_typecall(Ck *c, Expr *e, Ty *t){
     if(!t->tup) cands[n++]=root;
     else for(int i=0;i<c->p->nclasses && n<64;i++){ AClass *k=c->p->classes[i]; if(!k->origin && (k==root || (k->value_used && aot_subclass(k,root)))) cands[n++]=k; }
     if(!n) ck_err(c,e->line,"no class of %s is used as a value here",root->name);
-    if(!xi->cxi || xi->ncands<n){ xi->cxi=(XInfo**)xrealloc(xi->cxi,sizeof(XInfo*)*(size_t)n); for(int i=xi->ncands;i<n;i++) xi->cxi[i]=MPY_NEW0(XInfo); }
+    if(!xi->cxi || xi->ncands<n){ xi->cxi=(XInfo**)xrealloc(xi->cxi,sizeof(XInfo*)*(size_t)n); for(int i=xi->ncands;i<n;i++) xi->cxi[i]=PPY_NEW0(XInfo); }
     xi->cands=(AClass**)xrealloc(xi->cands,sizeof(AClass*)*(size_t)n); memcpy(xi->cands,cands,sizeof(AClass*)*(size_t)n); xi->ncands=n;
     void *keep=e->ty;
     for(int i=0;i<n;i++){ e->ty=xi->cxi[i]; xi->cxi[i]->ty=NULL; ck_ctor(c,e,cands[i]); }    /* (each in an XInfo of its own) */
@@ -163,16 +163,16 @@ static const char *abstract_message(AClass *cls){
 Ty *ck_ctor(Ck *c, Expr *e, AClass *cls){
     if(cls->check_failed) ck_err(c,e->line,"class %s has errors (reported above): it cannot be used here",cls->name);   /* (check mode) */
     XInfo *xi=xinfo(e);
-    if(cls->builtin && !strcmp(cls->name,"SystemExit") && lookup(c,"__mpy_sysexit_int") && strcmp(c->mod->name,"_mpy_exit") && e->kind==EXPR_CALL && e->count<=1){
-        const char *h=NULL;                                                   /* SystemExit(code): its code kept (_mpy_exit.py) */
-        if(!e->count || e->items[0]->kind==EXPR_NONE){ h="__mpy_sysexit_none"; e->count=0; }
+    if(cls->builtin && !strcmp(cls->name,"SystemExit") && lookup(c,"__ppy_sysexit_int") && strcmp(c->mod->name,"_ppy_exit") && e->kind==EXPR_CALL && e->count<=1){
+        const char *h=NULL;                                                   /* SystemExit(code): its code kept (_ppy_exit.py) */
+        if(!e->count || e->items[0]->kind==EXPR_NONE){ h="__ppy_sysexit_none"; e->count=0; }
         else if(!e->items[0]->akind){ Ty *t=ty_find(ck_expr(c,e->items[0]));
             if(t->k==TY_VAR) return pending(c,e->line,"the exit code");
-            if((t->k==TY_INT||t->k==TY_BOOL) && !t->opt) h="__mpy_sysexit_int";
-            else if(t->k==TY_STR && !t->opt) h="__mpy_sysexit_str"; }
+            if((t->k==TY_INT||t->k==TY_BOOL) && !t->opt) h="__ppy_sysexit_int";
+            else if(t->k==TY_STR && !t->opt) h="__ppy_sysexit_str"; }
         if(h){ e->a=name_expr(h,e->line); return ck_call_inner(c,e); } }
     if(cls==complex_class && e->count==1 && !e->items[0]->akind && ty_find(ck_expr(c,e->items[0]))->k==TY_STR){   /* complex("1+2j") */
-        e->a=name_expr("__mpy_complex_parse",e->line); return ck_call_inner(c,e); }
+        e->a=name_expr("__ppy_complex_parse",e->line); return ck_call_inner(c,e); }
     if(cls->origin) cls=cls->origin;
     if(cls->generic){ cls=pick_class_instance(c,e,cls,xi); if(!cls) return pending(c,e->line,"the arguments"); }
     AFunc *init=aot_find_method(cls,"__init__");
@@ -187,19 +187,19 @@ Ty *ck_ctor(Ck *c, Expr *e, AClass *cls){
         AClass *k=cls; int dec=0; for(;k;k=k->base) if(k->builtin && !strcmp(k->name,"UnicodeDecodeError")) dec=1;
         Expr *args[5]; for(int i=0;i<5;i++) args[i]=e->items[i];
         Expr *inner=xnew(EXPR_CALL,e->line); inner->a=e->a; e->count=0;
-        e->a=name_expr(dec?"__mpy_decode_error":"__mpy_encode_error",e->line); xpush(e,inner);
+        e->a=name_expr(dec?"__ppy_decode_error":"__ppy_encode_error",e->line); xpush(e,inner);
         for(int i=0;i<5;i++) xpush(e,args[i]);
-        if(!lookup(c,"__mpy_decode_error")) ck_err(c,e->line,"internal error: a UnicodeError without _oserror.py");
+        if(!lookup(c,"__ppy_decode_error")) ck_err(c,e->line,"internal error: a UnicodeError without _oserror.py");
         return ck_call_inner(c,e); }
     if(!init && aot_is_exception(cls) && e->count>=2 && e->count<=5 && aot_find_field(cls,"_argrepr") && !aot_find_field(cls,"reason")){   /* OSError(errno, strerror[, filename[, winerror, filename2]]): _oserror.py */
         for(int i=0;i<e->count;i++) if(e->items[i]->akind) ck_err(c,e->line,"%s() takes positional arguments in compiled code",cls->name);
         int exact= cls->builtin && (!strcmp(cls->name,"OSError")||!strcmp(cls->name,"IOError")||!strcmp(cls->name,"EnvironmentError"));
         Expr *a0=e->items[0], *a1=e->items[1], *a2= e->count>=3 ? e->items[2] : xnew(EXPR_NONE,e->line), *a4= e->count==5 ? e->items[4] : xnew(EXPR_NONE,e->line);
         e->count=0;
-        if(exact) e->a=name_expr("__mpy_oserror_new",e->line);
-        else { Expr *inner=xnew(EXPR_CALL,e->line); inner->a=e->a; e->a=name_expr("__mpy_oserror",e->line); xpush(e,inner); }
+        if(exact) e->a=name_expr("__ppy_oserror_new",e->line);
+        else { Expr *inner=xnew(EXPR_CALL,e->line); inner->a=e->a; e->a=name_expr("__ppy_oserror",e->line); xpush(e,inner); }
         xpush(e,a0); xpush(e,a1); xpush(e,a2); xpush(e,a4);
-        if(!lookup(c,"__mpy_oserror")) ck_err(c,e->line,"internal error: OSError(errno, strerror) without _oserror.py");
+        if(!lookup(c,"__ppy_oserror")) ck_err(c,e->line,"internal error: OSError(errno, strerror) without _oserror.py");
         return ck_call_inner(c,e); }
     if(!init && aot_is_exception(cls)){                 /* ValueError("message") */
         if(e->count>1) ck_err(c,e->line,"%s() takes at most one argument (the message) in compiled code",cls->name);

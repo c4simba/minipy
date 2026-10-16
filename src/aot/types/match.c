@@ -10,7 +10,7 @@ typedef struct { Stmt **v; int n, cap; } SL;
 static void sl_add(SL *l, Stmt *s){ if(l->n==l->cap){ l->cap=l->cap?l->cap*2:8; l->v=(Stmt**)xrealloc(l->v,sizeof(Stmt*)*(size_t)l->cap); } l->v[l->n++]=s; }
 static void sl_cat(SL *l, SL *m){ for(int i=0;i<m->n;i++) sl_add(l,m->v[i]); }
 Expr *nx(const char *name, int line){ return name_expr(xstrdup2(name),line); }
-Stmt *st_assign(Expr *t, Expr *v, int line){ Stmt *s=stmt_new(STMT_ASSIGN,NULL,line); s->targets=MPY_NEW_ARR(Expr*,1); s->targets[0]=t; s->ntargets=1; s->value=v; return s; }
+Stmt *st_assign(Expr *t, Expr *v, int line){ Stmt *s=stmt_new(STMT_ASSIGN,NULL,line); s->targets=PPY_NEW_ARR(Expr*,1); s->targets[0]=t; s->ntargets=1; s->value=v; return s; }
 static Stmt *st_if(Expr *cond, SL *body, int line){ Stmt *s=stmt_new(STMT_IF,NULL,line); s->expr=cond; for(int i=0;i<body->n;i++) stmt_add_body(s,body->v[i]); if(!body->n) stmt_add_body(s,stmt_new(STMT_PASS,NULL,line)); return s; }
 static Expr *ex_cmp(Expr *a, int code, Expr *b, int line){ Expr *e=xnew(EXPR_COMPARE,line); xpush(e,a); b->akind=code; xpush(e,b); return e; }
 Expr *ex_call(const char *fn, Expr *a, Expr *b, int line){ Expr *e=xnew(EXPR_CALL,line); e->a=nx(fn,line); if(a) xpush(e,a); if(b) xpush(e,b); return e; }
@@ -97,10 +97,10 @@ static int match_pat(Ck *c, const char *xv, Ty *T, Expr *p, SL *inner, SL *out){
         case PAT_MAP:{
             if(T->k!=TY_DICT) return 0;
             SL cur={0}; sl_cat(&cur,inner);
-            const char **keys=MPY_NEW_ARR(const char*,p->count+1);
+            const char **keys=PPY_NEW_ARR(const char*,p->count+1);
             for(int i=0;i<p->count;i++) keys[i]=hidden_for(c,"key");
             if(p->name){ SL r={0}; sl_add(&r,st_assign(nx(p->name,line),ex_call("\001dict",nx(xv,line),NULL,line),line));
-                for(int i=0;i<p->count;i++){ Stmt *d=stmt_new(STMT_DEL,NULL,line); d->targets=MPY_NEW_ARR(Expr*,1); d->targets[0]=ex_index(nx(p->name,line),nx(keys[i],line),line); d->ntargets=1; sl_add(&r,d); }
+                for(int i=0;i<p->count;i++){ Stmt *d=stmt_new(STMT_DEL,NULL,line); d->targets=PPY_NEW_ARR(Expr*,1); d->targets[0]=ex_index(nx(p->name,line),nx(keys[i],line),line); d->ntargets=1; sl_add(&r,d); }
                 sl_cat(&r,&cur); cur=r; }
             for(int i=p->count-1;i>=0;i--){ const char *hv=hidden_for(c,"value");
                 SL here={0}; if(!match_pat(c,hv,T->elem,p->vals[i],&cur,&here)) return 0;

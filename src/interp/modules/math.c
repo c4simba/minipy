@@ -193,7 +193,7 @@ Value ti_sleep(int argc, Value *argv, TupleObj *kw){
     double s=farg(argv[0]);
     if(s<0) mp_raise_t(E_ValueError,"sleep length must be non-negative");
     Thread *self=mp_ts; mp_flush_stdout(); mp_gil_release();
-    mpy_thread_sleep_ms((int)(s*1000+0.5));
+    ppy_thread_sleep_ms((int)(s*1000+0.5));
     mp_gil_acquire(self);
     return v_none();
 }

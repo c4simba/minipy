@@ -5,7 +5,7 @@ import binascii
 import os
 from hmac import compare_digest
 from random import SystemRandom
-from _mpy_typing import Sequence, TypeVar
+from _ppy_typing import Sequence, TypeVar
 
 __all__ = ["choice", "randbelow", "randbits", "SystemRandom", "token_bytes", "token_hex", "token_urlsafe",
            "compare_digest"]

@@ -3,10 +3,10 @@
    program: the global errno its system layer sets, and the DLL import
    relocation startup.c runs for the SDK's libc.dll (nothing to relocate in
    a static program). */
-#ifdef MPY_KOS_PORTS_LIBC
+#ifdef PPY_KOS_PORTS_LIBC
 #undef errno
 int errno;
 void _pei386_runtime_relocator(void){}
 #else
-typedef int mpy_kos_ports_libc_unused;     /* (an empty file is not C) */
+typedef int ppy_kos_ports_libc_unused;     /* (an empty file is not C) */
 #endif

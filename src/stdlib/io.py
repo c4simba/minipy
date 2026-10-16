@@ -1,4 +1,4 @@
-"""File objects: what open() returns (CPython's io, the parts minipy has).
+"""File objects: what open() returns (CPython's io, the parts plainpy has).
 
 Files are descriptors of _os (KolibriOS: file positions kept by _os over its file
 system functions), so this module is the same on every platform. Reading is

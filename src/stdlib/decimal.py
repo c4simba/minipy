@@ -18,7 +18,7 @@ Context(flags=, traps=) take lists of signals (not dicts); as_tuple() of a speci
 (its kind in .special; its repr as CPython's)."""
 import sys
 import math as _math
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = [
     'Decimal', 'Context', 'DecimalTuple', 'DefaultContext', 'BasicContext', 'ExtendedContext',
@@ -1799,15 +1799,15 @@ class Decimal:
         """round(self) (an int; round(self, n): a Decimal)."""
         if n is not None:
             if not sys._compiled:
-                return self.__mpy_round_n(n)
-            raise TypeError("round(Decimal, n): compiled code calls __mpy_round_n")
+                return self.__ppy_round_n(n)
+            raise TypeError("round(Decimal, n): compiled code calls __ppy_round_n")
         if self._is_special:
             if self.is_nan():
                 raise ValueError("cannot convert NaN to integer")
             raise OverflowError("cannot convert Infinity to integer")
         return int(self._rescale(0, ROUND_HALF_EVEN))
 
-    def __mpy_round_n(self, n: int) -> "Decimal":
+    def __ppy_round_n(self, n: int) -> "Decimal":
         """round(self, n) (the compiler calls it for round's two-argument form)."""
         return self.quantize(_dec_from_triple(0, '1', -n))
 

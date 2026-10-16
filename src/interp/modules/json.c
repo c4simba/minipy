@@ -93,7 +93,7 @@ static Value js_dumps(int argc, Value *argv, TupleObj *kw){
     return sb_value(&b);
 }
 typedef struct { const char *s; int64_t i, n; } JIn;
-static MPY_NORETURN void j_fail(JIn *in, const char *what){
+static PPY_NORETURN void j_fail(JIn *in, const char *what){
     int64_t line=1, col=1; for(int64_t k=0;k<in->i && k<in->n;k++){ if(in->s[k]=='\n'){ line++; col=1; } else col++; }
     mp_raise_t(E_ValueError,"%s: line %lld column %lld (char %lld)",what,(long long)line,(long long)col,(long long)in->i);
 }
@@ -191,7 +191,7 @@ static Value js_loads(int argc, Value *argv, TupleObj *kw){
     return v;
 }
 Value make_json(void){
-    Value m=register_module("_mpy_json");
+    Value m=register_module("_ppy_json");
     set_fn(m,"dumps",js_dumps); set_fn(m,"loads",js_loads);
     Value err=mp_dict_get_s(mp_builtins,"ValueError",NULL) ? v_obj(E_ValueError) : v_none();
     mp_dict_set_s(mdict(m),"JSONDecodeError",err);

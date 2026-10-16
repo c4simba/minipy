@@ -1,5 +1,5 @@
 #!/bin/sh
-# MiniPy test runner (golden-file regression).
+# PlainPy test runner (golden-file regression).
 #
 # For each standalone test tests/<name>.py, run the interpreter, capture
 # stdout+stderr and compare against tests/expected/<name>.out.
@@ -8,12 +8,12 @@
 #   tests/run_tests.sh            compare against golden files (default)
 #   tests/run_tests.sh --update   regenerate the golden files
 #
-# MINIPY env var overrides the interpreter path (default: ./minipy).
+# PLAINPY env var overrides the interpreter path (default: ./plainpy).
 
 set -u
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-MINIPY=${MINIPY:-"$ROOT/minipy"}
+PLAINPY=${PLAINPY:-"$ROOT/plainpy"}
 EXP_DIR="$ROOT/tests/expected"
 
 # Run from the repo root and reference scripts by a relative path, so the
@@ -36,7 +36,7 @@ UPDATE=0
 mkdir -p "$EXP_DIR"
 
 run_one() {
-    "$MINIPY" "tests/$1.py" 2>&1
+    "$PLAINPY" "tests/$1.py" 2>&1
 }
 
 if [ "$UPDATE" -eq 1 ]; then

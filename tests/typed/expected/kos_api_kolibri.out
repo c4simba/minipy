@@ -67,7 +67,7 @@ font: 1 9 skin 0
 ls: ['docs/', 'hello.txt=38', 'kernel.mnt=3072', 'pics/']
 dot entries: 5
 read: 'Hello'
-read all: 'MiniPy on KolibriOS\n\nA file browser example.\n'
+read all: 'PlainPy on KolibriOS\n\nA file browser example.\n'
 missing: True -1
 write: 0 0
 new: 'first+second' 12

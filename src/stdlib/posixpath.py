@@ -4,7 +4,7 @@ KolibriOS paths have the same form ("/sys/lib/x.obj", relative ones from the
 current folder), so this module serves there too."""
 import _os
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _RS = TypeVar("_RS")
 

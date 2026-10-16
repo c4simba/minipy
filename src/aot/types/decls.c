@@ -52,32 +52,32 @@ static void memoize_defs(Ck *c, AModule *m){
         if(s->star_index>=0 || s->dstar_index>=0) ck_err(c,s->line,"@lru_cache on a function with *args / **kwargs is not supported in compiled code");
         s->decorator_count=0;
         if(maxsize==0) continue;                                     /* (no cache) */
-        char un[300], ca[300]; snprintf(un,sizeof un,"__mpy_uncached_%s",s->name); snprintf(ca,sizeof ca,"__mpy_cache_%s",s->name);
+        char un[300], ca[300]; snprintf(un,sizeof un,"__ppy_uncached_%s",s->name); snprintf(ca,sizeof ca,"__ppy_cache_%s",s->name);
         Txt t={0}; for(int l=1;l<s->line;l++) tx(&t,"\n");
         tx(&t,"%s = {}\ndef %s(",ca,s->name);
         for(int p=0;p<s->param_count;p++) tx(&t,"%s%s%s",p?", ":"",s->params[p],s->pdefaults&&s->pdefaults[p]?"=None":"");
-        tx(&t,"):\n    __mpy_k = ");
+        tx(&t,"):\n    __ppy_k = ");
         if(!s->param_count) tx(&t,"0"); else { tx(&t,"("); for(int p=0;p<s->param_count;p++) tx(&t,"%s, ",s->params[p]); tx(&t,")"); }
-        tx(&t,"\n    if __mpy_k in %s:\n        __mpy_v = %s.pop(__mpy_k)\n        %s[__mpy_k] = __mpy_v\n        return __mpy_v\n",ca,ca,ca);
-        tx(&t,"    __mpy_r = %s(",un); for(int p=0;p<s->param_count;p++) tx(&t,"%s%s",p?", ":"",s->params[p]); tx(&t,")\n    %s[__mpy_k] = __mpy_r\n",ca);
+        tx(&t,"\n    if __ppy_k in %s:\n        __ppy_v = %s.pop(__ppy_k)\n        %s[__ppy_k] = __ppy_v\n        return __ppy_v\n",ca,ca,ca);
+        tx(&t,"    __ppy_r = %s(",un); for(int p=0;p<s->param_count;p++) tx(&t,"%s%s",p?", ":"",s->params[p]); tx(&t,")\n    %s[__ppy_k] = __ppy_r\n",ca);
         if(maxsize>0) tx(&t,"    if len(%s) > %d:\n        del %s[next(iter(%s))]\n",ca,maxsize,ca,ca);
-        tx(&t,"    return __mpy_r\n");
+        tx(&t,"    return __ppy_r\n");
         Stmt *blk=py_front_stmts(u->path,t.s,s->line); free(t.s);
         if(!blk || blk->body_count!=2) ck_err(c,s->line,"internal error: lru_cache");
         Stmt *w=blk->body[1];
         for(int p=0;p<s->param_count;p++){ if(s->annotations && p<s->annotation_cap && s->annotations[p]) stmt_set_annotation(w,p,s->annotations[p]);
-            if(s->pdefaults && s->pdefaults[p]){ if(!w->pdefaults) w->pdefaults=MPY_NEW_ARR(Expr*,s->param_count+1); w->pdefaults[p]=s->pdefaults[p]; } }
+            if(s->pdefaults && s->pdefaults[p]){ if(!w->pdefaults) w->pdefaults=PPY_NEW_ARR(Expr*,s->param_count+1); w->pdefaults[p]=s->pdefaults[p]; } }
         w->returns=s->returns;
         s->name=xstrdup2(un);
-        Stmt **nb=MPY_NEW_ARR(Stmt*,mod->body_count+3); int nn=0;
+        Stmt **nb=PPY_NEW_ARR(Stmt*,mod->body_count+3); int nn=0;
         for(int j=0;j<i;j++) nb[nn++]=mod->body[j];
         nb[nn++]=blk->body[0]; nb[nn++]=s; nb[nn++]=w;
         for(int j=i+1;j<mod->body_count;j++) nb[nn++]=mod->body[j];
         mod->body=nb; mod->body_count=nn; mod->body_cap=nn;
         i+=2; }
 }
-/* @cached_property def x(self): ... -> the method as __mpy_cf_x, a class attribute
-   __mpy_cv_x = None and a property x computing it once, keeping it there */
+/* @cached_property def x(self): ... -> the method as __ppy_cf_x, a class attribute
+   __ppy_cv_x = None and a property x computing it once, keeping it there */
 static int is_cached_property(Expr *d){
     return (d->kind==EXPR_NAME && !strcmp(d->name,"cached_property"))
         || (d->kind==EXPR_ATTRIBUTE && d->a->kind==EXPR_NAME && !strcmp(d->a->name,"functools") && !strcmp(d->name,"cached_property"));
@@ -92,13 +92,13 @@ static void cached_properties(Ck *c, AotUnit *u, Stmt *cls){
         if(s->param_count!=1) ck_err(c,s->line,"a cached_property takes only self");
         s->decorator_count=0;
         Txt t={0}; for(int l=1;l<s->line;l++) tx(&t,"\n");
-        tx(&t,"__mpy_cv_%s = None\n@property\ndef %s(self):\n    __mpy_v = self.__mpy_cv_%s\n    if __mpy_v is None:\n"
-              "        __mpy_v = self.__mpy_cf_%s()\n        self.__mpy_cv_%s = __mpy_v\n    return __mpy_v\n",s->name,s->name,s->name,s->name,s->name);
+        tx(&t,"__ppy_cv_%s = None\n@property\ndef %s(self):\n    __ppy_v = self.__ppy_cv_%s\n    if __ppy_v is None:\n"
+              "        __ppy_v = self.__ppy_cf_%s()\n        self.__ppy_cv_%s = __ppy_v\n    return __ppy_v\n",s->name,s->name,s->name,s->name,s->name);
         Stmt *blk=py_front_stmts(u->path,t.s,s->line); free(t.s);
         if(!blk || blk->body_count!=2) ck_err(c,s->line,"internal error: cached_property");
         blk->body[1]->returns=s->returns;
-        char nm[300]; snprintf(nm,sizeof nm,"__mpy_cf_%s",s->name); s->name=xstrdup2(nm);
-        Stmt **nb=MPY_NEW_ARR(Stmt*,cls->body_count+2); int nn=0;
+        char nm[300]; snprintf(nm,sizeof nm,"__ppy_cf_%s",s->name); s->name=xstrdup2(nm);
+        Stmt **nb=PPY_NEW_ARR(Stmt*,cls->body_count+2); int nn=0;
         for(int j=0;j<=i;j++) nb[nn++]=cls->body[j];
         nb[nn++]=blk->body[0]; nb[nn++]=blk->body[1];
         for(int j=i+1;j<cls->body_count;j++) nb[nn++]=cls->body[j];
@@ -161,8 +161,8 @@ void collect_module(Ck *c, AModule *m){
     }
     for(int i=0;i<n;i++){ Stmt *s=b[i];
         if(s->kind==STMT_FUNCTION_DEF){ if(module_sym(m,s->name)) ck_err(c,s->line,"'%s' is defined twice",s->name);
-            if(general_decos(m->unit,s,0)){ symtab_add(&m->syms,hidden_name(s->name,NULL),AS_FUNC,MPY_NEW0(AFunc)); global_var(c,m,s->name,s->line); }   /* name = decorators(function) */
-            else symtab_add(&m->syms,s->name,AS_FUNC,MPY_NEW0(AFunc)); }
+            if(general_decos(m->unit,s,0)){ symtab_add(&m->syms,hidden_name(s->name,NULL),AS_FUNC,PPY_NEW0(AFunc)); global_var(c,m,s->name,s->line); }   /* name = decorators(function) */
+            else symtab_add(&m->syms,s->name,AS_FUNC,PPY_NEW0(AFunc)); }
     }
     for(int i=0;i<n;i++){ Stmt *s=b[i];                  /* error = OSError, insort = insort_right: another name of a class or function (assigned once) */
         if(s->kind!=STMT_ASSIGN || s->ntargets!=1 || s->targets[0]->kind!=EXPR_NAME || !s->value || s->aug || s->ann || s->value->kind!=EXPR_NAME) continue;
@@ -172,7 +172,7 @@ void collect_module(Ck *c, AModule *m){
         if(again) continue;
         symtab_add(&m->syms,nm,k->kind,k->p); s->kind=STMT_PASS; }
     Names globals={0};
-    Stmt **rest=MPY_NEW_ARR(Stmt*,n>0?n:1); int nrest=0;
+    Stmt **rest=PPY_NEW_ARR(Stmt*,n>0?n:1); int nrest=0;
     for(int i=0;i<n;i++) if(b[i]->kind!=STMT_FUNCTION_DEF && b[i]->kind!=STMT_CLASS_DEF){
         Stmt *s=b[i];
         if(s->kind==STMT_IMPORT||s->kind==STMT_FROM_IMPORT) continue;

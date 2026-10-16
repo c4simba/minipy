@@ -382,7 +382,7 @@ if sys._compiled:
     import heapq
     import threading
     import time as _tm
-    from _mpy_typing import Generic, TypeVar
+    from _ppy_typing import Generic, TypeVar
 
     T = TypeVar("T")
 

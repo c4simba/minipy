@@ -1,4 +1,4 @@
-"""A package index for the tests of `minipy add` (tests/run_pkg_tests.sh):
+"""A package index for the tests of `plainpy add` (tests/run_pkg_tests.sh):
 a folder laid out like PyPI's JSON API, with wheels made here.
 
     python make_index.py OUT      OUT/index/<name>/json, OUT/index/<name>/<version>/json, OUT/wheels/*.whl

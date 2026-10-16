@@ -30,11 +30,11 @@ Ty *ck_codec_call(Ck *c, Expr *e, Expr *obj, int decode, int first){
         if(i==first) enc=a; else if(i==first+1) errs=a; else ck_err(c,line,"%s() takes at most 2 arguments",decode?"decode":"encode"); }
     if(!enc || is_none(enc)) enc=py_front_expr(c->mod->unit->path,"'utf-8'",line);
     if(!errs || is_none(errs)) errs=py_front_expr(c->mod->unit->path,"'strict'",line);
-    e->count=0; e->a=name_expr(decode?"__mpy_decode":"__mpy_encode",line); xpush(e,obj); xpush(e,enc); xpush(e,errs);
+    e->count=0; e->a=name_expr(decode?"__ppy_decode":"__ppy_encode",line); xpush(e,obj); xpush(e,enc); xpush(e,errs);
     xinfo(e)->kind=X_NONE;
     return ck_call_inner(c,e);
 }
-int codecs_module(Ck *c){ return lookup(c,"__mpy_decode") && strcmp(c->mod->name,"codecs") && strcmp(c->mod->name,"_codecs_more"); }
+int codecs_module(Ck *c){ return lookup(c,"__ppy_decode") && strcmp(c->mod->name,"codecs") && strcmp(c->mod->name,"_codecs_more"); }
 Ty *ck_tmethod(Ck *c, Expr *e, Ty *t, const char *m){
     XInfo *xi=xinfo(e); xi->kind=X_TMETHOD; xi->name=m; int line=e->line;
     if(((t->k==TY_STR && !strcmp(m,"encode")) || (t->k==TY_BYTES && !strcmp(m,"decode"))) && codecs_module(c)){

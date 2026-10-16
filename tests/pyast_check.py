@@ -1,6 +1,6 @@
-"""Compare minipy's Python parser (minipy --pyast) with CPython's ast.
+"""Compare plainpy's Python parser (plainpy --pyast) with CPython's ast.
 
-    python3 tests/pyast_check.py [--minipy ./minipy] [--show N] FILE_OR_DIR ...
+    python3 tests/pyast_check.py [--plainpy ./plainpy] [--show N] FILE_OR_DIR ...
 
 Every .py file is parsed by both; the trees are printed in the canonical form
 of src/py_dump.c and compared. Files CPython itself cannot parse are skipped.
@@ -101,16 +101,16 @@ def first_diff(a, b):
     while i < min(len(a), len(b)) and a[i] == b[i]:
         i += 1
     lo = max(0, i - 80)
-    return "  minipy: ...%s\n  python: ...%s" % (a[lo:i + 80], b[lo:i + 80])
+    return "  plainpy: ...%s\n python: ...%s" % (a[lo:i + 80], b[lo:i + 80])
 
 
 def main():
     argv = sys.argv[1:]
-    minipy = "./minipy"
+    plainpy = "./plainpy"
     show = 20
     while argv and argv[0].startswith("--"):
-        if argv[0] == "--minipy":
-            minipy = argv[1]
+        if argv[0] == "--plainpy":
+            plainpy = argv[1]
             argv = argv[2:]
         elif argv[0] == "--show":
             show = int(argv[1])
@@ -133,7 +133,7 @@ def main():
     for i in range(0, len(todo), 200):
         chunk = todo[i:i + 200]
         for p in chunk:
-            r = subprocess.run([minipy, "--pyast", p], capture_output=True, text=True, errors="replace")
+            r = subprocess.run([plainpy, "--pyast", p], capture_output=True, text=True, errors="replace")
             got = r.stdout
             if r.returncode != 0 or got.startswith(p + ":"):
                 errors += 1

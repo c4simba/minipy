@@ -21,13 +21,13 @@ static AVar *capture(AFunc *g, AFunc *owner, AVar *v){
     if(g==owner) return v;
     AVar *src=capture(g->outer,owner,v);
     for(int i=0;i<g->ncaps;i++) if(g->caps[i]->src==src) return g->caps[i];
-    AVar *cv=MPY_NEW0(AVar); cv->name=v->name; cv->ty=v->ty; cv->mod=g->mod; cv->owner=g; cv->src=src; cv->bind_top=-1; cv->id=-1;
+    AVar *cv=PPY_NEW0(AVar); cv->name=v->name; cv->ty=v->ty; cv->mod=g->mod; cv->owner=g; cv->src=src; cv->bind_top=-1; cv->id=-1;
     if(g->ncaps==g->capcap){ g->capcap=g->capcap?g->capcap*2:4; g->caps=(AVar**)xrealloc(g->caps,sizeof(AVar*)*(size_t)g->capcap); g->capsym=(ASym**)xrealloc(g->capsym,sizeof(ASym*)*(size_t)g->capcap); }
-    ASym *sym=MPY_NEW0(ASym); sym->name=cv->name; sym->kind=AS_VAR; sym->p=cv;
+    ASym *sym=PPY_NEW0(ASym); sym->name=cv->name; sym->kind=AS_VAR; sym->p=cv;
     g->caps[g->ncaps]=cv; g->capsym[g->ncaps]=sym; g->ncaps++;
     return cv;
 }
-static ASym *self_sym(AFunc *f){ if(!f->selfsym){ f->selfsym=MPY_NEW0(ASym); f->selfsym->name=f->name; f->selfsym->kind=AS_FUNC; f->selfsym->p=f; } return f->selfsym; }
+static ASym *self_sym(AFunc *f){ if(!f->selfsym){ f->selfsym=PPY_NEW0(ASym); f->selfsym->name=f->name; f->selfsym->kind=AS_FUNC; f->selfsym->p=f; } return f->selfsym; }
 /* A name in the current function: its comprehension/except variables, its
    locals, then those of the enclosing functions (captured), then globals. */
 ASym *lookup(Ck *c, const char *name){
@@ -76,7 +76,7 @@ AClass *class_expr(Ck *c, Expr *e){
         AModule *m=module_expr(c,e->a);
         if(m){ ASym *s=module_sym(m,e->name); return s && s->kind==AS_CLASS ? (AClass*)s->p : NULL; }
         if(e->a->kind==EXPR_NAME && !strcmp(e->name,"JSONDecodeError")){ ASym *s=lookup(c,e->a->name);           /* json.JSONDecodeError */
-            AModule *jr=find_module(c->p,"_mpy_jsonr");
+            AModule *jr=find_module(c->p,"_ppy_jsonr");
             if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"json") && jr){ ASym *k=module_sym(jr,"JSONDecodeError"); return k && k->kind==AS_CLASS ? (AClass*)k->p : NULL; } }
         if(e->a->kind==EXPR_NAME && !strcmp(e->name,"FrozenInstanceError")){ ASym *s=lookup(c,e->a->name);     /* dataclasses.FrozenInstanceError */
             if(s && s->kind==AS_SYS && !strcmp((const char*)s->p,"dataclasses")) return (AClass*)symtab_find(&builtin_syms,"FrozenInstanceError")->p; }

@@ -1,10 +1,10 @@
-/* ========================= Typed compiler, types: minipy.Endpoint =========================
+/* ========================= Typed compiler, types: plainpy.Endpoint =========================
    A function made callable with its parameters as strings (web
    framework handlers). */
 
 #include "check.h"
 
-/* ---- minipy.Endpoint: a function made callable with its parameters as strings
+/* ---- plainpy.Endpoint: a function made callable with its parameters as strings
    (path and query parameters of an HTTP request). The compiler writes the
    adapter as Python and compiles it with the program:
        def __endpoint__(values: dict[str, str]) -> str:
@@ -57,11 +57,11 @@ static AFunc *ep_adapter(Ck *c, AFunc *fn, int line){
     sb_add(&b,"    return __json__.dumps(__target__(");
     for(int k=0;k<fn->nparams;k++) sb_add(&b,"%sa%d",k?", ":"",k);
     sb_add(&b,"), separators=(\",\", \":\"), ensure_ascii=False)\n");
-    AotUnit *u=MPY_NEW0(AotUnit);
+    AotUnit *u=PPY_NEW0(AotUnit);
     u->name=fn->mod->unit->name; u->path=fn->mod->unit->path; u->src=b.s;
     u->ast=py_front(u->path,b.s);
     if(!u->ast) ck_err(c,line,"internal error: the adapter of endpoint %s() does not compile",fn->name);
-    AModule *m=MPY_NEW0(AModule); m->unit=u; m->name=fn->mod->name; m->index=fn->mod->index; m->body=fn->mod->body;
+    AModule *m=PPY_NEW0(AModule); m->unit=u; m->name=fn->mod->name; m->index=fn->mod->index; m->body=fn->mod->body;
     symtab_add(&m->syms,"__target__",AS_FUNC,fn);
     symtab_add(&m->syms,"__json__",AS_SYS,(void*)"json");
     Stmt *def=u->ast->body[0];
@@ -75,10 +75,10 @@ static AFunc *ep_adapter(Ck *c, AFunc *fn, int line){
     fn->ncalls++; fn->ep_adapter=ad; c->changed=1;
     return ad;
 }
-/* an argument passed where minipy.Endpoint is expected: the function itself */
+/* an argument passed where plainpy.Endpoint is expected: the function itself */
 void ep_arg(Ck *c, Ty *pt, Expr *a, int line){
     if(!is_endpoint(pt) || is_endpoint(xinfo(a)->ty)) return;
     XInfo *x=xinfo(a);
-    if(x->kind!=X_FUNCREF || !x->fn) ck_err(c,line,"a minipy.Endpoint is made from a function given by its name");
+    if(x->kind!=X_FUNCREF || !x->fn) ck_err(c,line,"a plainpy.Endpoint is made from a function given by its name");
     ep_adapter(c,x->fn,line);
 }

@@ -2072,7 +2072,7 @@ if sys._compiled:
     # ndiff, unified_diff, context_diff, restore, get_close_matches, as CPython's; no HtmlDiff,
     # no diff_bytes.
     from heapq import nlargest as _nlargest
-    from _mpy_typing import Callable, Iterator, TypeVar
+    from _ppy_typing import Callable, Iterator, TypeVar
 
     _A = TypeVar("_A")
     _B = TypeVar("_B")

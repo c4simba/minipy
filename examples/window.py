@@ -1,6 +1,6 @@
-# A KolibriOS window with a close button, written in MiniPy.
+# A KolibriOS window with a close button, written in PlainPy.
 #
-# Run on the KolibriOS build:  minipy examples/window.py
+# Run on the KolibriOS build:  plainpy examples/window.py
 # On any other platform it stops immediately with a "wrong platform" error the
 # moment the first syscall runs (that is by design).
 
@@ -11,7 +11,7 @@ MY_BUTTON = 2
 
 def redraw():
     k.window_redraw_begin()
-    k.define_window(120, 100, 320, 180, 0x223344, "MiniPy on KolibriOS")
+    k.define_window(120, 100, 320, 180, 0x223344, "PlainPy on KolibriOS")
     k.draw_text(20, 40, "Hello from a dependency-free Python!", 0xFFFFFF)
     k.define_button(20, 90, 140, 30, MY_BUTTON, 0x5588CC)
     k.draw_text(34, 98, "Click me", 0xFFFFFF)

@@ -1,4 +1,4 @@
-$ minipy add okpkg mixpkg unionpkg untypedpkg
+$ plainpy add okpkg mixpkg unionpkg untypedpkg
 + mixpkg 2.0
 + okpkg 1.2
 + unionpkg 1.0
@@ -49,32 +49,32 @@ version = "1.0"
 name = "untypedpkg-1.0-py3-none-any.whl"
 check = "fail"
 modules-ok = []
---- .minipy/index
-# module package version status (written by minipy sync / minipy check)
+--- .plainpy/index
+# module package version status (written by plainpy sync / plainpy check)
 mixpkg mixpkg 2.0 ok
 mixpkg.dyn mixpkg 2.0 fail
 okpkg okpkg 1.2 ok
 okpkg.shapes okpkg 1.2 ok
 unionpkg unionpkg 1.0 fail
 untypedpkg untypedpkg 1.0 fail
-$ minipy list
+$ plainpy list
 mixpkg     2.0        compiled (1 module) + interpreter
 okpkg      1.2        compiled + interpreter
 unionpkg   1.0        interpreter only
 untypedpkg 1.0        interpreter only
 [exit 0]
-$ minipy main.py
-12 hello, minipy 90
+$ plainpy main.py
+12 hello, plainpy 90
 14 49 one
 3 5 5 ab
-$ minipy --compile app
-12 hello, minipy 90
+$ plainpy --compile app
+12 hello, plainpy 90
 14 49
-$ minipy --compile bad
-bad.py:2: error: module 'unionpkg' (package unionpkg 1.0) did not pass the check for compiled programs: see .minipy/check/unionpkg-1.0.txt (`minipy check unionpkg`)
-$ minipy --compile dyn
-dyn.py:2: error: module 'mixpkg.dyn' (package mixpkg 2.0) did not pass the check for compiled programs: see .minipy/check/mixpkg-2.0.txt (`minipy check mixpkg`)
-$ minipy check unionpkg
+$ plainpy --compile bad
+bad.py:2: error: module 'unionpkg' (package unionpkg 1.0) did not pass the check for compiled programs: see .plainpy/check/unionpkg-1.0.txt (`plainpy check unionpkg`)
+$ plainpy --compile dyn
+dyn.py:2: error: module 'mixpkg.dyn' (package mixpkg 2.0) did not pass the check for compiled programs: see .plainpy/check/mixpkg-2.0.txt (`plainpy check mixpkg`)
+$ plainpy check unionpkg
 checking 4 packages for compiled programs...
 unionpkg 1.0: does not pass the check for compiled programs (target default)
 modules that do not (interpreter only):
@@ -82,15 +82,15 @@ modules that do not (interpreter only):
 errors:
   unionpkg/__init__.py:4: error: only Union[T, None] (Optional[T]) is supported in compiled code: one type per value
 [exit 0]
-$ minipy add cpkg
-minipy: error: cannot choose versions: cpkg 1.0 (wanted by the project) has no pure-Python wheel (py3-none-any): minipy runs no C extensions and builds no sources
+$ plainpy add cpkg
+plainpy: error: cannot choose versions: cpkg 1.0 (wanted by the project) has no pure-Python wheel (py3-none-any): plainpy runs no C extensions and builds no sources
 [exit 1]
-$ minipy add okpkg>=5
-minipy: error: cannot choose versions: no release of okpkg satisfies >=5 (wanted by the project)
+$ plainpy add okpkg>=5
+plainpy: error: cannot choose versions: no release of okpkg satisfies >=5 (wanted by the project)
 [exit 1]
 --- pyproject.toml (unchanged)
 7
-$ minipy remove untypedpkg
+$ plainpy remove untypedpkg
 - untypedpkg 1.0
 checking 3 packages for compiled programs...
   mixpkg 2.0: passes in part - only modules mixpkg in compiled programs
@@ -99,13 +99,13 @@ checking 3 packages for compiled programs...
   unionpkg 1.0: does not pass the check - interpreter only
     unionpkg/__init__.py:4: error: only Union[T, None] (Optional[T]) is supported in compiled code: one type per value
 [exit 0]
-$ minipy list
+$ plainpy list
 mixpkg   2.0        compiled (1 module) + interpreter
 okpkg    1.2        compiled + interpreter
 unionpkg 1.0        interpreter only
 [exit 0]
 (offline: the store has everything the lock file names)
-$ minipy sync
+$ plainpy sync
 checking 3 packages for compiled programs...
   mixpkg 2.0: passes in part - only modules mixpkg in compiled programs
     mixpkg/dyn.py:1: error: only T | None is supported in compiled code: one type per value
@@ -113,10 +113,10 @@ checking 3 packages for compiled programs...
   unionpkg 1.0: does not pass the check - interpreter only
     unionpkg/__init__.py:4: error: only Union[T, None] (Optional[T]) is supported in compiled code: one type per value
 [exit 0]
-$ minipy --compile app
-12 hello, minipy 90
+$ plainpy --compile app
+12 hello, plainpy 90
 14 49
-$ minipy vendor
+$ plainpy vendor
 checking 3 packages for compiled programs...
   mixpkg 2.0: passes in part - only modules mixpkg in compiled programs
     mixpkg/dyn.py:1: error: only T | None is supported in compiled code: one type per value
@@ -124,7 +124,7 @@ checking 3 packages for compiled programs...
   unionpkg 1.0: does not pass the check - interpreter only
     unionpkg/__init__.py:4: error: only Union[T, None] (Optional[T]) is supported in compiled code: one type per value
 [exit 0]
---- .minipy/site after vendor
+--- .plainpy/site after vendor
 mixpkg: copy
 okpkg: copy
 unionpkg: copy

@@ -3,7 +3,7 @@ HTTPMessage and their exceptions; HTTP/1.1 over a socket (KolibriOS's too).
 There is no TLS: HTTPSConnection raises when connecting."""
 import socket
 from urllib.parse import urlsplit
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _Body = TypeVar("_Body")                    # (request()'s body: bytes, a str, None - a copy of it for each)
 
@@ -700,8 +700,8 @@ def _body_bytes(body) -> bytes | None:
 
 
 class HTTPSConnection(HTTPConnection):
-    """HTTPS is not available in minipy (no TLS): connecting raises."""
+    """HTTPS is not available in plainpy (no TLS): connecting raises."""
     default_port = HTTPS_PORT
 
     def connect(self) -> None:
-        raise NotConnected("HTTPS is not supported: minipy has no TLS")
+        raise NotConnected("HTTPS is not supported: plainpy has no TLS")

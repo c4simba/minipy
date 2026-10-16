@@ -3,7 +3,7 @@
 Heaps are lists for which a[k] <= a[2*k+1] and a[k] <= a[2*k+2] for all k;
 the smallest element is a[0]."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 T = TypeVar("T")
 

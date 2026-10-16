@@ -1,44 +1,58 @@
-# MiniPy
+# PlainPy
 
-MiniPy is a compact bytecode compiler and stack-based virtual machine for a Python-shaped language, written from scratch in C. It has no external runtime dependencies beyond the standard C library. The project is designed to be portable and can target both host systems (Linux, macOS) and KolibriOS.
+PlainPy is a compact bytecode compiler and stack-based virtual machine for a Python-shaped language, written from scratch in C. It has no external runtime dependencies beyond the standard C library. The project is designed to be portable and can target both host systems (Linux, macOS) and KolibriOS.
+
+Website: <https://c4simba.github.io/plainpy/> (`site/`).
 
 ## Install
 
-The [releases](https://github.com/c4simba/minipy/releases) carry minipy built
+On Ubuntu (22.04, 24.04, 26.04; amd64, arm64), from the
+[PPA](https://launchpad.net/~c4simba/+archive/ubuntu/plainpy) on Launchpad -
+`apt upgrade` brings new releases:
+
+```sh
+sudo add-apt-repository ppa:c4simba/plainpy
+sudo apt install plainpy
+```
+
+The [releases](https://github.com/c4simba/plainpy/releases) carry plainpy built
 for Linux (x86_64, aarch64), macOS (arm64) and KolibriOS; the latest is always
 at the same addresses:
 
 | system | download | |
 |---|---|---|
-| Debian, Ubuntu | [minipy_amd64.deb](https://github.com/c4simba/minipy/releases/latest/download/minipy_amd64.deb), [minipy_arm64.deb](https://github.com/c4simba/minipy/releases/latest/download/minipy_arm64.deb) | `sudo apt install ./minipy_amd64.deb` |
-| Fedora, RHEL, openSUSE | [minipy.x86_64.rpm](https://github.com/c4simba/minipy/releases/latest/download/minipy.x86_64.rpm), [minipy.aarch64.rpm](https://github.com/c4simba/minipy/releases/latest/download/minipy.aarch64.rpm) | `sudo dnf install ./minipy.x86_64.rpm` |
-| any Linux | [minipy-linux-x86_64.tar.gz](https://github.com/c4simba/minipy/releases/latest/download/minipy-linux-x86_64.tar.gz), [minipy-linux-aarch64.tar.gz](https://github.com/c4simba/minipy/releases/latest/download/minipy-linux-aarch64.tar.gz) | unpack anywhere: `bin/minipy` |
-| macOS | [minipy-macos-arm64.tar.gz](https://github.com/c4simba/minipy/releases/latest/download/minipy-macos-arm64.tar.gz) | unpack anywhere: `bin/minipy` |
-| KolibriOS | [minipy-kolibrios.zip](https://github.com/c4simba/minipy/releases/latest/download/minipy-kolibrios.zip) | the programs, `minipy.lib` and `lib/` in one folder |
+| Debian, Ubuntu | [plainpy_amd64.deb](https://github.com/c4simba/plainpy/releases/latest/download/plainpy_amd64.deb), [plainpy_arm64.deb](https://github.com/c4simba/plainpy/releases/latest/download/plainpy_arm64.deb) | `sudo apt install ./plainpy_amd64.deb` |
+| Fedora, RHEL, openSUSE | [plainpy.x86_64.rpm](https://github.com/c4simba/plainpy/releases/latest/download/plainpy.x86_64.rpm), [plainpy.aarch64.rpm](https://github.com/c4simba/plainpy/releases/latest/download/plainpy.aarch64.rpm) | `sudo dnf install ./plainpy.x86_64.rpm` |
+| any Linux | [plainpy-linux-x86_64.tar.gz](https://github.com/c4simba/plainpy/releases/latest/download/plainpy-linux-x86_64.tar.gz), [plainpy-linux-aarch64.tar.gz](https://github.com/c4simba/plainpy/releases/latest/download/plainpy-linux-aarch64.tar.gz) | unpack anywhere: `bin/plainpy` |
+| macOS | [plainpy-macos-arm64.tar.gz](https://github.com/c4simba/plainpy/releases/latest/download/plainpy-macos-arm64.tar.gz) | unpack anywhere: `bin/plainpy` |
+| KolibriOS | [plainpy-kolibrios.zip](https://github.com/c4simba/plainpy/releases/latest/download/plainpy-kolibrios.zip) | the programs, `plainpy.lib` and `lib/` in one folder |
 
 ```sh
-curl -LO https://github.com/c4simba/minipy/releases/latest/download/minipy_amd64.deb
-sudo apt install ./minipy_amd64.deb      # minipy, minipyc; fasm is suggested
-minipy --version
+curl -LO https://github.com/c4simba/plainpy/releases/latest/download/plainpy_amd64.deb
+sudo apt install ./plainpy_amd64.deb     # plainpy, plainpyc; fasm is suggested
+plainpy --version
 ```
 
 From the sources (a C compiler and make):
 
 ```sh
-make                    # minipy, minipyc, minipy.lib
-sudo make install       # PREFIX=/usr/local: bin/minipy, bin/minipyc, lib/minipy/ (DESTDIR stages it)
+make                    # plainpy, plainpyc, plainpy.lib
+sudo make install       # PREFIX=/usr/local: bin/plainpy, bin/plainpyc, lib/plainpy/ (DESTDIR stages it)
 sudo make uninstall
-make deb                # build/minipy_<version>_<arch>.deb   (dpkg-deb)
-make rpm                # build/minipy-<version>-1.<arch>.rpm (rpmbuild)
-make dist               # build/minipy-<version>-<os>-<arch>.tar.gz
-make kolibrios-dist     # build/minipy-<version>-kolibrios.zip (the KolibriOS toolchain: see KolibriOS build)
+make deb                # build/plainpy_<version>_<arch>.deb  (dpkg-deb)
+make rpm                # build/plainpy-<version>-1.<arch>.rpm (rpmbuild)
+make dist               # build/plainpy-<version>-<os>-<arch>.tar.gz
+make kolibrios-dist     # build/plainpy-<version>-kolibrios.zip (the KolibriOS toolchain: see KolibriOS build)
 ```
 
-Compiling (`minipy --compile`) needs fasm on the PATH for the `linux` and
+Compiling (`plainpy --compile`) needs fasm on the PATH for the `linux` and
 `kolibri` targets (`sudo apt install fasm`) and a C compiler for `macos`.
 `VERSION=1.2.3` sets the version the programs report and the packages carry.
 GitHub Actions (`.github/workflows/build.yml`) builds and tests all of it on
-every push; a tag `v1.2.3` publishes the release 1.2.3.
+every push, installs the .deb and .rpm on clean Debian 12, Ubuntu 24.04 and
+Fedora, and builds the PPA's source packages the way Launchpad does; a tag
+`v1.2.3` publishes the release 1.2.3 and uploads it to the PPA (see
+[Releases](#releases-github-launchpad-the-website)).
 
 ## Pipeline
 
@@ -66,8 +80,8 @@ compile error at its line.
 - `sorted` / `min` / `max` / `list.sort` with `key=` and `reverse=`; `from typing import ...` and annotated attributes (`self.items: list[str] = []`) are accepted (annotations are not evaluated)
 - `print(a, b, sep=..., end=...)`; bytes literals (`b"..."`, the same bytes as a `str`); `match` / `case` are soft keywords
 - `async def` / `await`: a coroutine runs when it is called (`await x` is `x`); `asyncio.run`, `sleep`, `gather`, `create_task`
-- Built-in `json` (`dumps` with `separators=` / `ensure_ascii=`, `loads`), `minipy` (`endpoint`) and, on host builds, `ctypes` (`lib/ctypes.py` over dlopen)
-- Modules are found next to the importing file, then in `MINIPYPATH`, then in `lib/` next to the `minipy` executable (installed: `<prefix>/lib/minipy/lib`)
+- Built-in `json` (`dumps` with `separators=` / `ensure_ascii=`, `loads`), `plainpy` (`endpoint`) and, on host builds, `ctypes` (`lib/ctypes.py` over dlopen)
+- Modules are found next to the importing file, then in `PLAINPYPATH`, then in `lib/` next to the `plainpy` executable (installed: `<prefix>/lib/plainpy/lib`)
 - Exception objects: `BaseException`, `RuntimeError`, `StopIteration`; user classes derived from them (`class NotFound(Exception)`, `super().__init__(message)`) are raised and caught as themselves
 - `try` / `except` / `finally` with protected bytecode regions
 - `iter()` / `next()` builtins and `for` loops via iterator objects
@@ -84,13 +98,13 @@ compile error at its line.
 
 ```text
 src/
-  main.c                    minipy's command line: run a script (--compile runs minipyc)
+  main.c                    plainpy's command line: run a script (--compile runs plainpyc)
   py_lex.c py_parse.c       the full Python parser (CPython's grammar, its ast tree)
   py_front.c ast.c ast.h    the frontend tree both modes work on
   util.c fs.c pystdlib.c    memory and text helpers, files and module search, src/stdlib embedded
-  inflate.c                 inflating what tools/pack.c deflated into minipy.lib
+  inflate.c                 inflating what tools/pack.c deflated into plainpy.lib
   stdlib/*.py               library modules written in Python (both modes)
-  stdlib/_mpy_pkg/          the package manager (minipy add / sync / check ...)
+  stdlib/_ppy_pkg/          the package manager (plainpy add / sync / check ...)
   platform/                 the host (POSIX) and KolibriOS backends
   interp/                   the interpreter
     interp.h                its objects and API
@@ -102,9 +116,9 @@ src/
     builtins.c format.c bytearray.c
     methods/                the methods of str, bytes, list, dict, set, int, float, object ...
     modules/                import, and the modules written in C (sys, math, json, thread, _ctypes)
-  aot/                      the typed compiler, minipyc (minipy --compile runs it)
+  aot/                      the typed compiler, plainpyc (plainpy --compile runs it)
     aot.h model.h           its interface; the program model (types, modules, functions, classes)
-    main.c                  minipyc's command line
+    main.c                  plainpyc's command line
     driver.c imports.c      options, the import pass, running fasm / kpack / cc
     preludes.c namespaces.c Python source and classes added to programs that need them
     pkgcheck.c              --compile --check: packages checked for compiled programs
@@ -114,11 +128,16 @@ src/
     peep.c                  peephole pass and outlining over the listing
     kpack.c                 LZMA packing of KolibriOS executables
     x2c.c x2c_rt.c          macos: the listing translated to C
-tools/pack.c                the build's packer: minipy.lib (Python modules without comments and
+tools/pack.c                the build's packer: plainpy.lib (Python modules without comments and
                             docstrings, the runtime routines, x2c_rt.c; deflated), kpack
 tools/kolibrios-toolchain.sh  the i586-kolibrios cross toolchain (KolibriOS build)
 lib/*.py                    modules every program can import: kolibri (KolibriOS), ctypes, fastapi
-.github/workflows/build.yml builds, tests and releases (Linux, macOS, KolibriOS)
+.github/workflows/build.yml builds, tests and releases (Linux, macOS, KolibriOS), uploads to the PPA
+.github/workflows/pages.yml the website (site/) on GitHub Pages
+debian/                     the Debian packaging Launchpad builds from (tools/launchpad.sh)
+tools/launchpad.sh          source packages for the Ubuntu PPA, and their upload
+site/                       the website: one HTML file
+LICENSE LICENSE.PSF         MIT; CPython's license, for the parts of src/stdlib taken from it
 ```
 
 A directory split into many files has one internal header (`run.h`,
@@ -139,25 +158,25 @@ program gets the routines it uses, in that order).
 ### Build and test
 
 ```sh
-make          # minipy (the interpreter), minipyc (the compiler), minipy.lib
+make          # plainpy (the interpreter), plainpyc (the compiler), plainpy.lib
 make test
 ```
 
-minipy is three files, kept together in one folder (on every system):
+plainpy is three files, kept together in one folder (on every system):
 
 ```text
-minipy       the interpreter (and the package manager)          674 KB  (macOS/arm64)
-minipyc      the compiler; `minipy --compile ...` runs it        858 KB
-minipy.lib   their data: the standard library written in Python, 892 KB
+plainpy      the interpreter (and the package manager)          674 KB  (macOS/arm64)
+plainpyc     the compiler; `plainpy --compile ...` runs it       858 KB
+plainpy.lib  their data: the standard library written in Python, 892 KB
              the runtime routines of compiled programs
 ```
 
-`minipy` and `minipyc` find `minipy.lib` next to themselves (symbolic links
-resolved) or, installed, in `../lib/minipy` (`MINIPYLIB=path` names another
+`plainpy` and `plainpyc` find `plainpy.lib` next to themselves (symbolic links
+resolved) or, installed, in `../lib/plainpy` (`PLAINPYLIB=path` names another
 one), read it the first time they need
 something of it, and take only the library of their own build (its id is
 compiled into them). Modules only one of them uses are marked so in the file
-(`INTERP_ONLY_MODULES` / `COMPILE_ONLY_MODULES` in the Makefile; minipyc says
+(`INTERP_ONLY_MODULES` / `COMPILE_ONLY_MODULES` in the Makefile; plainpyc says
 "only available in the interpreter" for those). The file is the same for
 every platform.
 
@@ -173,15 +192,15 @@ inflates a module the first time it is imported (the whole library takes
 ### Run a script
 
 ```sh
-./minipy tests/test.py
+./plainpy tests/test.py
 ```
 
 ### Diagnostic flags
 
 ```sh
-./minipy --dump-ast tests/statement_ast_test.py       # the parser's tree, as CPython's ast.dump (also --pyast)
-./minipy --dump-bytecode tests/statement_ast_test.py
-./minipy --fs-info
+./plainpy --dump-ast tests/statement_ast_test.py      # the parser's tree, as CPython's ast.dump (also --pyast)
+./plainpy --dump-bytecode tests/statement_ast_test.py
+./plainpy --fs-info
 ```
 
 `tests/pyast_check.py` compares `--pyast` with CPython's own `ast` over whole
@@ -195,17 +214,17 @@ native macOS executables.
 
 ## Compiled mode (ahead-of-time, fasm)
 
-Besides interpreting, `minipy` compiles **statically typed** programs to small
+Besides interpreting, `plainpy` compiles **statically typed** programs to small
 native executables:
 
 ```sh
-./minipy --compile --target linux app.py     # Linux i386 executable ./app
-./minipy --compile --target kolibri app.py   # KolibriOS application ./app
-./minipy --compile --target macos app.py     # native macOS executable ./app (via C, see below)
-./minipy --compile -S app.py                 # only the assembly listing app.asm
+./plainpy --compile --target linux app.py    # Linux i386 executable ./app
+./plainpy --compile --target kolibri app.py  # KolibriOS application ./app
+./plainpy --compile --target macos app.py    # native macOS executable ./app (via C, see below)
+./plainpy --compile -S app.py                # only the assembly listing app.asm
 ```
 
-Without `--target` the program is compiled for the system `minipy` runs on
+Without `--target` the program is compiled for the system `plainpy` runs on
 (`macos` on a Mac, `linux` elsewhere, `kolibri` on KolibriOS).
 
 ```text
@@ -258,8 +277,8 @@ compiler does not count where it can prove a count does not matter:
 
 On `tests/typed/memory.py` (373 000 allocations) this cuts the increfs from
 225 000 to 123 000 and the decrefs from 495 000 to 393 000 (most of the rest
-free objects); the code gets a little smaller too. `MPY_NO_BORROW=1`,
-`MPY_NO_MOVE=1` and `MPY_NO_CONSUME=1` in the compiler's environment switch
+free objects); the code gets a little smaller too. `PPY_NO_BORROW=1`,
+`PPY_NO_MOVE=1` and `PPY_NO_CONSUME=1` in the compiler's environment switch
 each part off, for comparisons with `--count-allocs`.
 
 ### Memory: cycles
@@ -292,9 +311,9 @@ one stays. On `tests/leaks/cycles.py` (each kind of cycle above, 2000
 rounds) 158 000 blocks stayed allocated before; now as many as after 10
 rounds.
 
-`MPY_NO_GC=1` in the compiler's environment leaves the cycle collector out;
-`MPY_GC_STRESS=1` makes the program collect at every noted object (the test
-suite passes that way too); `MPY_GC_TRACE=1` lists the classes and closures
+`PPY_NO_GC=1` in the compiler's environment leaves the cycle collector out;
+`PPY_GC_STRESS=1` makes the program collect at every noted object (the test
+suite passes that way too); `PPY_GC_TRACE=1` lists the classes and closures
 it found. `sh tests/run_leak_tests.sh` compiles each `tests/leaks/*.py`
 with `--count-allocs` and checks that the blocks still allocated at the end
 do not depend on the number of rounds.
@@ -356,9 +375,9 @@ packed. 22 KB of each drop are the fonts' glyphs, now stored at 1 bit a
 pixel where they are not anti-aliased; packed, that makes no difference
 (LZMA had squeezed the old one-letter-a-pixel strings as well).
 
-`MPY_NO_PEEP=1` (all of the peephole pass), `MPY_NO_OUTLINE=1` and
-`MPY_SELF_CHECKS=1` in the compiler's environment switch them off; `MPY_PEEP_STATS=1` counts the rewrites, and
-`MPY_PEEP_MAX=n` stops after the first n (to find a wrong one by bisection).
+`PPY_NO_PEEP=1` (all of the peephole pass), `PPY_NO_OUTLINE=1` and
+`PPY_SELF_CHECKS=1` in the compiler's environment switch them off; `PPY_PEEP_STATS=1` counts the rewrites, and
+`PPY_PEEP_MAX=n` stops after the first n (to find a wrong one by bisection).
 
 ### Types
 
@@ -534,7 +553,7 @@ when it sleeps or waits for another task. The loop sleeps with `nanosleep`
 
 `sys` (below), `asyncio`, `json` (`json.dumps(value, separators=..., ensure_ascii=...)`:
 written by type at compile time, CPython's output, objects as their fields),
-`ctypes` (next section), `minipy` (`Endpoint`, `endpoint`: see FastAPI), `math` (`sqrt sin cos tan asin acos atan atan2 exp
+`ctypes` (next section), `plainpy` (`Endpoint`, `endpoint`: see FastAPI), `math` (`sqrt sin cos tan asin acos atan atan2 exp
 log log10 log2 pow hypot fmod fabs floor ceil trunc degrees radians gcd isqrt
 pi e tau`, on the x87), `time` (`time`, `monotonic`, `perf_counter`, `sleep`;
 on KolibriOS `time()` counts from boot) and `random` (`seed random randint
@@ -555,24 +574,24 @@ module it runs (its imports join the module's others), in an imported module
 it is left out.
 
 A module is looked for next to the importing file, then in the packages of
-the program's project (`.minipy/site`, see [Packages](#packages-from-pypi)),
-then in each folder of `MINIPYPATH` (separated by `:` or `;`), then in `lib/`
-next to the `minipy` executable, then in the main program's folder (so the
+the program's project (`.plainpy/site`, see [Packages](#packages-from-pypi)),
+then in each folder of `PLAINPYPATH` (separated by `:` or `;`), then in `lib/`
+next to the `plainpy` executable, then in the main program's folder (so the
 modules of a project's packages import its top-level modules, as with
 CPython's `sys.path[0]`) - the interpreter does the same. A module is
 `name.py` or `name/__init__.py` (plain Python files: the same code runs in
-CPython), so `minipy --compile main.py` builds `main`. A module's names are
+CPython), so `plainpy --compile main.py` builds `main`. A module's names are
 also the ones it imports: `from .config import Item`, where `config` has
 `Item` from `kui.item`, works in whatever order the modules come:
 
 ```sh
-MINIPYPATH=$HOME/mylibs:/opt/shared ./minipy --compile app.py
+PLAINPYPATH=$HOME/mylibs:/opt/shared ./plainpy --compile app.py
 ```
 
 ### C libraries: `ctypes`
 
 On the Linux and macOS targets a program calls C functions the way CPython's
-`ctypes` does. For Linux `minipy --compile` makes a dynamically linked
+`ctypes` does. For Linux `plainpy --compile` makes a dynamically linked
 executable (`/lib/ld-linux.so.2` loads the libraries and fills in the
 functions' addresses; `fflush(NULL)` runs at exit); on macOS each call is a
 native call with the signature its declarations give (see [macOS](#macos-target-the-listing-as-c)):
@@ -634,14 +653,14 @@ Their programs are i386: they run on x86/x86-64 Linux (no 32-bit libraries
 needed) and on KolibriOS. The macos target needs only a C compiler.
 
 ```sh
-make                  # minipy (the interpreter) and minipyc (the compiler)
+make                  # plainpy (the interpreter) and plainpyc (the compiler)
 make test-typed       # compile tests/typed/*.py, run them, compare with tests/typed/expected
                       # (on a Mac natively: TARGET=macos; elsewhere TARGET=linux)
 make test-leaks       # tests/leaks/*.py: nothing stays allocated that the work left behind
 make test-pkg         # the package manager on a package index of its own (no network)
 ```
 
-`--fasm`, `--fasm-args` (or `MPY_FASM`, `MPY_FASM_ARGS`) choose the
+`--fasm`, `--fasm-args` (or `PPY_FASM`, `PPY_FASM_ARGS`) choose the
 assembler; `--stack` sets a KolibriOS application's stack size and
 `--no-pack` keeps it unpacked. The
 `tests/typed/err_*.py` tests check the compiler's diagnostics; most of the
@@ -671,7 +690,7 @@ index again (it was the 12 500 deletions of each round); in `trees` the cycle
 collector frees every tree a round leaves behind - without it the program
 ran in 0.5 s and kept 18 million blocks. In `clock` the clock calls
 cost what CPython's do (50 to 100 ns against 58); the calendar is
-CPython's C code against minipy's `src/stdlib/datetime.py` and `time.py`,
+CPython's C code against plainpy's `src/stdlib/datetime.py` and `time.py`,
 compiled: `datetime.now()`, `localtime()` and `time.strftime()` take about
 twice CPython's time, `datetime.strftime()` about the same. (They took 3
 times as long before `strftime` read its format once instead of on every
@@ -682,7 +701,7 @@ translated to C (registers and flags kept in C variables), and these times
 include that translation's cost - the more so the bigger the program, which
 is one C function: the same operation costs about twice as much once
 `datetime` is imported as in a small program. On x86 (Linux, KolibriOS) the
-same programs run as the i386 code itself. `--interp` adds minipy's
+same programs run as the i386 code itself. `--interp` adds plainpy's
 interpreter: as fast as CPython on `listcomp`, 1.1 to 1.9 times its time on
 the other computing ones, 4.9 times on `trees` (an attribute is a dict
 lookup) and 14 times on `clock`. It got there by `for a, b in enumerate(xs)`
@@ -728,7 +747,7 @@ example against a real i386 glibc in a Docker image (`IMAGE=`, e.g. Ubuntu with
 still allocated and how many allocations, `incref` and `decref` calls it made
 (a leak check: the count of live blocks must not grow with the work done).
 
-On KolibriOS itself the KolibriOS build of `minipy` compiles the same way,
+On KolibriOS itself the KolibriOS build of `plainpy` compiles the same way,
 running `/sys/develop/fasm` with KolibriOS fasm's `infile,outfile,path`
 arguments; nothing else has to be installed.
 
@@ -740,7 +759,7 @@ recompiler for the fasm subset the compiler emits) that the system C compiler
 builds into a native executable - arm64 on Apple silicon, no Rosetta, no fasm:
 
 ```sh
-./minipy --compile hello.py && ./hello       # on a Mac: hello.asm, hello.c, ./hello
+./plainpy --compile hello.py && ./hello      # on a Mac: hello.asm, hello.c, ./hello
 ```
 
 The C program keeps the i386 machine the listing was written for
@@ -768,8 +787,8 @@ host address of the same bytes); a `char *` result outside the guest memory
 is copied into it, another pointer becomes a handle the program can pass
 back.
 
-`-O1` builds a program in a second or two; `--cc`, `--cc-args` (or `MPY_CC`,
-`MPY_CC_ARGS`, default `-O1 -w {in} -o {out} -lm`) choose the compiler and
+`-O1` builds a program in a second or two; `--cc`, `--cc-args` (or `PPY_CC`,
+`PPY_CC_ARGS`, default `-O1 -w {in} -o {out} -lm`) choose the compiler and
 its arguments. `TARGET=macos sh tests/run_typed_tests.sh` runs the typed
 tests natively (the `*_linux` ones too, except those that need the scripted
 HTTP clients of `tests/x86run.py`); `tests/typed/expected/<name>.<target>.out`
@@ -779,38 +798,38 @@ overrides a test's expected output for one target (`sys_linux.macos.out`:
 ## Packages from PyPI
 
 ```sh
-minipy add requests 'attrs>=23'   # into pyproject.toml, then lock, download, check
-minipy remove attrs
-minipy lock                       # choose the versions again: pylock.toml
-minipy sync                       # what pylock.toml names: into the store and .minipy/site, then the check
-minipy check [PACKAGE...]         # the check again, with the full report
-minipy list                       # the packages and where they can be used
-minipy vendor                     # .minipy/site as copies: a project to take elsewhere (KolibriOS)
+plainpy add requests 'attrs>=23'  # into pyproject.toml, then lock, download, check
+plainpy remove attrs
+plainpy lock                      # choose the versions again: pylock.toml
+plainpy sync                      # what pylock.toml names: into the store and .plainpy/site, then the check
+plainpy check [PACKAGE...]        # the check again, with the full report
+plainpy list                      # the packages and where they can be used
+plainpy vendor                    # .plainpy/site as copies: a project to take elsewhere (KolibriOS)
 ```
 
-A project is the folder of its `pyproject.toml` (`minipy add` makes one):
+A project is the folder of its `pyproject.toml` (`plainpy add` makes one):
 its `[project] dependencies` (PEP 621) say what it needs, `pylock.toml`
 (PEP 751) pins every package to a version and to one wheel with its sha256.
 There is no virtual environment. A wheel is downloaded once per machine,
 checked against the lock file's hash and unpacked into the store
-(`~/.minipy/store`, or `$MINIPY_HOME/store`); a project links to it from
-`.minipy/site`, which programs inside the project import from. Nothing of a
+(`~/.plainpy/store`, or `$PLAINPY_HOME/store`); a project links to it from
+`.plainpy/site`, which programs inside the project import from. Nothing of a
 package runs while it is installed: only pure-Python wheels (`py3-none-any`)
 are used - no C extension modules, no builds from source. Environment markers
-see `implementation_name == "minipy"` and `python_version == "3.14"`, so the
+see `implementation_name == "plainpy"` and `python_version == "3.14"`, so the
 pure-Python fallbacks of packages with C speedups are chosen. The index is
-PyPI's JSON API (`--index URL`, `[tool.minipy] index-url` or
-`MINIPY_INDEX_URL`, also a folder laid out like it: `file://...`);
+PyPI's JSON API (`--index URL`, `[tool.plainpy] index-url` or
+`PLAINPY_INDEX_URL`, also a folder laid out like it: `file://...`);
 downloads go through `curl`.
 
 Every package goes through the **check for compiled programs**: the compiler
-runs over all of its modules (`minipy --compile --check MODULE...`) and,
+runs over all of its modules (`plainpy --compile --check MODULE...`) and,
 unlike a compilation, goes on after an error, so it reports everything it
 cannot compile - a `Union` other than `T | None`, `Any`, an unknown type, a
 dynamic feature - and, as *unclear*, every function it cannot check: one
 nothing calls whose parameters have no types. Before that each module is
-compiled for the interpreter; source minipy cannot run at all (an int literal
-beyond 64 bits ...) marks the package as not running in minipy. A module
+compiled for the interpreter; source plainpy cannot run at all (an int literal
+beyond 64 bits ...) marks the package as not running in plainpy. A module
 passes when its file has no error and nothing unclear and every module it
 imports passes too:
 
@@ -822,20 +841,20 @@ checking 2 packages for compiled programs...
 ```
 
 The interpreter runs every package. A compiled program may import only the
-modules that passed (`.minipy/index`; the full reports in `.minipy/check/`):
+modules that passed (`.plainpy/index`; the full reports in `.plainpy/check/`):
 
 ```text
 app.py:1: error: module 'unionpkg' (package unionpkg 1.0) did not pass the check for compiled programs:
-see .minipy/check/unionpkg-1.0.txt (`minipy check unionpkg`)
+see .plainpy/check/unionpkg-1.0.txt (`plainpy check unionpkg`)
 ```
 
 `pyproject.toml` and `pylock.toml` belong to the project's sources;
-`.minipy/` is made again by `minipy sync`.
+`.plainpy/` is made again by `plainpy sync`.
 
 ## FastAPI
 
 `lib/fastapi.py` and `lib/uvicorn.py` are FastAPI's routing API and a
-uvicorn-like HTTP/1.1 server written in MiniPy (the server over libc sockets
+uvicorn-like HTTP/1.1 server written in PlainPy (the server over libc sockets
 through ctypes). FastAPI's own hello world compiles unchanged:
 
 ```python
@@ -862,9 +881,9 @@ if __name__ == "__main__":
 ```
 
 ```sh
-./minipy --compile --target linux examples/fastapi/main.py   # a 28 KB i386 Linux executable
-./minipy --compile examples/fastapi/main.py                  # on a Mac: a native macOS one
-./main                                          # or: ./minipy examples/fastapi/main.py (interpreter, host)
+./plainpy --compile --target linux examples/fastapi/main.py  # a 28 KB i386 Linux executable
+./plainpy --compile examples/fastapi/main.py                 # on a Mac: a native macOS one
+./main                                          # or: ./plainpy examples/fastapi/main.py (interpreter, host)
 curl 'http://localhost:8000/items/5?q=somequery'   # {"item_id":5,"q":"somequery"}
 ```
 
@@ -885,15 +904,15 @@ request bodies (pydantic models), dependencies, response models, OpenAPI /
 `/docs`, middleware; the server handles one connection at a time.
 
 How it works: `app.get(path)` returns a `Callable[[Endpoint], Endpoint]`, and
-passing a function where a `minipy.Endpoint` is expected makes the compiler
+passing a function where a `plainpy.Endpoint` is expected makes the compiler
 write an adapter for it in Python - parameters converted from a dict of
 strings by their annotations, the function called (an async one directly: the
 server runs in a task), the result `json.dumps`ed - so every route has one
-type. In the interpreter `minipy.endpoint(f)` does the same at run time.
+type. In the interpreter `plainpy.endpoint(f)` does the same at run time.
 
 ## KolibriOS API: `lib/kolibri.py`
 
-`lib/kolibri.py` is the KolibriOS system interface written in MiniPy on
+`lib/kolibri.py` is the KolibriOS system interface written in PlainPy on
 top of `sys.syscall`, after the kernel's `docs/sysfuncs.txt`; each wrapper
 names its function (`fn 18.20` is function 18, subfunction 20). The same file
 works compiled and in the interpreter. It covers windows and drawing (styles,
@@ -932,7 +951,7 @@ print("kernel " + str(k.kernel_version()) + ", " + str(k.free_ram_kb()) + " KB f
 k.clipboard_put_text("hello")
 ```
 
-It is in `lib/`, next to the programs (installed: `<prefix>/lib/minipy/lib`),
+It is in `lib/`, next to the programs (installed: `<prefix>/lib/plainpy/lib`),
 so every program imports it as it is. Programs for KolibriOS with a user
 interface - `kui`, a UI toolkit on it, the graphics library `kgfx`, PNG
 decoding, KolibriOS's own fonts, and Nectar, a whole desktop made of them -
@@ -940,7 +959,7 @@ are in a repository of their own: [c4simba/nectar](https://github.com/c4simba/ne
 
 ## KolibriOS build
 
-minipy and minipyc for KolibriOS are built with the `i586-kolibrios` GCC
+plainpy and plainpyc for KolibriOS are built with the `i586-kolibrios` GCC
 cross toolchain of [KolibriOS's ports](https://git.kolibrios.org/KolibriOS/ports)
 (binutils, GCC 13, newlib). `tools/kolibrios-toolchain.sh` builds it from that
 repository's sources (a quarter of an hour; a C compiler, make, curl, bison,
@@ -948,12 +967,12 @@ flex, texinfo and the gmp / mpfr / mpc development files):
 
 ```sh
 sh tools/kolibrios-toolchain.sh $HOME/kos-toolchain
-make kolibrios KOS_PORTS=1 KOS32_SDK=$HOME/kos-toolchain       # build/kolibri/minipy, minipyc, minipy.lib
-make kolibrios-dist KOS_PORTS=1 KOS32_SDK=$HOME/kos-toolchain  # build/minipy-<version>-kolibrios.zip
+make kolibrios KOS_PORTS=1 KOS32_SDK=$HOME/kos-toolchain       # build/kolibri/plainpy, plainpyc, plainpy.lib
+make kolibrios-dist KOS_PORTS=1 KOS32_SDK=$HOME/kos-toolchain  # build/plainpy-<version>-kolibrios.zip
 ```
 
 The CI does the same (the toolchain kept between runs) and puts
-`minipy-kolibrios.zip` into every release.
+`plainpy-kolibrios.zip` into every release.
 
 `KOS_PORTS=1` takes newlib as the toolchain's one static `libc.a` (with
 `libm.a`; `src/platform/kolibri/ports_libc.c` gives the two things it leaves
@@ -973,17 +992,17 @@ into a KolibriOS program (`objcopy -O binary`).
 ### Output
 
 ```text
-build/kolibri/minipy        the interpreter      } kpacked: LZMA, unpacked by the kernel
-build/kolibri/minipyc       the compiler         } as it loads them (KOS_KPACK=0: not)
-build/kolibri/minipy.lib    their data (the same file as the host build's)
-build/kolibri/minipy.map    (and minipyc.map)
+build/kolibri/plainpy       the interpreter      } kpacked: LZMA, unpacked by the kernel
+build/kolibri/plainpyc      the compiler         } as it loads them (KOS_KPACK=0: not)
+build/kolibri/plainpy.lib   their data (the same file as the host build's)
+build/kolibri/plainpy.map   (and plainpyc.map)
 ```
 
 Put the three files (and `lib/`) into one folder. The programs are packed
-the way minipyc packs the KolibriOS programs it compiles (`src/aot/kpack.c`,
+the way plainpyc packs the KolibriOS programs it compiles (`src/aot/kpack.c`,
 the format of the system's kpack). Both use the system's SHELL as their
 console - through a ring buffer in the `{PID}-SHELL` shared memory
-(`src/platform/kolibri/console.c`) - and minipyc runs `/sys/develop/fasm`.
+(`src/platform/kolibri/console.c`) - and plainpyc runs `/sys/develop/fasm`.
 Started without a script, the interpreter runs `main.py` of `KOS_IMPORT_DIR`
 (`make kolibrios KOS_IMPORT_DIR=...`, default `/hd0/1/import_path`).
 
@@ -995,17 +1014,17 @@ Filesystem access is abstracted behind `src/fs.c` with swappable backends:
 |------|---------|
 | `src/fs.c` | Common path/module helpers and backend dispatch |
 | `src/platform/host/fs_host.c` | Default stdio backend for host builds |
-| `src/platform/kolibri/fs_kolibri.c` | KolibriOS/newlib backend (enabled with `MPY_FS_KOLIBRI`) |
+| `src/platform/kolibri/fs_kolibri.c` | KolibriOS/newlib backend (enabled with `PPY_FS_KOLIBRI`) |
 
 ### Public API
 
 ```c
-mpy_fs_read_file(path)
-mpy_fs_try_read_file(path, &error_message)
-mpy_fs_dirname(path)
-mpy_fs_module_path(importer_dir, module_name)
-mpy_fs_find_module(importer_dir, module_name)   /* + MINIPYPATH and <minipy>/lib */
-mpy_fs_backend_name()
+ppy_fs_read_file(path)
+ppy_fs_try_read_file(path, &error_message)
+ppy_fs_dirname(path)
+ppy_fs_module_path(importer_dir, module_name)
+ppy_fs_find_module(importer_dir, module_name)   /* + PLAINPYPATH and <plainpy>/lib */
+ppy_fs_backend_name()
 ```
 
 ### Import resolution (KolibriOS)
@@ -1013,12 +1032,60 @@ mpy_fs_backend_name()
 Paths are normalized to forward slashes. Simple imports are resolved relative to the importing file:
 
 ```python
-import utils        # from /rd/1/minipy/tests/test.py → /rd/1/minipy/tests/utils.py
+import utils        # from /rd/1/plainpy/tests/test.py → /rd/1/plainpy/tests/utils.py
 import pkg.tools    # → pkg/tools.py relative to the importer directory
 ```
 
-If a relative path cannot be opened and `MPY_FS_DEFAULT_IMPORT_DIR` is set, the FS layer retries from that fixed directory. The KolibriOS Makefile sets this from `KOS_IMPORT_DIR`.
+If a relative path cannot be opened and `PPY_FS_DEFAULT_IMPORT_DIR` is set, the FS layer retries from that fixed directory. The KolibriOS Makefile sets this from `KOS_IMPORT_DIR`.
 
 ### Adding a new backend
 
-To target an embedded platform, add a new backend file implementing `mpy_fs_backend_read_file()` backed by ROM, flash, an RTOS VFS, or a fixed manifest. The compiler and VM require no changes.
+To target an embedded platform, add a new backend file implementing `ppy_fs_backend_read_file()` backed by ROM, flash, an RTOS VFS, or a fixed manifest. The compiler and VM require no changes.
+
+## Releases: GitHub, Launchpad, the website
+
+A tag `v1.2.3` pushed to GitHub makes the release: `build.yml` builds and tests
+everything, publishes the files of the release (the fixed names above), then
+`tools/launchpad.sh --upload 1.2.3` makes a source package per Ubuntu series
+(`1.2.3-1~jammy1`, `1.2.3-1~noble1`, `1.2.3-1~resolute1`: one
+`plainpy_1.2.3.orig.tar.gz` from `git archive`, `debian/` with each series'
+changelog entry), signs them and uploads them with `dput`. Launchpad builds the
+binary packages from them - `make`, `make test`, `make install PREFIX=/usr`
+with Ubuntu's compiler flags, no network - and publishes them in the PPA.
+
+Once, for the PPA:
+
+1. A Launchpad account, and the PPA: <https://launchpad.net/~c4simba/+activate-ppa>,
+   name `plainpy` (Launchpad may ask to sign the Ubuntu Code of Conduct
+   first). In the PPA's *Change details*, tick the arm64 processor (amd64 is
+   on by default; `debian/control` lists the two).
+2. A GPG key for signing: `gpg --quick-generate-key "Your Name <you@example.com>"`,
+   then `gpg --keyserver keyserver.ubuntu.com --send-keys FINGERPRINT` and
+   register the fingerprint at <https://launchpad.net/~c4simba/+editpgpkeys>
+   (Launchpad mails a message encrypted to the key to confirm it).
+3. The repository's *Settings -> Secrets and variables -> Actions*: the secret
+   `LAUNCHPAD_GPG_KEY` = `gpg --armor --export-secret-keys FINGERPRINT`, and
+   `LAUNCHPAD_GPG_PASSPHRASE` if the key has one. Variables, if the defaults do
+   not fit: `PPA` (`ppa:c4simba/plainpy`), `PPA_SERIES` (`jammy noble resolute`:
+   a series Launchpad no longer builds for refuses the upload).
+
+Without the secret the upload is skipped (a warning in the run). By hand, on
+Debian or Ubuntu with `dpkg-dev`, `devscripts` and `dput`:
+
+```sh
+tools/launchpad.sh 1.2.3                      # build/launchpad/<series>/: the source packages
+tools/launchpad.sh --upload 1.2.3             # signed and uploaded (GPG_KEY=..., SERIES=..., PPA=...)
+PPA_REV=2 tools/launchpad.sh --upload 1.2.3   # the same version again, rebuilt: 1.2.3-1~noble2
+```
+
+The website is `site/index.html` (no build step), published to GitHub Pages
+by `.github/workflows/pages.yml` on every push that changes `site/` and on
+every release (the page names the latest one). Once: *Settings -> Pages ->
+Source: GitHub Actions*.
+
+## License
+
+plainpy is under the MIT license (`LICENSE`). Parts of `src/stdlib` are
+adapted from CPython 3.14 and stay under the Python Software Foundation
+License (`LICENSE.PSF`); files with their own notice (logging, optparse,
+tomllib, unittest) keep it. `debian/copyright` lists them.

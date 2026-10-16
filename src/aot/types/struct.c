@@ -41,41 +41,41 @@ static const char *struct_layout(const char *fmt, SItem **out, int *nout, int *t
     }
     *out=v; *nout=n; *total=(int)size; return NULL;
 }
-/* the text unpacking item it from the bytes _mpy_sb at offset base + its offset */
+/* the text unpacking item it from the bytes _ppy_sb at offset base + its offset */
 static void struct_unpack_text(char *t, size_t n, SItem *it, const char *base, int little){
     const char *L= little ? "True" : "False";
     switch(it->code){
-        case 'c': snprintf(t,n,"__mpy_struct__u_char(_mpy_sb, %s%d)",base,it->off); break;
-        case '?': snprintf(t,n,"__mpy_struct__u_bool(_mpy_sb, %s%d)",base,it->off); break;
-        case 's': snprintf(t,n,"__mpy_struct__u_str(_mpy_sb, %s%d, %d)",base,it->off,it->size); break;
-        case 'p': snprintf(t,n,"__mpy_struct__u_pascal(_mpy_sb, %s%d, %d)",base,it->off,it->size); break;
-        case 'e': case 'f': case 'd': snprintf(t,n,"__mpy_struct__u_float(_mpy_sb, %s%d, %d, %s)",base,it->off,it->size,L); break;
-        default: snprintf(t,n,"__mpy_struct__u_int(_mpy_sb, %s%d, %d, %s, %s)",base,it->off,it->size,L,
+        case 'c': snprintf(t,n,"__ppy_struct__u_char(_ppy_sb, %s%d)",base,it->off); break;
+        case '?': snprintf(t,n,"__ppy_struct__u_bool(_ppy_sb, %s%d)",base,it->off); break;
+        case 's': snprintf(t,n,"__ppy_struct__u_str(_ppy_sb, %s%d, %d)",base,it->off,it->size); break;
+        case 'p': snprintf(t,n,"__ppy_struct__u_pascal(_ppy_sb, %s%d, %d)",base,it->off,it->size); break;
+        case 'e': case 'f': case 'd': snprintf(t,n,"__ppy_struct__u_float(_ppy_sb, %s%d, %d, %s)",base,it->off,it->size,L); break;
+        default: snprintf(t,n,"__ppy_struct__u_int(_ppy_sb, %s%d, %d, %s, %s)",base,it->off,it->size,L,
                      islower((unsigned char)it->code)&&it->code!='p' ? "True" : "False");
     }
 }
 /* the text packing the values <arg>0, <arg>1, ... (pad bytes between them) */
 static void struct_pack_text(SBuf_ *t, SItem *it, int n, int size, int little, const char *arg){
     char one[160]; int pos=0; const char *L= little ? "True" : "False";
-    tsb_printf(t,"__mpy_struct__join([");
+    tsb_printf(t,"__ppy_struct__join([");
     for(int i=0;i<n;i++){ SItem *x=&it[i];
-        if(x->off>pos) tsb_printf(t,"__mpy_struct__pad(%d), ",x->off-pos);
+        if(x->off>pos) tsb_printf(t,"__ppy_struct__pad(%d), ",x->off-pos);
         switch(x->code){
-            case 'c': snprintf(one,sizeof one,"__mpy_struct__p_char(%s%d)",arg,i); break;
-            case '?': snprintf(one,sizeof one,"__mpy_struct__p_bool(%s%d)",arg,i); break;
-            case 's': snprintf(one,sizeof one,"__mpy_struct__p_str(%s%d, %d)",arg,i,x->size); break;
-            case 'p': snprintf(one,sizeof one,"__mpy_struct__p_pascal(%s%d, %d)",arg,i,x->size); break;
-            case 'e': case 'f': case 'd': snprintf(one,sizeof one,"__mpy_struct__p_float(%s%d, %d, %s, '%c')",arg,i,x->size,L,x->code); break;
-            default: snprintf(one,sizeof one,"__mpy_struct__p_int(%s%d, %d, %s, %s, '%c')",arg,i,x->size,L,islower((unsigned char)x->code)?"True":"False",x->code);
+            case 'c': snprintf(one,sizeof one,"__ppy_struct__p_char(%s%d)",arg,i); break;
+            case '?': snprintf(one,sizeof one,"__ppy_struct__p_bool(%s%d)",arg,i); break;
+            case 's': snprintf(one,sizeof one,"__ppy_struct__p_str(%s%d, %d)",arg,i,x->size); break;
+            case 'p': snprintf(one,sizeof one,"__ppy_struct__p_pascal(%s%d, %d)",arg,i,x->size); break;
+            case 'e': case 'f': case 'd': snprintf(one,sizeof one,"__ppy_struct__p_float(%s%d, %d, %s, '%c')",arg,i,x->size,L,x->code); break;
+            default: snprintf(one,sizeof one,"__ppy_struct__p_int(%s%d, %d, %s, %s, '%c')",arg,i,x->size,L,islower((unsigned char)x->code)?"True":"False",x->code);
         }
         tsb_printf(t,"%s, ",one); pos=x->off+x->size; }
-    if(size>pos) tsb_printf(t,"__mpy_struct__pad(%d), ",size-pos);
+    if(size>pos) tsb_printf(t,"__ppy_struct__pad(%d), ",size-pos);
     tsb_printf(t,"])");
 }
 static void subst_args(Expr **pe, Expr **args, int nargs){
     Expr *e=*pe; if(!e) return;
-    if(e->kind==EXPR_NAME && !strncmp(e->name,"__mpy_a",7)){ int i=atoi(e->name+7);
-        if(i>=0 && i<nargs){ Expr *x=MPY_NEW0(Expr); *x=*args[i]; x->akind=e->akind; x->kw=e->kw; *pe=x; } return; }
+    if(e->kind==EXPR_NAME && !strncmp(e->name,"__ppy_a",7)){ int i=atoi(e->name+7);
+        if(i>=0 && i<nargs){ Expr *x=PPY_NEW0(Expr); *x=*args[i]; x->akind=e->akind; x->kw=e->kw; *pe=x; } return; }
     subst_args(&e->a,args,nargs); subst_args(&e->b,args,nargs); subst_args(&e->c,args,nargs); subst_args(&e->d,args,nargs);
     for(int i=0;i<e->count;i++) subst_args(&e->items[i],args,nargs);
     for(int i=0;i<e->vcount;i++) subst_args(&e->vals[i],args,nargs);
@@ -85,7 +85,7 @@ const char *struct_func(Ck *c, Expr *f){
     static const char *const names[]={"pack","unpack","unpack_from","iter_unpack","calcsize","Struct",NULL};
     const char *nm=NULL;
     if(!strcmp(c->mod->name,"struct")) return NULL;
-    if(f->kind==EXPR_NAME){ if(!strncmp(f->name,"__mpy_",6)) return NULL;          /* (what the calls become) */
+    if(f->kind==EXPR_NAME){ if(!strncmp(f->name,"__ppy_",6)) return NULL;          /* (what the calls become) */
         ASym *s=lookup(c,f->name);
         if(s && s->kind==AS_CLASS && !strcmp(((AClass*)s->p)->mod->name,"struct") && !strcmp(((AClass*)s->p)->name,"_CStruct")) return "Struct";
         if(!s || s->kind!=AS_FUNC || strcmp(((AFunc*)s->p)->mod->name,"struct")) return NULL;
@@ -98,7 +98,7 @@ const char *struct_func(Ck *c, Expr *f){
 /* f(...) calling tempfile's NamedTemporaryFile or TemporaryFile -> its name */
 const char *tempfile_func(Ck *c, Expr *f){
     if(!strcmp(c->mod->name,"tempfile")) return NULL;
-    if(f->kind==EXPR_NAME){ if(!strncmp(f->name,"__mpy_",6)) return NULL;
+    if(f->kind==EXPR_NAME){ if(!strncmp(f->name,"__ppy_",6)) return NULL;
         ASym *s=lookup(c,f->name);
         if(!s || s->kind!=AS_FUNC || strcmp(((AFunc*)s->p)->mod->name,"tempfile")) return NULL;
         const char *n=((AFunc*)s->p)->name;
@@ -129,18 +129,18 @@ Ty *ck_struct(Ck *c, Expr *e, const char *fn){
         if(e->count!=1) ck_err(c,line,"Struct() takes exactly one argument");
         if(!n) ck_err(c,line,"struct.Struct(): a format without values is not supported in compiled code");
         args[0]=fe; nargs=1;
-        tsb_printf(&t,"__mpy_struct__CStruct(__mpy_a0, %d, lambda _mpy_sb, _mpy_so: (",size);
-        for(int i=0;i<n;i++){ struct_unpack_text(one,sizeof one,&it[i],"_mpy_so + ",little); tsb_printf(&t,"%s, ",one); }
+        tsb_printf(&t,"__ppy_struct__CStruct(__ppy_a0, %d, lambda _ppy_sb, _ppy_so: (",size);
+        for(int i=0;i<n;i++){ struct_unpack_text(one,sizeof one,&it[i],"_ppy_so + ",little); tsb_printf(&t,"%s, ",one); }
         tsb_printf(&t,"), lambda ");
-        for(int i=0;i<n;i++) tsb_printf(&t,"%s_mpy_v%d",i?", ":"",i);
+        for(int i=0;i<n;i++) tsb_printf(&t,"%s_ppy_v%d",i?", ":"",i);
         tsb_printf(&t,": ");
-        struct_pack_text(&t,it,n,size,little,"_mpy_v");
+        struct_pack_text(&t,it,n,size,little,"_ppy_v");
         tsb_printf(&t,")"); }
     else if(!strcmp(fn,"pack")){
         for(int i=1;i<e->count;i++) if(e->items[i]->akind) ck_err(c,line,"pack() takes positional arguments");
         if(e->count-1!=n) ck_err(c,line,"struct.error: pack expected %d items for packing (got %d)",n,e->count-1);
         Expr **vals=e->items+1;
-        struct_pack_text(&t,it,n,size,little,"__mpy_a");
+        struct_pack_text(&t,it,n,size,little,"__ppy_a");
         Expr *res=py_front_expr(c->mod->unit->path,t.s,line); free(t.s); free(it);
         if(!res) ck_err(c,line,"internal error: struct.pack");
         subst_args(&res,vals,n);
@@ -159,10 +159,10 @@ Ty *ck_struct(Ck *c, Expr *e, const char *fn){
             args[k]=a; }
         if(!args[0]) ck_err(c,line,"%s() missing required argument 'buffer'",fn);
         nargs= args[1] ? 2 : 1;
-        if(from) tsb_printf(&t,"__mpy_struct__unpack_from1(__mpy_a0, %d, %s, lambda _mpy_sb, _mpy_so: (",size,args[1]?"__mpy_a1":"0");
-        else if(iter) tsb_printf(&t,"__mpy_struct__iter_unpack1(__mpy_a0, %d, lambda _mpy_sb, _mpy_so: (",size);
-        else tsb_printf(&t,"__mpy_struct__unpack1(__mpy_a0, %d, lambda _mpy_sb: (",size);
-        for(int i=0;i<n;i++){ struct_unpack_text(one,sizeof one,&it[i],from||iter?"_mpy_so + ":"",little); tsb_printf(&t,"%s, ",one); }
+        if(from) tsb_printf(&t,"__ppy_struct__unpack_from1(__ppy_a0, %d, %s, lambda _ppy_sb, _ppy_so: (",size,args[1]?"__ppy_a1":"0");
+        else if(iter) tsb_printf(&t,"__ppy_struct__iter_unpack1(__ppy_a0, %d, lambda _ppy_sb, _ppy_so: (",size);
+        else tsb_printf(&t,"__ppy_struct__unpack1(__ppy_a0, %d, lambda _ppy_sb: (",size);
+        for(int i=0;i<n;i++){ struct_unpack_text(one,sizeof one,&it[i],from||iter?"_ppy_so + ":"",little); tsb_printf(&t,"%s, ",one); }
         tsb_printf(&t,"))"); }
     Expr *res=py_front_expr(c->mod->unit->path,t.s,line); free(t.s); free(it);
     if(!res) ck_err(c,line,"internal error: struct.%s",fn);

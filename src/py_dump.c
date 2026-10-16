@@ -1,5 +1,5 @@
 /* ========================= Full Python: tree dump =========================
-   `minipy --pyast file.py` prints the tree in a canonical text form that
+   `plainpy --pyast file.py` prints the tree in a canonical text form that
    tests/pyast_check.py also prints for CPython's own `ast` of the same file,
    so the two parsers can be compared over whole libraries. The schema below
    says where each field of each node kind lives in PyNode (py_ast.h); its
@@ -179,7 +179,7 @@ static void dump(PyNode *n, FILE *o){
 }
 void py_dump(PyNode *n, FILE *out){ dump(n,out); fputc('\n',out); }
 
-/* minipy --pyast [--quiet] file.py ...: the tree of each file (--quiet: only errors) */
+/* plainpy --pyast [--quiet] file.py ...: the tree of each file (--quiet: only errors) */
 int py_dump_main(int argc, char **argv){
     int quiet=0, rc=0;
     for(int i=0;i<argc;i++){

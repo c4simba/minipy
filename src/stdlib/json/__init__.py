@@ -106,7 +106,7 @@ __author__ = 'Bob Ippolito <bob@redivi.com>'
 from .decoder import JSONDecoder, JSONDecodeError
 from .encoder import JSONEncoder
 import codecs
-import _mpy_json
+import _ppy_json
 
 
 def _plain(obj, depth=0):
@@ -248,7 +248,7 @@ def dumps(obj, *, skipkeys=False, ensure_ascii=True, check_circular=True,
         cls is None and indent is None and separators is None and
         default is None and not sort_keys and not kw):
         if _plain(obj):                                  # (the interpreter's own encoder: the same text, faster)
-            return _mpy_json.dumps(obj)
+            return _ppy_json.dumps(obj)
         return _default_encoder.encode(obj)
     if cls is None:
         cls = JSONEncoder
@@ -367,7 +367,7 @@ def loads(s, *, cls=None, object_hook=None, parse_float=None,
             parse_int is None and parse_float is None and
             parse_constant is None and object_pairs_hook is None and not kw):
         try:                                             # (the interpreter's own decoder; its errors: the full one's)
-            return _mpy_json.loads(s)
+            return _ppy_json.loads(s)
         except ValueError:
             pass
         return _default_decoder.decode(s)

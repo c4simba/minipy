@@ -2,7 +2,7 @@
 
 Compiled programs: a sorter's nodes are of one type; TopologicalSorter(graph) takes a dict of sets."""
 import sys
-from _mpy_typing import Generic, TypeVar
+from _ppy_typing import Generic, TypeVar
 
 __all__ = ["TopologicalSorter", "CycleError"]
 

@@ -6,10 +6,10 @@
 
 typedef struct { Thread th; volatile int done; Value fn, args; } PyThread;
 static PyThread *pthreads[MP_MAX_THREADS];
-static mpy_lock user_locks[256]; static int lock_used[256];
+static ppy_lock user_locks[256]; static int lock_used[256];
 static void thread_entry(void *p){
     PyThread *pt=(PyThread*)p;
-    mpy_lock_acquire(&mp_gil);
+    ppy_lock_acquire(&mp_gil);
     mp_ts=&pt->th;
     int anchor; pt->th.cstack_base=&anchor;
     Catch c;
@@ -25,7 +25,7 @@ static void thread_entry(void *p){
     pt->th.roots[0]=v_undef(); pt->th.roots[1]=v_undef();
     pt->done=1;
     mp_thread_remove(&pt->th);
-    mpy_lock_release(&mp_gil);
+    ppy_lock_release(&mp_gil);
 }
 static Value th_start(int argc, Value *argv, TupleObj *kw){
     mod_no_kw("start",kw); mod_nargs("start",argc,1,2);
@@ -37,7 +37,7 @@ static Value th_start(int argc, Value *argv, TupleObj *kw){
     pt->th.roots[0]=pt->fn; pt->th.roots[1]=pt->args; pt->th.id=h+1;
     pthreads[h]=pt;
     mp_thread_add(&pt->th);
-    if(mpy_thread_spawn(thread_entry,pt)!=0){ mp_thread_remove(&pt->th); pthreads[h]=NULL; free(pt); mp_raise_t(E_RuntimeError,"cannot start a thread"); }
+    if(ppy_thread_spawn(thread_entry,pt)!=0){ mp_thread_remove(&pt->th); pthreads[h]=NULL; free(pt); mp_raise_t(E_RuntimeError,"cannot start a thread"); }
     return v_int(h);
 }
 static Value th_join(int argc, Value *argv, TupleObj *kw){
@@ -46,28 +46,28 @@ static Value th_join(int argc, Value *argv, TupleObj *kw){
     if(h<0||h>=MP_MAX_THREADS||!pthreads[h]) mp_raise_t(E_ValueError,"no such thread");
     PyThread *pt=pthreads[h];
     Thread *self=mp_ts;
-    while(!pt->done){ mp_gil_release(); mpy_thread_sleep_ms(1); mp_gil_acquire(self); }
+    while(!pt->done){ mp_gil_release(); ppy_thread_sleep_ms(1); mp_gil_acquire(self); }
     return v_none();
 }
 static Value th_lock(int argc, Value *argv, TupleObj *kw){ (void)argv; mod_no_kw("lock",kw); mod_nargs("lock",argc,0,0);
-    for(int i=0;i<256;i++) if(!lock_used[i]){ lock_used[i]=1; mpy_lock_init(&user_locks[i]); return v_int(i); }
+    for(int i=0;i<256;i++) if(!lock_used[i]){ lock_used[i]=1; ppy_lock_init(&user_locks[i]); return v_int(i); }
     mp_raise_t(E_RuntimeError,"too many locks"); }
 static Value th_acquire(int argc, Value *argv, TupleObj *kw){ mod_no_kw("acquire",kw); mod_nargs("acquire",argc,1,1);
     int64_t i=mp_index(argv[0],"acquire"); if(i<0||i>=256||!lock_used[i]) mp_raise_t(E_ValueError,"no such lock");
-    if(mpy_lock_try(&user_locks[i])) return v_none();
+    if(ppy_lock_try(&user_locks[i])) return v_none();
     Thread *self=mp_ts; mp_gil_release();
-    mpy_lock_acquire(&user_locks[i]);
+    ppy_lock_acquire(&user_locks[i]);
     mp_gil_acquire(self);
     return v_none(); }
 static Value th_release(int argc, Value *argv, TupleObj *kw){ mod_no_kw("release",kw); mod_nargs("release",argc,1,1);
     int64_t i=mp_index(argv[0],"release"); if(i<0||i>=256||!lock_used[i]) mp_raise_t(E_ValueError,"no such lock");
-    mpy_lock_release(&user_locks[i]); return v_none(); }
+    ppy_lock_release(&user_locks[i]); return v_none(); }
 /* ---------------------------------------------------------------- _thread: locks any thread may release, threads (threading.py's) */
 typedef struct { Obj h; volatile int locked; } LockObj;
 static Type *T_lock;
 static double mono_now(void){
-#if defined(MPY_KOLIBRI)
-    uint32_t in[7]={26,10,0,0,0,0,0}, out[6]={0}; mpy_platform_syscall(in,out); return ((double)out[1]*4294967296.0+(double)out[0])/1e9;
+#if defined(PPY_KOLIBRI)
+    uint32_t in[7]={26,10,0,0,0,0,0}, out[6]={0}; ppy_platform_syscall(in,out); return ((double)out[1]*4294967296.0+(double)out[0])/1e9;
 #else
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return (double)ts.tv_sec+ts.tv_nsec/1e9;
 #endif
@@ -80,7 +80,7 @@ static int lock_take(LockObj *l, int blocking, double timeout){
     Thread *self=mp_ts; int spins=0;
     for(;;){
         mp_gil_release();
-        if(spins<20){ mpy_thread_yield(); spins++; } else mpy_thread_sleep_ms(1);
+        if(spins<20){ ppy_thread_yield(); spins++; } else ppy_thread_sleep_ms(1);
         mp_gil_acquire(self);
         if(!l->locked){ l->locked=1; return 1; }
         if(timeout>=0 && mono_now()>=deadline) return 0;

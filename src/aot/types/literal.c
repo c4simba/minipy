@@ -33,7 +33,7 @@ Ty *record_of(Expr *e, Ty **vts){
     int conflict=0;
     for(int i=0;i<e->count && !conflict;i++) for(int j=0;j<i;j++) if(!could_unify(vts[i],vts[j])){ conflict=1; break; }
     if(!conflict) return NULL;
-    Ty *t=ty_tuple(vts,e->count); t->names=MPY_NEW_ARR(char*,e->count);
+    Ty *t=ty_tuple(vts,e->count); t->names=PPY_NEW_ARR(char*,e->count);
     for(int i=0;i<e->count;i++) t->names[i]=e->items[i]->tok->text;
     return t;
 }
@@ -72,7 +72,7 @@ int builtin_fn_value(Ck *c, Expr *e, int arity){
     char shown[64]; snprintf(shown,sizeof shown,"<class '%s'>",e->name);
     char fn[64]; snprintf(fn,sizeof fn,"\001%s",e->name);
     Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr(xstrdup2(fn),e->line);
-    char **ps=MPY_NEW_ARR(char*,n); Expr **ds=MPY_NEW_ARR(Expr*,n);
+    char **ps=PPY_NEW_ARR(char*,n); Expr **ds=PPY_NEW_ARR(Expr*,n);
     for(int i=0;i<n;i++){ char v[16]; snprintf(v,sizeof v,"_a%d",i); ps[i]=xstrdup2(v); xpush(call,name_expr(ps[i],e->line)); }
     void *keep=e->ty; memset(e,0,sizeof *e);
     e->kind=EXPR_LAMBDA; e->line=call->line; e->ty=keep; e->eparams=ps; e->neparam=n; e->edefaults=ds; e->estar=e->edstar=-1; e->ekwonly=n; e->a=call;

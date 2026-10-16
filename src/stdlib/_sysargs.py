@@ -1,4 +1,4 @@
-"""sys.argv in compiled programs (the compiler reads sys.argv as __mpy_argv; the
+"""sys.argv in compiled programs (the compiler reads sys.argv as __ppy_argv; the
 interpreter has its own). Linux: the program's arguments as the system passed
 them. KolibriOS passes the program's path and one line of parameters: words
 separated by spaces, double quotes keep spaces in one."""
@@ -34,4 +34,4 @@ def _make() -> list[str]:
     return raw
 
 
-__mpy_argv = _make()
+__ppy_argv = _make()

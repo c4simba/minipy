@@ -10,7 +10,7 @@ same algorithms, so a seeded generator gives CPython's numbers.
 ints are 64-bit here: getrandbits(k) takes k < 64."""
 import sys
 import math
-from _mpy_typing import TypeVar, Sequence
+from _ppy_typing import TypeVar, Sequence
 
 T = TypeVar("T")
 S = TypeVar("S")

@@ -6,7 +6,7 @@ c = gzip.compress(data)
 print(c[:4], gzip.decompress(c) == data, gzip.decompress(c + gzip.compress(b"more")) == data + b"more")
 cp = bytes.fromhex("1f8b08000000000002ff4b4c4a0600c241243503000000")
 print(gzip.decompress(cp))
-path = os.path.join(tempfile.gettempdir(), "minipy_gz_test.gz")
+path = os.path.join(tempfile.gettempdir(), "plainpy_gz_test.gz")
 with gzip.open(path, "wb") as f:
     f.write(data)
 with gzip.open(path, "rb") as g:

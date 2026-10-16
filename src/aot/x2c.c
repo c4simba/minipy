@@ -11,7 +11,7 @@
    (return addresses, function values, handlers) get guest addresses
    0x00100000 + 4 * n and are reached through one computed-goto table.
 
-   It understands the fasm subset minipy emits: labels (local .x, anonymous
+   It understands the fasm subset plainpy emits: labels (local .x, anonymous
    @@ / @f / @b), db dw dd dq rb rw rd rq, align, X = expr, `if [~]defined X`
    / else / end if, repeat N / end repeat with %, and the instructions of
    aot/codegen and aot/runtime. Comments ";@import CI<k> <lib> <symbol>"
@@ -45,7 +45,7 @@ static jmp_buf x_fail;
 static int x_line;
 static void xfail(const char *fmt, ...){
     va_list ap; va_start(ap,fmt);
-    fprintf(stderr,"minipy: C translation, listing line %d: ",x_line); vfprintf(stderr,fmt,ap); fprintf(stderr,"\n");
+    fprintf(stderr,"plainpy: C translation, listing line %d: ",x_line); vfprintf(stderr,fmt,ap); fprintf(stderr,"\n");
     va_end(ap);
     longjmp(x_fail,1);
 }
@@ -1104,8 +1104,8 @@ int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
     layout(1);
     build_image();
 
-    { const char *x2c_prelude=mpy_lib_text("x2c_rt");                 /* (in minipy.lib) */
-      if(!x2c_prelude){ fprintf(stderr,"minipyc: minipy.lib has no C prelude\n"); exit(1); }
+    { const char *x2c_prelude=ppy_lib_text("x2c_rt");                 /* (in plainpy.lib) */
+      if(!x2c_prelude){ fprintf(stderr,"plainpyc: plainpy.lib has no C prelude\n"); exit(1); }
       xb_put(&out,x2c_prelude,strlen(x2c_prelude)); }
     xb_printf(&out,"\n/* ---------------- the program (translated from the listing) */\n");
     xb_printf(&out,"#define X2C_DATA_END 0x%Xu\n",data_end);

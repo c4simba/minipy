@@ -19,7 +19,7 @@ Value mp_NotImplemented, mp_Ellipsis;
 
 /* ---------------------------------------------------------------- threads */
 Thread *mp_ts;
-mpy_lock mp_gil;
+ppy_lock mp_gil;
 Thread *mp_threads[MP_MAX_THREADS];
 int mp_nthreads;
 void mp_thread_add(Thread *t){ if(mp_nthreads<MP_MAX_THREADS) mp_threads[mp_nthreads++]=t; }
@@ -32,10 +32,10 @@ void mp_gil_release(void){
     int slot=0; for(int i=0;i<mp_nthreads;i++) if(mp_threads[i]==t) slot=i;
     (void)MP_SETJMP(regs_of[slot]);                          /* its registers, where the collector sees them */
     volatile char here; t->cstack_top=(void*)&here;
-    mpy_lock_release(&mp_gil);
+    ppy_lock_release(&mp_gil);
 }
 void mp_gil_acquire(Thread *self){
-    mpy_lock_acquire(&mp_gil);
+    ppy_lock_acquire(&mp_gil);
     mp_ts=self;
     self->cstack_top=NULL;
 }
@@ -70,7 +70,7 @@ static void *alloc_sub(Type *t, size_t size){
 }
 DictObj **mp_sub_slot(Obj *o){ return (DictObj**)((char*)o+o->size-sizeof(DictObj*)); }
 
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
 int mp_gc_enabled=1;
 void mp_gc_maybe(void){}
 void mp_gc_collect(void){}
@@ -243,7 +243,7 @@ void mp_gc_collect(void){
 int mp_gc_enabled=1;                                      /* gc.disable(): no collections while allocating */
 void mp_gc_maybe(void){
     static int stress=-1;
-    if(stress<0) stress=getenv("MPY_GC_STRESS")?1:0;
+    if(stress<0) stress=getenv("PPY_GC_STRESS")?1:0;
     if(!mp_gc_enabled) return;
     if(stress || gc_count>=gc_threshold) mp_gc_collect();
 }

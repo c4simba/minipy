@@ -1428,7 +1428,7 @@ if not sys._compiled:
 if sys._compiled:
     # Compiled programs: the same reading, interpolation (Basic, Extended), errors and writing;
     # values are str (or None: allow_no_value); converters= and custom dict types are not here.
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _S = TypeVar("_S")
     _F = TypeVar("_F")

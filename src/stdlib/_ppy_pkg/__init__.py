@@ -1,21 +1,21 @@
-"""minipy's package manager: packages of PyPI for a project (USAGE below:
-docstrings are left out of the modules minipy carries)."""
-USAGE = """minipy's package manager: packages of PyPI for a project.
+"""plainpy's package manager: packages of PyPI for a project (USAGE below:
+docstrings are left out of the modules plainpy carries)."""
+USAGE = """plainpy's package manager: packages of PyPI for a project.
 
-    minipy add PACKAGE[SPEC]...    add to pyproject.toml, then lock and sync
-    minipy remove PACKAGE...       take out of pyproject.toml, then lock and sync
-    minipy lock                    choose the versions: pylock.toml
-    minipy sync                    the locked packages into the store and .minipy/site, then the check
-    minipy check [PACKAGE...]      check them again for compiled programs: the reports
-    minipy list                    the packages and what the check found
-    minipy vendor                  .minipy/site as copies (a project to take elsewhere: KolibriOS)
+    plainpy add PACKAGE[SPEC]...   add to pyproject.toml, then lock and sync
+    plainpy remove PACKAGE...      take out of pyproject.toml, then lock and sync
+    plainpy lock                   choose the versions: pylock.toml
+    plainpy sync                   the locked packages into the store and .plainpy/site, then the check
+    plainpy check [PACKAGE...]     check them again for compiled programs: the reports
+    plainpy list                   the packages and what the check found
+    plainpy vendor                 .plainpy/site as copies (a project to take elsewhere: KolibriOS)
 
 options: --index URL (PyPI's JSON API or a folder laid out like it; also
-[tool.minipy] index-url, MINIPY_INDEX_URL), --pre (pre-releases too),
+[tool.plainpy] index-url, PLAINPY_INDEX_URL), --pre (pre-releases too),
 --target linux|kolibri|macos (what the check compiles for).
 
 No virtual environment: packages are unpacked once per machine in the store
-(~/.minipy/store) and a project links to them. Only pure-Python wheels are
+(~/.plainpy/store) and a project links to them. Only pure-Python wheels are
 used and nothing of a package runs while it is installed. Every package goes
 through the check for compiled programs; the interpreter runs every package,
 compiled programs only the modules that passed."""
@@ -62,7 +62,7 @@ def _options(args):
 
 
 def _index_url(project, o):
-    return o.index or project.settings().get("index-url", "") or os.environ.get("MINIPY_INDEX_URL", "")
+    return o.index or project.settings().get("index-url", "") or os.environ.get("PLAINPY_INDEX_URL", "")
 
 
 def lock(project, o, quiet=False):
@@ -103,7 +103,7 @@ def sync(project, o, copy=False):
     entries = []
     seen = {}
     for p in packages:
-        fresh = not os.path.exists(os.path.join(store.path_of(p), ".minipy-store"))
+        fresh = not os.path.exists(os.path.join(store.path_of(p), ".plainpy-store"))
         if fresh:
             print("  downloading %s %s" % (p.name, p.version))
         folders[p.name] = store.fetch(p)
@@ -132,7 +132,7 @@ def run_check(project, packages, folders, o, show=()):
         res = results[p.name]
         p.tool = {"check": res.status(), "modules-ok": res.ok, "errors": len([d for d in res.findings if d.kind == "error"]),
                   "unclear": len([d for d in res.findings if d.kind == "unclear"]), "broken": sorted(res.broken)}
-        report = os.path.join(".minipy", "check", "%s-%s.txt" % (p.name, p.version))
+        report = os.path.join(".plainpy", "check", "%s-%s.txt" % (p.name, p.version))
         if show:
             if canonical(p.name) in show:
                 print(check.report_text(res, target).rstrip("\n"))
@@ -143,7 +143,7 @@ def run_check(project, packages, folders, o, show=()):
 
 def cmd_add(o):
     if not o.names:
-        raise ProjectError("usage: minipy add PACKAGE[SPEC]...")
+        raise ProjectError("usage: plainpy add PACKAGE[SPEC]...")
     new = [Requirement(n) for n in o.names]
     project = find(os.getcwd(), create=True)
     deps = project.dependencies()
@@ -169,7 +169,7 @@ def _change_dependencies(project, deps, o):
 
 def cmd_remove(o):
     if not o.names:
-        raise ProjectError("usage: minipy remove PACKAGE...")
+        raise ProjectError("usage: plainpy remove PACKAGE...")
     project = find(os.getcwd())
     keys = set(canonical(n) for n in o.names)
     deps = project.dependencies()
@@ -184,7 +184,7 @@ def cmd_check(o):
     project = find(os.getcwd())
     packages = lockfile.read(project.lockfile)
     if not packages:
-        print("no packages (minipy add PACKAGE)")
+        print("no packages (plainpy add PACKAGE)")
         return
     folders = {p.name: store.fetch(p) for p in packages}
     want = set(canonical(n) for n in o.names)
@@ -198,14 +198,14 @@ def cmd_list(o):
     project = find(os.getcwd())
     packages = lockfile.read(project.lockfile)
     if not packages:
-        print("no packages (minipy add PACKAGE)")
+        print("no packages (plainpy add PACKAGE)")
         return
     w = max(len(p.name) for p in packages)
     for p in packages:
         st = p.tool.get("check", "unchecked")
         n = len(p.tool.get("modules-ok", []))
         what = {"ok": "compiled + interpreter", "partial": "compiled (%d module%s) + interpreter" % (n, "" if n == 1 else "s"),
-                "fail": "interpreter only", "broken": "does not run in minipy (%s)" % ", ".join(p.tool.get("broken", []))}.get(st, "not checked (minipy sync)")
+                "fail": "interpreter only", "broken": "does not run in plainpy (%s)" % ", ".join(p.tool.get("broken", []))}.get(st, "not checked (plainpy sync)")
         print("%-*s %-10s %s" % (w, p.name, p.version, what))
 
 
@@ -229,7 +229,7 @@ def main():
             project = find(os.getcwd())
             os.makedirs(project.dot, exist_ok=True)
             with open(os.path.join(project.dot, "vendored"), "w") as f:
-                f.write("copies, not links (minipy vendor)\n")
+                f.write("copies, not links (plainpy vendor)\n")
             sync(project, o, True)
         elif cmd == "check":
             cmd_check(o)
@@ -238,5 +238,5 @@ def main():
         else:
             raise ProjectError("unknown command " + cmd)
     except (ProjectError, ResolveError, FetchError, store.StoreError, RequirementError) as e:
-        sys.stderr.write("minipy: error: %s\n" % e)
+        sys.stderr.write("plainpy: error: %s\n" % e)
         sys.exit(1)

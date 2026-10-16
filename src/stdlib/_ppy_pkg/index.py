@@ -3,8 +3,8 @@
     <index>/<name>/json             a project: its releases and their files
     <index>/<name>/<version>/json   a release: its dependencies (requires_dist)
 
-Only wheels made of Python source qualify (py3-none-any): minipy runs no C
-extension modules and builds nothing. Downloads go through curl (minipy has
+Only wheels made of Python source qualify (py3-none-any): plainpy runs no C
+extension modules and builds nothing. Downloads go through curl (plainpy has
 no TLS of its own); file:// URLs are read directly."""
 import json
 import os
@@ -104,7 +104,7 @@ def wheel_tags(filename):
 
 
 def pure_python(filename):
-    """A wheel minipy can use: Python 3 source for any platform."""
+    """A wheel plainpy can use: Python 3 source for any platform."""
     t = wheel_tags(filename)
     if t is None:
         return False
@@ -137,7 +137,7 @@ class Release:
 
 class Index:
     def __init__(self, url=""):
-        self.url = (url or os.environ.get("MINIPY_INDEX_URL", "") or DEFAULT_INDEX).rstrip("/")
+        self.url = (url or os.environ.get("PLAINPY_INDEX_URL", "") or DEFAULT_INDEX).rstrip("/")
         self.projects = {}
         self.deps = {}
 
@@ -170,7 +170,7 @@ class Index:
         if len(want) < 2:
             return
         urls = {"%s/%s/%s/json" % (self.url, key, v): str(v) for v in want}
-        got = fetch_many(list(urls), os.path.join(os.environ.get("TMPDIR", "/tmp"), "minipy-index-%d" % os.getpid()))
+        got = fetch_many(list(urls), os.path.join(os.environ.get("TMPDIR", "/tmp"), "plainpy-index-%d" % os.getpid()))
         for u, data in got.items():
             try:
                 info = json.loads(data)["info"]

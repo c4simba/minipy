@@ -22,7 +22,7 @@ void json_ok(Ck *c, Ty *t, int line, int depth){
     }
 }
 /* ---- json.loads(s) in compiled code: the decoder of the type its result goes to (bound by an
-   annotation, a parameter, a return type), written as Python over _mpy_jsonr.Reader:
+   annotation, a parameter, a return type), written as Python over _ppy_jsonr.Reader:
    int / float / str / bool, T | None, list, set, tuple, dict (str / int / float keys) and objects
    made by their __init__ from the members of their parameters' names (a dataclass: its fields). */
 typedef struct { char *key; AFunc *fn; char *name; } JLoad;
@@ -115,8 +115,8 @@ static AFunc *json_loader_of(Ck *c, Ty *t, int line, AModule *pick){
     char keyb[300]; snprintf(keyb,sizeof keyb,"%s%s",pick?"pickle:":"",t->k==TY_VOID ? "None" : ty_name(t));
     const char *key=keyb;
     for(int i=0;i<g_njl;i++) if(!strcmp(g_jl[i].key,key)) return g_jl[i].fn;
-    AModule *jr=find_module(c->p,"_mpy_jsonr");
-    if(!jr) ck_err(c,line,"internal error: json.loads() without _mpy_jsonr.py");
+    AModule *jr=find_module(c->p,"_ppy_jsonr");
+    if(!jr) ck_err(c,line,"internal error: json.loads() without _ppy_jsonr.py");
     JGen g; memset(&g,0,sizeof g); g.c=c; g.line=line; g.pick= pick!=NULL;
     char top[64]; snprintf(top,sizeof top,"__jl%d",g_njl);
     const char *first= ty_find(t)->k==TY_VOID ? NULL : jl_fn(&g,t);
@@ -124,10 +124,10 @@ static AFunc *json_loader_of(Ck *c, Ty *t, int line, AModule *pick){
     if(t->k==TY_VOID) sb_add(&g.b,"def %s(%s) -> None:\n    r = %s\n    r.skip()\n    r.end()\n",top,arg,mk);
     else { sb_add(&g.b,"def %s(%s) -> ",top,arg); jl_ann(&g,t,&g.b);
         sb_add(&g.b,":\n    r = %s\n    v = %s(r)\n    r.end()\n    return v\n",mk,first); }
-    AotUnit *u=MPY_NEW0(AotUnit); u->name=jr->unit->name; u->path=jr->unit->path; u->src=g.b.s;
+    AotUnit *u=PPY_NEW0(AotUnit); u->name=jr->unit->name; u->path=jr->unit->path; u->src=g.b.s;
     u->ast=py_front(u->path,g.b.s);
-    if(!u->ast){ if(getenv("MPY_JDEBUG")) fprintf(stderr,"%s",g.b.s); ck_err(c,line,"internal error: the JSON decoder of %s does not compile",key); }
-    AModule *m=MPY_NEW0(AModule); *m=*jr; m->unit=u; memset(&m->syms,0,sizeof m->syms);
+    if(!u->ast){ if(getenv("PPY_JDEBUG")) fprintf(stderr,"%s",g.b.s); ck_err(c,line,"internal error: the JSON decoder of %s does not compile",key); }
+    AModule *m=PPY_NEW0(AModule); *m=*jr; m->unit=u; memset(&m->syms,0,sizeof m->syms);
     symtab_add(&m->syms,"__jr__",AS_MODULE,jr);
     if(pick) symtab_add(&m->syms,"__pm__",AS_MODULE,pick);
     for(int k=0;k<g.ncls;k++){ char cn[32]; snprintf(cn,sizeof cn,"__jc%d",k); symtab_add(&m->syms,cn,AS_CLASS,g.cls[k]); }

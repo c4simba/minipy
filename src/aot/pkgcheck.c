@@ -1,7 +1,7 @@
-/* ========================= AOT driver: minipy --compile --check =========================
+/* ========================= AOT driver: plainpy --compile --check =========================
    The modules named on the command line (and what they import) checked for
-   compiled programs - what `minipy check` runs for the packages of a project
-   (src/stdlib/_mpy_pkg). Unlike a compilation it goes on after an error: the
+   compiled programs - what `plainpy check` runs for the packages of a project
+   (src/stdlib/_ppy_pkg). Unlike a compilation it goes on after an error: the
    function, class or module with it is reported and left out, the rest is
    checked (aot_check_mode). A function nothing calls whose parameters have no
    types cannot be checked: it is reported as unclear.

@@ -4,10 +4,10 @@
 # 127.0.0.1:8000 with curl; then the same with the interpreter.
 #
 #   sh tests/fastapi_native.sh
-MINIPY=${MINIPY:-./minipy}
+PLAINPY=${PLAINPY:-./plainpy}
 OUT=${OUT:-build/fastapi-native}
 mkdir -p "$OUT"
-"$MINIPY" --compile examples/fastapi/main.py -o "$OUT/main" >/dev/null || exit 1
+"$PLAINPY" --compile examples/fastapi/main.py -o "$OUT/main" >/dev/null || exit 1
 fail=0
 check() {
     got=$(curl -s -X "$1" "http://127.0.0.1:8000$2")
@@ -28,5 +28,5 @@ serve() {                           # $1: what, then the command
     sed 's/^/    /' "$OUT/server.log"
 }
 serve compiled "$OUT/main"
-serve interpreter "$MINIPY" examples/fastapi/main.py
+serve interpreter "$PLAINPY" examples/fastapi/main.py
 exit $fail

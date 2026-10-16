@@ -1,0 +1,25 @@
+Source: plainpy
+Section: devel
+Priority: optional
+Maintainer: Dmitry P <simba@twimir.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://c4simba.github.io/plainpy/
+Vcs-Browser: https://github.com/c4simba/plainpy
+Vcs-Git: https://github.com/c4simba/plainpy.git
+Rules-Requires-Root: no
+
+Package: plainpy
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: fasm, gcc, curl
+Description: small Python: an interpreter and a compiler of typed programs
+ plainpy runs Python programs with nothing but the C library: a full Python
+ 3.14 parser, a bytecode interpreter and a standard library written in
+ Python (json, re, datetime, logging, unittest, asyncio, threading,
+ http.server, zipfile, tomllib and more), all in three files.
+ .
+ plainpy --compile compiles statically typed programs to small native
+ executables: Linux i386 and KolibriOS through fasm (no linker, no libc, no
+ runtime library to install). plainpy add / sync take pure-Python packages
+ from PyPI (through curl) and check which of them compiled programs may use.

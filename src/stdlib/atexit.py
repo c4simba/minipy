@@ -43,7 +43,7 @@ if not sys._compiled:
 
 if sys._compiled:
     # Compiled programs: the same, typed (register's *args: of one type; no keyword arguments).
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _F = TypeVar("_F")
     _A = TypeVar("_A")

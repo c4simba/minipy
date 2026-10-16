@@ -10,11 +10,11 @@
 
 #include "platform/platform.h"
 
-int mpy_platform_has_syscall(void){ return 1; }
+int ppy_platform_has_syscall(void){ return 1; }
 
 /* ebp is GCC's frame pointer, so it cannot be an asm operand: the block's
    address comes in eax and the asm loads every register itself, keeping ebp. */
-int mpy_platform_syscall(const uint32_t in[7], uint32_t out[6]){
+int ppy_platform_syscall(const uint32_t in[7], uint32_t out[6]){
     uint32_t r_eax, r_ebx, r_ecx, r_edx, r_esi, r_edi;
     __asm__ __volatile__(
         "pushl %%ebp\n\t"

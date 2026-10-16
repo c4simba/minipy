@@ -1,12 +1,12 @@
-# KolibriOS system functions for MiniPy, built on the `sys.syscall` gateway.
+# KolibriOS system functions for PlainPy, built on the `sys.syscall` gateway.
 #
 # Function reference: kernel/trunk/docs/sysfuncs.txt in the KolibriOS sources
 # (https://git.kolibrios.org/KolibriOS/kolibrios), also
 # https://wiki.kolibrios.org/wiki/SysFn. The function numbers are given with
 # each wrapper ("fn 18.20" = function 18, subfunction 20).
 #
-# The same file works in the interpreter (the KolibriOS build of minipy) and
-# in compiled programs (minipy --compile --target kolibri):
+# The same file works in the interpreter (the KolibriOS build of plainpy) and
+# in compiled programs (plainpy --compile --target kolibri):
 #
 #   * sys.syscall(eax, ebx, ecx, edx, esi, edi, ebp) loads the registers, runs
 #     `int 0x40` and returns [eax, ebx, ecx, edx, esi, edi]. An int argument

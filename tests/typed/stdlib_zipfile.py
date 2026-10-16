@@ -2,7 +2,7 @@ import io
 import os
 import tempfile
 import zipfile
-path = os.path.join(tempfile.gettempdir(), "minipy_zip_test.zip")
+path = os.path.join(tempfile.gettempdir(), "plainpy_zip_test.zip")
 with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
     z.writestr("a.txt", "hello zip " * 20)
     z.writestr("dir/b.bin", b"\x00\x01\x02" * 10, compress_type=zipfile.ZIP_STORED)
@@ -23,7 +23,7 @@ with zipfile.ZipFile(path) as z:
         z.getinfo("nope")
     except KeyError as e:
         print("KeyError:", e)
-    out = os.path.join(tempfile.gettempdir(), "minipy_zip_out")
+    out = os.path.join(tempfile.gettempdir(), "plainpy_zip_out")
     z.extractall(out)
     print(sorted(os.listdir(out)), os.path.isdir(os.path.join(out, "empty")))
     with open(os.path.join(out, "dir", "b.bin"), "rb") as fb:
@@ -45,4 +45,4 @@ except zipfile.BadZipFile as e:
     print("BadZipFile:", e)
 os.remove(path)
 import shutil
-shutil.rmtree(os.path.join(tempfile.gettempdir(), "minipy_zip_out"))
+shutil.rmtree(os.path.join(tempfile.gettempdir(), "plainpy_zip_out"))

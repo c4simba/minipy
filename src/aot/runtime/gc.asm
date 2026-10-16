@@ -296,7 +296,7 @@ rt_gc_collect:                  ; the noted objects looked at: the cycles only t
         jmp     .dl
 .done:
 if defined RT_GC_STRESS
-        jmp     .out                    ; (MPY_GC_STRESS: a collection at every noted object)
+        jmp     .out                    ; (PPY_GC_STRESS: a collection at every noted object)
 end if
         mov     eax,ebp
         shl     eax,3                   ; little garbage among many noted ones: wait longer next time

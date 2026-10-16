@@ -1,6 +1,6 @@
 # kui.window - a KolibriOS window described with decorators, on top of
 # kolibri.py (kui exports it: from kui import Window, window). Works compiled
-# (minipy --compile --target kolibri) and in the interpreter.
+# (plainpy --compile --target kolibri) and in the interpreter.
 #
 # The window itself is a decorator: the function under it paints the window
 # (it runs on every redraw) and its name becomes the Window object:

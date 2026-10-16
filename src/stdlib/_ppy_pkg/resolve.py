@@ -8,7 +8,7 @@ from .reqs import Requirement, canonical, marker_true
 from .versions import SpecifierSet, Version, VersionError
 from .index import FetchError
 
-MINIPY_PYTHON = Version("3.14.0")
+PLAINPY_PYTHON = Version("3.14.0")
 MAX_STEPS = 20000
 
 
@@ -33,7 +33,7 @@ def _python_ok(requires_python):
     if not requires_python:
         return True
     try:
-        return SpecifierSet(requires_python).contains(MINIPY_PYTHON, True)
+        return SpecifierSet(requires_python).contains(PLAINPY_PYTHON, True)
     except VersionError:
         return True
 
@@ -83,7 +83,7 @@ class Resolver:
             self.index.prefetch(req.name, [r.version for r in out[:24]])
         if not out and not self.why:
             if skipped:
-                self.why = "%s %s (wanted by %s) has no pure-Python wheel (py3-none-any): minipy runs no C extensions and builds no sources" % (
+                self.why = "%s %s (wanted by %s) has no pure-Python wheel (py3-none-any): plainpy runs no C extensions and builds no sources" % (
                     req.name, ", ".join(skipped[:3]), wanted_by)
             else:
                 self.why = "no release of %s satisfies %s (wanted by %s)" % (req.name, str(req.specifier) or "any version", wanted_by)

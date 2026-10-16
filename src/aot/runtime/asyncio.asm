@@ -205,7 +205,7 @@ rt_async_sleep:                 ; st0 = seconds (popped): suspend the running ta
         jmp     rt_task_yield
 
 ;;; code rt_sched_step : rt_task_resume rt_task_ready rt_now_ms rt_idle_sleep rt_decref
-; thread (minipy's module) in compiled programs: threads are tasks; the program's own code
+; thread (plainpy's module) in compiled programs: threads are tasks; the program's own code
 ; runs the others when it waits (join, acquire, sleep) and at its end.
 rt_sched_step:                  ; eax = ms it may idle at most (-1: any): run one ready task -> eax = 0 when no task is left
         push    ebx esi edi ebp

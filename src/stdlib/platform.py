@@ -144,7 +144,7 @@ def python_version_tuple() -> tuple[str, str, str]:
 
 
 def python_compiler() -> str:
-    return "minipy"
+    return "plainpy"
 
 
 def python_build() -> tuple[str, str]:

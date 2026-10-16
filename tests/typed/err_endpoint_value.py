@@ -1,4 +1,4 @@
-from minipy import Endpoint
+from plainpy import Endpoint
 
 def register(fn: Endpoint) -> None:
     pass

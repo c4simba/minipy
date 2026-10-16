@@ -1,12 +1,12 @@
 """pylock.toml (PEP 751): every package of the project pinned to a version and
-to the one wheel minipy uses, with its sha256 - the same files on every
+to the one wheel plainpy uses, with its sha256 - the same files on every
 machine, checked when downloaded. What the check found is kept per package in
-[packages.tool.minipy] (so a diff of the lock file shows it changing)."""
+[packages.tool.plainpy] (so a diff of the lock file shows it changing)."""
 import json
 import tomllib
 from .project import write_text
 
-HEADER = "# Written by `minipy lock` (PEP 751 lock file); do not edit.\n"
+HEADER = "# Written by `plainpy lock` (PEP 751 lock file); do not edit.\n"
 
 
 def _s(v):
@@ -28,7 +28,7 @@ class Locked:
         self.sha256 = sha256
         self.size = size
         self.dependencies = dependencies             # canonical names
-        self.tool = tool                              # [packages.tool.minipy]: top-level, check, modules-ok ...
+        self.tool = tool                              # [packages.tool.plainpy]: top-level, check, modules-ok ...
 
 
 def from_pins(pins):
@@ -43,8 +43,8 @@ def from_pins(pins):
 
 def write(path, packages, index_url, environment, requirements):
     """(requirements: the project's dependencies the lock was made for)"""
-    t = [HEADER, 'lock-version = "1.0"\n', 'requires-python = ">=3.14"\n', 'created-by = "minipy"\n']
-    t.append("\n[tool.minipy]\nindex-url = %s\nsys-platform = %s\nrequirements = %s\n" % (
+    t = [HEADER, 'lock-version = "1.0"\n', 'requires-python = ">=3.14"\n', 'created-by = "plainpy"\n']
+    t.append("\n[tool.plainpy]\nindex-url = %s\nsys-platform = %s\nrequirements = %s\n" % (
         _s(index_url), _s(environment.get("sys_platform", "")), _list(requirements)))
     for p in packages:
         t.append("\n[[packages]]\nname = %s\nversion = %s\n" % (_s(p.name), _s(p.version)))
@@ -55,7 +55,7 @@ def write(path, packages, index_url, environment, requirements):
             t.append("size = %d\n" % p.size)
         t.append("hashes = { sha256 = %s }\n" % _s(p.sha256))
         if p.tool:
-            t.append("\n[packages.tool.minipy]\n")
+            t.append("\n[packages.tool.plainpy]\n")
             for k in sorted(p.tool):
                 v = p.tool[k]
                 if isinstance(v, list):
@@ -81,14 +81,14 @@ def read(path):
         w = (p.get("wheels") or [{}])[0]
         deps = [d.get("name", "") for d in p.get("dependencies", [])]
         out.append(Locked(p["name"], p["version"], w.get("url", ""), w.get("name", ""), w.get("hashes", {}).get("sha256", ""),
-                          int(w.get("size", 0)), deps, dict(p.get("tool", {}).get("minipy", {}))))
+                          int(w.get("size", 0)), deps, dict(p.get("tool", {}).get("plainpy", {}))))
     return out
 
 
 def _top(path):
     try:
         with open(path, "rb") as f:
-            return tomllib.loads(f.read().decode("utf-8")).get("tool", {}).get("minipy", {})
+            return tomllib.loads(f.read().decode("utf-8")).get("tool", {}).get("plainpy", {})
     except OSError:
         return {}
 
@@ -99,6 +99,6 @@ def requirements(path):
 
 
 def write_tool(path, packages):
-    """The lock file again with the packages' [packages.tool.minipy] as they are now."""
+    """The lock file again with the packages' [packages.tool.plainpy] as they are now."""
     top = _top(path)
     write(path, packages, top.get("index-url", ""), {"sys_platform": top.get("sys-platform", "")}, list(top.get("requirements", [])))

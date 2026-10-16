@@ -77,7 +77,7 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
                     const char *pys=e->a->tok->text+strlen(e->a->tok->text)+1; if(*pys=='%') pys++;
                     Expr *at=xnew(EXPR_ATTRIBUTE,e->line); at->a=e->b; at->name="__format__";
                     Expr *call=xnew(EXPR_CALL,e->line); call->a=at;
-                    Expr *lit=xnew(EXPR_LITERAL,e->line); lit->tok=MPY_NEW0(Tok); *lit->tok=*e->a->tok; lit->tok->text=xstrdup2(pys); lit->tok->len=strlen(pys); lit->tok->i=0;
+                    Expr *lit=xnew(EXPR_LITERAL,e->line); lit->tok=PPY_NEW0(Tok); *lit->tok=*e->a->tok; lit->tok->text=xstrdup2(pys); lit->tok->len=strlen(pys); lit->tok->i=0;
                     xpush(call,lit);
                     void *keep=e->ty; *e=*call; e->ty=keep;
                     return ck_expr_inner(c,e); } }
@@ -111,7 +111,7 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
                 if(code==CMP_IN||code==CMP_NOTIN) enum_members_expr(c,e->items[i]);           /* m in Color */
                 Ty *t=(code==CMP_IN||code==CMP_NOTIN) && e->items[i]->kind==EXPR_TUPLE ? ck_tuple_as_list(c,e->items[i]) : ck_expr(c,e->items[i]);
                 if((code==CMP_IN||code==CMP_NOTIN) && ty_find(t)->k==TY_TUPLE && !ty_find(t)->names){   /* x in a tuple's value: x in list(t) */
-                    Expr *inner=MPY_NEW0(Expr); *inner=*e->items[i]; inner->akind=0;
+                    Expr *inner=PPY_NEW0(Expr); *inner=*e->items[i]; inner->akind=0;
                     Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr("\001list",e->line); xpush(call,inner); call->akind=code;
                     e->items[i]=call; t=ck_expr(c,call); }
                 no_void(c,t,e->line);
@@ -121,7 +121,7 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
                 else if((code==CMP_IN||code==CMP_NOTIN) && int_enum_ty(prev)){ Ty *h=ty_find(t);
                     Ty *ke= h->k==TY_DICT ? ty_find(ty_dkey(h)) : (h->k==TY_LIST||h->k==TY_SET) ? ty_find(h->elem) : NULL;
                     if(ke && numeric(ke)) prev=as_enum_value(c,e->items[i-1]); }
-                if(!xi->cmpfn) xi->cmpfn=MPY_NEW_ARR(AFunc*,e->count);
+                if(!xi->cmpfn) xi->cmpfn=PPY_NEW_ARR(AFunc*,e->count);
                 int neg=0, swap=0; xi->cmpfn[i]=NULL;
                 ck_compare_pair_m(c,e->items[i]->akind,e->items[i-1],e->items[i],prev,t,e->line,&xi->cmpfn[i],&neg,&swap);
                 if(neg) xi->cmpneg|=1<<i; else xi->cmpneg&=~(1<<i);
@@ -143,14 +143,14 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
             if(is_sys(c,e->a)){
                 if(!strcmp(e->name,"_compiled")){ e->kind=EXPR_TRUE; e->a=NULL; xi->kind=X_NONE; return TY_BOOL_T; }   /* (True here) */
                 if(!strcmp(e->name,"platform")){ xi->kind=X_CONST_STR; xi->name=c->p->target==AOT_TARGET_KOLIBRI?"kolibrios":c->p->target==AOT_TARGET_MACOS?"darwin":"linux"; return TY_STR_T; }
-                if(!strcmp(e->name,"version")){ xi->kind=X_CONST_STR; xi->name="3.14.0 (minipy)"; return TY_STR_T; }   /* (as the interpreter's) */
+                if(!strcmp(e->name,"version")){ xi->kind=X_CONST_STR; xi->name="3.14.0 (plainpy)"; return TY_STR_T; }  /* (as the interpreter's) */
                 if(!strcmp(e->name,"byteorder")){ xi->kind=X_CONST_STR; xi->name="little"; return TY_STR_T; }
                 if(!strcmp(e->name,"maxsize") || !strcmp(e->name,"maxunicode")){ Expr *v=lit_int(e->line,e->name[3]=='s'?0x7FFFFFFFFFFFFFFFLL:0x10FFFF); void *keep=e->ty; *e=*v; e->ty=keep; return ck_expr_inner(c,e); }
                 if(!strcmp(e->name,"argv")){                       /* the list _sysargs.py makes */
-                    if(!lookup(c,"__mpy_argv")) ck_err(c,e->line,"internal error: sys.argv without _sysargs.py");
-                    e->kind=EXPR_NAME; e->name="__mpy_argv"; e->a=NULL; return ck_expr_inner(c,e); }
-                { static const char *const std[][2]={{"stdout","__mpy_stdout"},{"stderr","__mpy_stderr"},{"stdin","__mpy_stdin"},
-                      {"__stdout__","__mpy_stdout"},{"__stderr__","__mpy_stderr"},{"__stdin__","__mpy_stdin"}};
+                    if(!lookup(c,"__ppy_argv")) ck_err(c,e->line,"internal error: sys.argv without _sysargs.py");
+                    e->kind=EXPR_NAME; e->name="__ppy_argv"; e->a=NULL; return ck_expr_inner(c,e); }
+                { static const char *const std[][2]={{"stdout","__ppy_stdout"},{"stderr","__ppy_stderr"},{"stdin","__ppy_stdin"},
+                      {"__stdout__","__ppy_stdout"},{"__stderr__","__ppy_stderr"},{"__stdin__","__ppy_stdin"}};
                   for(int k=0;k<6;k++) if(!strcmp(e->name,std[k][0])){                 /* the objects _sysio.py makes */
                       if(!lookup(c,std[k][1])) ck_err(c,e->line,"internal error: sys.%s without _sysio.py",e->name);
                       e->kind=EXPR_NAME; e->name=(char*)std[k][1]; e->a=NULL; return ck_expr_inner(c,e); } }
@@ -205,12 +205,12 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
             if(t->k!=TY_OBJ && pure_ref(e->a)){                       /* xs.append as a value: lambda v: xs.append(v) */
                 int ar=builtin_method_arity(t,e->name);
                 if(ar>=0){ char txt[200]; int n=snprintf(txt,sizeof txt,"lambda");
-                    for(int i=0;i<ar;i++) n+=snprintf(txt+n,sizeof txt-(size_t)n,"%s __mpy_a%d",i?",":"",i);
-                    n+=snprintf(txt+n,sizeof txt-(size_t)n,": __mpy_o.%s(",e->name);
-                    for(int i=0;i<ar;i++) n+=snprintf(txt+n,sizeof txt-(size_t)n,"%s__mpy_a%d",i?", ":"",i);
+                    for(int i=0;i<ar;i++) n+=snprintf(txt+n,sizeof txt-(size_t)n,"%s __ppy_a%d",i?",":"",i);
+                    n+=snprintf(txt+n,sizeof txt-(size_t)n,": __ppy_o.%s(",e->name);
+                    for(int i=0;i<ar;i++) n+=snprintf(txt+n,sizeof txt-(size_t)n,"%s__ppy_a%d",i?", ":"",i);
                     snprintf(txt+n,sizeof txt-(size_t)n,")");
                     Expr *lam=py_front_expr(c->mod->unit->path,txt,e->line);
-                    if(lam){ lam=expr_subst(lam,"__mpy_o",e->a); void *keep=e->ty; *e=*lam; e->ty=keep; return ck_expr_inner(c,e); } } }
+                    if(lam){ lam=expr_subst(lam,"__ppy_o",e->a); void *keep=e->ty; *e=*lam; e->ty=keep; return ck_expr_inner(c,e); } } }
             if(t->k!=TY_OBJ) ck_err(c,e->line,"%s has no attribute '%s'",ty_name(t),e->name);
             AField *fd=aot_find_field(t->cls,e->name);
             if(fd){ xi->kind=X_FIELD; xi->field=fd; xi->cls=t->cls; return fd->ty; }
@@ -271,8 +271,8 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
                     Expr *tup=xnew(EXPR_TUPLE,e->line);
                     for(int i=bv[0];i<bv[1];i+=bv[2]){ Expr *ix=xnew(EXPR_INDEX,e->line); ix->a=e->a; ix->b=lit_int(e->line,i); xpush(tup,ix); }
                     void *keep=e->ty; *e=*tup; e->ty=keep; return ck_expr_inner(c,e); } }
-            if(t->k==TY_OBJ && aot_find_method(t->cls,"__mpy_getslice__")){     /* obj[a:b:c]: obj.__mpy_getslice__(a, b, c) */
-                Expr *call=slice_call(e,"__mpy_getslice__",e->line);
+            if(t->k==TY_OBJ && aot_find_method(t->cls,"__ppy_getslice__")){     /* obj[a:b:c]: obj.__ppy_getslice__(a, b, c) */
+                Expr *call=slice_call(e,"__ppy_getslice__",e->line);
                 void *keep=e->ty; *e=*call; e->ty=keep; return ck_expr_inner(c,e); }
             if(t->k!=TY_STR&&t->k!=TY_LIST&&t->k!=TY_BYTES) ck_err(c,e->line,"%s cannot be sliced",ty_name(t));
             return t; }

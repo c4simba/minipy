@@ -1,7 +1,7 @@
 """Locale support (CPython's locale), for the C locale only: setlocale() accepts "", "C", "POSIX" and
 the C.UTF-8 names (others: locale.Error); text encoding UTF-8; localeconv() of the C locale."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["getlocale", "getdefaultlocale", "getpreferredencoding", "Error", "setlocale", "localeconv", "strcoll",
            "strxfrm", "str", "atof", "atoi", "format_string", "currency", "normalize", "LC_CTYPE", "LC_COLLATE",

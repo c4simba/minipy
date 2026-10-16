@@ -1678,7 +1678,7 @@ if sys._compiled:
     # replays them into its typed fields.
     import os as _os
     import textwrap as _textwrap
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _A = TypeVar("_A")
     _T = TypeVar("_T")

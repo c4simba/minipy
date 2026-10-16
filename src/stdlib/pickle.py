@@ -1936,9 +1936,9 @@ if sys._compiled:
     # Compiled programs: dumps() writes values of the built-in types as CPython's Pickler does (memo,
     # framing, the opcodes of each protocol); loads() reads such pickles through PReader, which the
     # decoder the compiler writes for the wanted type (as for json.loads) asks value by value.
-    import _mpy_jsonr
+    import _ppy_jsonr
     from struct import pack, unpack
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _T = TypeVar("_T")
     _F = TypeVar("_F")
@@ -2616,7 +2616,7 @@ if sys._compiled:
                 else:
                     raise UnpicklingError("objects cannot be unpickled in compiled code (opcode %r)" % bytes([op]))
 
-    class PReader(_mpy_jsonr.Reader):
+    class PReader(_ppy_jsonr.Reader):
         """A pickle read value by value, as the decoder the compiler writes for the wanted type asks
         (the same questions as of a JSON text)."""
 

@@ -3,7 +3,7 @@
 # (tests/kolibri_lib_test.py): both must decode the same way, although the
 # interpreter's registers are unsigned and compiled ones signed 32-bit.
 import sys
-import kolibri as k        # lib/kolibri.py, next to minipy
+import kolibri as k        # lib/kolibri.py, next to plainpy
 
 def show(label: str, value: str) -> None:
     print(label + ": " + value)

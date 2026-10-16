@@ -7,14 +7,14 @@
 #
 # IMAGE: any image with bash and an i386 C library (/lib/ld-linux.so.2), e.g.
 # Ubuntu with libc6-i386 (gcc-multilib); FASM, RUN as for run_typed_tests.sh.
-MINIPY=${MINIPY:-./minipy}
+PLAINPY=${PLAINPY:-./plainpy}
 FASM=${FASM:-fasm}
-IMAGE=${IMAGE:-minipy-ubuntu-test}
+IMAGE=${IMAGE:-plainpy-ubuntu-test}
 OUT=${OUT:-build/glibc}
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
-"$MINIPY" --compile --target linux --fasm "$FASM" tests/typed/ctypes_linux.py -o "$OUT/ctypes_linux" >/dev/null || exit 1
-"$MINIPY" --compile --target linux --fasm "$FASM" examples/fastapi/main.py -o "$OUT/fastapi_main" >/dev/null || exit 1
+"$PLAINPY" --compile --target linux --fasm "$FASM" tests/typed/ctypes_linux.py -o "$OUT/ctypes_linux" >/dev/null || exit 1
+"$PLAINPY" --compile --target linux --fasm "$FASM" examples/fastapi/main.py -o "$OUT/fastapi_main" >/dev/null || exit 1
 cp tests/typed/expected/ctypes_linux.out "$OUT/ctypes_linux.expected"
 cat > "$OUT/check.sh" <<'EOF'
 #!/bin/bash

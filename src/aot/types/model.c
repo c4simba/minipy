@@ -78,7 +78,7 @@ static int has_return_value(Stmt **b, int n){
 /* ---------------------------------------------------------------- building the model */
 
 AVar *new_global(Ck *c, AModule *m, const char *name){
-    AProg *p=c->p; AVar *v=MPY_NEW0(AVar);
+    AProg *p=c->p; AVar *v=PPY_NEW0(AVar);
     v->name=xstrdup2(name); v->ty=ty_var(); v->global=1; v->mod=m; v->id=p->nglobals;
     if(p->nglobals==p->gcap){ p->gcap=p->gcap?p->gcap*2:32; p->globals=(AVar**)xrealloc(p->globals,sizeof(AVar*)*(size_t)p->gcap); }
     p->globals[p->nglobals++]=v;
@@ -91,7 +91,7 @@ AVar *global_var(Ck *c, AModule *m, const char *name, int line){
     return (AVar*)s->p;
 }
 AVar *hidden_local(AFunc *f, const char *name, Ty *ty){   /* a local slot no name refers to */
-    AVar *v=MPY_NEW0(AVar); v->name=xstrdup2(name); v->ty=ty?ty:ty_var(); v->mod=f->mod; v->id=f->nvars;
+    AVar *v=PPY_NEW0(AVar); v->name=xstrdup2(name); v->ty=ty?ty:ty_var(); v->mod=f->mod; v->id=f->nvars;
     v->owner=f; v->bind_top=-1; v->first_use_top=0x7FFFFFFF;
     if(f->nvars==f->vcap){ f->vcap=f->vcap?f->vcap*2:8; f->vars=(AVar**)xrealloc(f->vars,sizeof(AVar*)*(size_t)f->vcap); }
     f->vars[f->nvars++]=v;
@@ -262,7 +262,7 @@ static void set_fn_const(AFunc *f, Stmt **b, int n){
 
 /* f: a function object made earlier (module-level functions exist before imports are linked) or NULL */
 AFunc *new_func(Ck *c, AFunc *f, AModule *m, AClass *cls, Stmt *def, AFunc *outer){
-    if(!f) f=MPY_NEW0(AFunc);
+    if(!f) f=PPY_NEW0(AFunc);
     f->name=xstrdup2(def->name); f->mod=m; f->cls=cls; f->def=def; f->body=def->body; f->nbody=def->body_count; f->line=def->line;
     f->outer=outer;
     if(cls && c->mk_static) f->is_static=1;
@@ -293,8 +293,8 @@ AFunc *new_func(Ck *c, AFunc *f, AModule *m, AClass *cls, Stmt *def, AFunc *oute
     f->nparams=def->param_count;
     f->star=def->star_index; f->dstar=def->dstar_index;
     f->kwonly=def->kwonly_index>=0 ? def->kwonly_index : f->star>=0 ? f->star+1 : f->dstar>=0 ? f->dstar : f->nparams;
-    f->params=MPY_NEW_ARR(AVar*,f->nparams>0?f->nparams:1);
-    f->defaults=MPY_NEW_ARR(Expr*,f->nparams>0?f->nparams:1);
+    f->params=PPY_NEW_ARR(AVar*,f->nparams>0?f->nparams:1);
+    f->defaults=PPY_NEW_ARR(Expr*,f->nparams>0?f->nparams:1);
     AFunc *save_sig=c->sig_fn; c->sig_fn=f; f->cls=cls;
     AModule *save_mod=c->mod; c->mod=m;                                    /* (its annotations name its module's) */
     for(int i=0;i<f->nparams;i++){
@@ -312,7 +312,7 @@ AFunc *new_func(Ck *c, AFunc *f, AModule *m, AClass *cls, Stmt *def, AFunc *oute
     }
     if(cls && !f->is_static && f->nparams==0) ck_err(c,def->line,"method %s.%s needs a self parameter",cls->name,f->name);
     if(def->pdefaults) for(int i=0;i<f->nparams;i++){ Expr *d=def->pdefaults[i]; f->defaults[i]=d;
-        if(is_sys_call(d,"_site")||is_sys_call(d,"exception")){ Expr *cp=MPY_NEW0(Expr); *cp=*d; cp->ty=NULL; f->defaults[i]=cp; } }   /* (def->pdefaults keeps it: put in at each call) */
+        if(is_sys_call(d,"_site")||is_sys_call(d,"exception")){ Expr *cp=PPY_NEW0(Expr); *cp=*d; cp->ty=NULL; f->defaults[i]=cp; } }   /* (def->pdefaults keeps it: put in at each call) */
     f->returns_value=has_return_value(def->body,def->body_count);
     f->is_gen=has_yield(def->body,def->body_count) || def->yield_expr;
     if(f->is_gen){
@@ -352,14 +352,14 @@ AFunc *new_func(Ck *c, AFunc *f, AModule *m, AClass *cls, Stmt *def, AFunc *oute
 }
 /* a lambda expression's function (made once; checked inline where it appears) */
 AFunc *new_lambda(Ck *c, Expr *e){
-    AFunc *f=MPY_NEW0(AFunc);
+    AFunc *f=PPY_NEW0(AFunc);
     f->name="<lambda>"; f->mod=c->mod; f->outer=c->fn; f->lam=e; f->line=e->line; f->star=f->dstar=-1;
     if(e->name) f->shown=e->name;                                          /* (a type made a function: <class 'list'>) */
     if(e->neparam>16) ck_err(c,e->line,"too many parameters");
     f->nparams=e->neparam; f->kwonly=f->nparams;
     if(e->edefaults){ f->star=e->estar; f->dstar=e->edstar; f->kwonly=e->ekwonly; }          /* (lambdas the compiler makes have none) */
-    f->params=MPY_NEW_ARR(AVar*,f->nparams>0?f->nparams:1);
-    f->defaults=MPY_NEW_ARR(Expr*,f->nparams>0?f->nparams:1);
+    f->params=PPY_NEW_ARR(AVar*,f->nparams>0?f->nparams:1);
+    f->defaults=PPY_NEW_ARR(Expr*,f->nparams>0?f->nparams:1);
     for(int i=0;i<f->nparams;i++){ if(symtab_find(&f->locals,e->eparams[i])) ck_err(c,e->line,"duplicate lambda parameter '%s'",e->eparams[i]);
         Ty *t=NULL;
         if(i==f->star){ t=ty_new(TY_LIST,ty_var(),NULL); t->tup=1; } else if(i==f->dstar) t=ty_dict(TY_STR_T,ty_var());
@@ -389,8 +389,8 @@ Ty *fn_type(Ck *c, AFunc *f, int line){
         int nreg= f->star>=0 ? f->star : f->dstar>=0 ? f->dstar : f->nparams, nd=0;   /* (keyword-only ones are parameters of the value too) */
         while(nd<nreg && f->defaults[nreg-1-nd]) nd++;
         f->fty->ndef=nd;
-        if(f->lam){ f->fty->names=MPY_NEW_ARR(char*,n+1); for(int i=0;i<n && i<f->lam->neparam;i++) f->fty->names[i]=f->lam->eparams[i]; }
-        if(f->def && !f->lam){ f->fty->names=MPY_NEW_ARR(char*,n+1); for(int i=0;i<n && i<f->def->param_count;i++) f->fty->names[i]=f->def->params[i];
+        if(f->lam){ f->fty->names=PPY_NEW_ARR(char*,n+1); for(int i=0;i<n && i<f->lam->neparam;i++) f->fty->names[i]=f->lam->eparams[i]; }
+        if(f->def && !f->lam){ f->fty->names=PPY_NEW_ARR(char*,n+1); for(int i=0;i<n && i<f->def->param_count;i++) f->fty->names[i]=f->def->params[i];
             if(f->star<0 && f->kwonly<nreg) f->fty->kwo=nreg-f->kwonly; } }
     return f->fty;
 }
@@ -429,13 +429,13 @@ void annotated_self_fields(Ck *c, AClass *cls, AotUnit *u, const char *self, Stm
         annotated_self_fields(c,cls,u,self,s->orelse,s->orelse_count); }
 }
 AField *add_field(AClass *cls, const char *name, Ty *ty, Expr *init){
-    AField *fd=MPY_NEW0(AField); fd->name=xstrdup2(name); fd->ty=ty?ty:ty_var(); fd->init=init; fd->mod=cls->mod;
+    AField *fd=PPY_NEW0(AField); fd->name=xstrdup2(name); fd->ty=ty?ty:ty_var(); fd->init=init; fd->mod=cls->mod;
     if(cls->nfields==cls->fcap){ cls->fcap=cls->fcap?cls->fcap*2:8; cls->fields=(AField**)xrealloc(cls->fields,sizeof(AField*)*(size_t)cls->fcap); }
     cls->fields[cls->nfields++]=fd;
     return fd;
 }
 AClass *new_class(Ck *c, AModule *m, Stmt *def){
-    AProg *p=c->p; AClass *cls=MPY_NEW0(AClass);
+    AProg *p=c->p; AClass *cls=PPY_NEW0(AClass);
     cls->name=xstrdup2(def->name); cls->mod=m; cls->def=def; cls->id=p->nclasses;
     cls->qualname=cls->name; cls->symname=cls->name; def->aux=cls;
     if(p->nclasses==p->ccap){ p->ccap=p->ccap?p->ccap*2:16; p->classes=(AClass**)xrealloc(p->classes,sizeof(AClass*)*(size_t)p->ccap); }

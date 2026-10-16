@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+# The Makefile does the work: make, make test, make install PREFIX=/usr.
+# VERSION (what plainpy -v says) is the upstream part of debian/changelog's.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+# what the Makefile's own CFLAGS have (dpkg-buildflags' replace them)
+export DEB_CFLAGS_MAINT_PREPEND = -std=c99 -Wall -Wextra
+
+include /usr/share/dpkg/pkg-info.mk
+
+# the same on every make call: the programs are not built again for install
+MAKE_ARGS = VERSION=$(DEB_VERSION_UPSTREAM) HOST_STRIP=true PREFIX=/usr
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	dh_auto_build -- $(MAKE_ARGS)
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) test $(MAKE_ARGS)
+endif
+
+override_dh_auto_install:
+	dh_auto_install -- $(MAKE_ARGS)
+	# debian/copyright has the licenses
+	rm -f debian/plainpy/usr/share/doc/plainpy/LICENSE debian/plainpy/usr/share/doc/plainpy/LICENSE.PSF

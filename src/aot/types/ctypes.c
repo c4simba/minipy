@@ -39,13 +39,13 @@ static int ct_type(const char *m, CType *out){
 }
 ACLib *clib_get(AProg *p, const char *soname){
     for(int i=0;i<p->nclibs;i++) if(!strcmp(p->clibs[i]->soname,soname)) return p->clibs[i];
-    ACLib *l=MPY_NEW0(ACLib); l->soname=xstrdup2(soname); l->id=p->nclibs;
+    ACLib *l=PPY_NEW0(ACLib); l->soname=xstrdup2(soname); l->id=p->nclibs;
     p->clibs=(ACLib**)xrealloc(p->clibs,sizeof(ACLib*)*(size_t)(p->nclibs+1)); p->clibs[p->nclibs++]=l;
     return l;
 }
 ACFunc *cfunc_get(AProg *p, ACLib *lib, const char *sym){
     for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->lib==lib && !strcmp(p->cfuncs[i]->sym,sym)) return p->cfuncs[i];
-    ACFunc *f=MPY_NEW0(ACFunc); f->lib=lib; f->sym=xstrdup2(sym); f->id=p->ncfuncs; f->nargtypes=-1;
+    ACFunc *f=PPY_NEW0(ACFunc); f->lib=lib; f->sym=xstrdup2(sym); f->id=p->ncfuncs; f->nargtypes=-1;
     p->cfuncs=(ACFunc**)xrealloc(p->cfuncs,sizeof(ACFunc*)*(size_t)(p->ncfuncs+1)); p->cfuncs[p->ncfuncs++]=f;
     return f;
 }

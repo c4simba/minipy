@@ -1,11 +1,11 @@
-#ifndef MPY_PY_AST_H
-#define MPY_PY_AST_H
+#ifndef PPY_PY_AST_H
+#define PPY_PY_AST_H
 
 #include "util.h"
 
 /* ========================= Full Python 3.14 frontend =========================
    py_lex.c / py_parse.c read Python 3.14 source into the tree below - the
-   node kinds and fields of CPython's `ast` module, so that `minipy --pyast`
+   node kinds and fields of CPython's `ast` module, so that `plainpy --pyast`
    (py_dump.c) can be compared with CPython's own parser field by field
    (tests/pyast_check.py). py_front.c turns it into the tree the compilers
    work on (ast.h): the interpreter's bytecode compiler and the typed one. */
@@ -76,11 +76,11 @@ int py_parse(PyParse *p, const char *path, const char *src, size_t len);
 
 /* The tree in the canonical text form tests/pyast_check.py prints for CPython's ast. */
 void py_dump(PyNode *n, FILE *out);
-/* minipy --pyast file.py */
+/* plainpy --pyast file.py */
 int py_dump_main(int argc, char **argv);
 
 PyNode *py_node(PyKind k, int line, int col);
 void    py_list_add(PyList *l, PyNode *n);
 const char *py_kind_name(PyKind k);
 
-#endif /* MPY_PY_AST_H */
+#endif /* PPY_PY_AST_H */

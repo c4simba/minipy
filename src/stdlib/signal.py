@@ -1,6 +1,6 @@
 """Signals (CPython's signal module): the table of handlers.
 
-No signal of the system reaches a minipy program: raise_signal(sig) calls the handler set for
+No signal of the system reaches a plainpy program: raise_signal(sig) calls the handler set for
 sig (SIGINT's default one raises KeyboardInterrupt, SIG_IGN does nothing, SIG_DFL ends the program
 for the others). Compiled programs: SIG_DFL and SIG_IGN are functions (as handlers are), and a
 handler is a function (signum: int, frame: None) -> None."""

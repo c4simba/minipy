@@ -1,4 +1,4 @@
-# @property with @x.setter: obj.x = v and obj.x += v call the setter (compiled: a method __mpy_set_x)
+# @property with @x.setter: obj.x = v and obj.x += v call the setter (compiled: a method __ppy_set_x)
 class Temp:
     def __init__(self, c: float):
         self._c = c

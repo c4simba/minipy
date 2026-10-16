@@ -1,5 +1,5 @@
-#ifndef MPY_PY_FRONT_H
-#define MPY_PY_FRONT_H
+#ifndef PPY_PY_FRONT_H
+#define PPY_PY_FRONT_H
 
 #include "ast.h"
 #include "py_ast.h"
@@ -21,4 +21,4 @@ Stmt *py_front_stmts(const char *path, const char *src, int line);
 /* A fresh copy of statement s (its own Expr nodes: an instance of a generic function). */
 Stmt *py_front_copy(const char *path, Stmt *s);
 
-#endif /* MPY_PY_FRONT_H */
+#endif /* PPY_PY_FRONT_H */

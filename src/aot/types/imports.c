@@ -36,7 +36,7 @@ void collect_functions(Ck *c, AModule *m){
         if(!b[i]->decorator_count && (has_untyped_params(b[i]) || b[i]->ntparams || typevar_params(m,b[i]) || protocol_params(b[i]))) fn->pristine=b[i];   /* (instances are made from its tree) */
         func_step(c,fn,m,b[i]); }
     /* the module body itself */
-    AFunc *body=MPY_NEW0(AFunc);
+    AFunc *body=PPY_NEW0(AFunc);
     body->name=xstrdup2(m->name); body->mod=m; body->body=b; body->nbody=n; body->ret=TY_VOID_T; body->line=1;
     add_func(c->p,body);
     m->body=body;
@@ -53,7 +53,7 @@ const char *string_const(const char *n){
 }
 /* Modules the compiler provides itself (no source file). */
 static const char *builtin_module(const char *name){
-    static const char *mods[]={"sys","asyncio","math","typing","functools","ctypes","json","minipy","dataclasses","abc","thread",NULL};
+    static const char *mods[]={"sys","asyncio","math","typing","functools","ctypes","json","plainpy","dataclasses","abc","thread",NULL};
     for(int i=0;mods[i];i++) if(!strcmp(mods[i],name)) return mods[i];
     return NULL;
 }
@@ -105,7 +105,7 @@ void link_imports(Ck *c, AModule *m){
                     symtab_add(&m->syms,alias,AS_SYS,(void*)full); }
                 free(dotted); continue;
             }
-            if(!strcmp(dotted,"ctypes")||!strcmp(dotted,"json")||!strcmp(dotted,"minipy")||!strcmp(dotted,"dataclasses")){    /* from ctypes import CDLL, c_int / from json import dumps */
+            if(!strcmp(dotted,"ctypes")||!strcmp(dotted,"json")||!strcmp(dotted,"plainpy")||!strcmp(dotted,"dataclasses")){   /* from ctypes import CDLL, c_int / from json import dumps */
                 for(int k=0;k<s->nnames;k++){ const char *nm=s->names[k], *alias=s->asnames[k]?s->asnames[k]:nm;
                     if(!strcmp(nm,"*")) ck_err(c,s->line,"use `import %s` and %s.name in compiled code",dotted,dotted);
                     if(!strcmp(dotted,"dataclasses") && !strcmp(nm,"FrozenInstanceError")){ symtab_add(&m->syms,alias,AS_CLASS,symtab_find(&builtin_syms,nm)->p); continue; }
@@ -118,7 +118,7 @@ void link_imports(Ck *c, AModule *m){
                 free(dotted); continue;
             }
             if(!strcmp(dotted,"math")){                                   /* from math import sqrt, pi: math.sqrt, math.pi */
-                char hm[64]; snprintf(hm,sizeof hm,"__mpy_bmod_%s",dotted);
+                char hm[64]; snprintf(hm,sizeof hm,"__ppy_bmod_%s",dotted);
                 if(!module_sym(m,hm)) symtab_add(&m->syms,xstrdup2(hm),AS_SYS,(void*)builtin_module(dotted));
                 for(int k=0;k<s->nnames;k++){ const char *nm=s->names[k], *alias=s->asnames[k]?s->asnames[k]:nm;
                     if(!strcmp(nm,"*")) ck_err(c,s->line,"use `import %s` and %s.name in compiled code",dotted,dotted);
@@ -141,7 +141,7 @@ void link_imports(Ck *c, AModule *m){
                     AModule *sm=find_module(c->p,sub);
                     char lz[200]; snprintf(lz,sizeof lz,"_lazy_%s",nm); ASym *l=symtab_find(&t->syms,lz);
                     if(!sm && l && l->kind==AS_FUNC){                           /* from time import tzname: a call of time._lazy_tzname() */
-                        char hm[300]; snprintf(hm,sizeof hm,"__mpy_mod_%s",dotted); if(!module_sym(m,hm)) symtab_add(&m->syms,hm,AS_MODULE,t);
+                        char hm[300]; snprintf(hm,sizeof hm,"__ppy_mod_%s",dotted); if(!module_sym(m,hm)) symtab_add(&m->syms,hm,AS_MODULE,t);
                         char key[600]; snprintf(key,sizeof key,"lazy:%s:%s",hm,lz); symtab_add(&m->syms,alias,AS_SYS,xstrdup2(key));
                         continue; }
                     if(!sm) ck_err(c,s->line,"cannot import name '%s' from '%s'",nm,dotted);

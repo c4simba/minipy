@@ -10,7 +10,7 @@ import sys
 import time
 import zlib
 import stat as _stat
-from _mpy_typing import Callable, Iterator, TypeVar
+from _ppy_typing import Callable, Iterator, TypeVar
 
 __all__ = ["BadZipFile", "BadZipfile", "error", "ZIP_STORED", "ZIP_DEFLATED", "ZIP_BZIP2", "ZIP_LZMA", "is_zipfile",
            "ZipInfo", "ZipFile", "LargeZipFile"]

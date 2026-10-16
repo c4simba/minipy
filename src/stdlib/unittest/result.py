@@ -208,7 +208,7 @@ class TestResult(object):
         return ''.join(msgLines)
 
     def _clean_tracebacks(self, exctype, value, tb, test):
-        if isinstance(tb, list):        # (minipy: the frames, (file, line, function), innermost first)
+        if isinstance(tb, list):        # (plainpy: the frames, (file, line, function), innermost first)
             return self._clean_frame_lists(exctype, value, tb, test)
         ret = None
         first = True
@@ -239,7 +239,7 @@ class TestResult(object):
 
     def _clean_frame_lists(self, exctype, value, tb, test):
         def in_unittest(frame):
-            return frame[0].startswith("<minipy:unittest")
+            return frame[0].startswith("<plainpy:unittest")
         ret = None
         first = True
         excs = [(exctype, value, tb)]

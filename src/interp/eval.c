@@ -7,7 +7,7 @@
 #define POP()   (f->stack[--f->sp])
 #define TOP()   (f->stack[f->sp-1])
 #define SECOND() (f->stack[f->sp-2])
-static MPY_NORETURN void unbound_local(CodeObj *co, int i){ raise_name(E_UnboundLocalError,mp_ts->frame,co->varnames[i]->s,"cannot access local variable '%s' where it is not associated with a value",co->varnames[i]->s); }
+static PPY_NORETURN void unbound_local(CodeObj *co, int i){ raise_name(E_UnboundLocalError,mp_ts->frame,co->varnames[i]->s,"cannot access local variable '%s' where it is not associated with a value",co->varnames[i]->s); }
 static Value load_global(Frame *f, StrObj *name){
     Value v;
     if(mp_dict_get(f->globals,v_obj(name),&v)) return v;
@@ -169,7 +169,7 @@ Value eval(Frame *f, Value sent, int resume, int throwing){
         if(++ticks>=64){
             ticks=0;
             mp_gc_maybe();
-            if(mp_nthreads>1){ Thread *self=ts; mp_gil_release(); mpy_thread_yield(); mp_gil_acquire(self); }
+            if(mp_nthreads>1){ Thread *self=ts; mp_gil_release(); ppy_thread_yield(); mp_gil_acquire(self); }
         }
         uint32_t ins=co->code[f->ip++];
         int op=(int)(ins&0xff), arg=(int)(ins>>8);

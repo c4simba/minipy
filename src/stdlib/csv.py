@@ -6,7 +6,7 @@ machine. In compiled programs a dialect is named by a str (or given as keyword
 arguments), rows are lists (or tuples) of one type, QUOTE_NONNUMERIC/QUOTE_STRINGS
 reading is not available and DictReader's extra fields (restkey) are left out."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _T = TypeVar("_T")
 _R = TypeVar("_R")

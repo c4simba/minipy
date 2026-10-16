@@ -25,7 +25,7 @@ Value mp_instance(Type *t){
 /* OSError(errno, ...): the subclass for that error number, as CPython's OSError.__new__
    picks it: the host's numbers (KolibriOS: Linux's, which the standard library uses there) */
 static Type *oserror_subtype(int64_t no){
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     static const struct { int no; const char *name; } map[]={
         {11,"BlockingIOError"},{114,"BlockingIOError"},{115,"BlockingIOError"},{10,"ChildProcessError"},{32,"BrokenPipeError"},{108,"BrokenPipeError"},
         {103,"ConnectionAbortedError"},{111,"ConnectionRefusedError"},{104,"ConnectionResetError"},{17,"FileExistsError"},{2,"FileNotFoundError"},

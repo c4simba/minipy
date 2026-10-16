@@ -117,7 +117,7 @@ Ty *ck_cond(Ck *c, Expr *e){
    parameter): its .value */
 int int_enum_ty(Ty *t){ t=ty_find(t); return t && t->k==TY_OBJ && t->cls && t->cls->enum_int && !t->opt; }
 Ty *as_enum_value(Ck *c, Expr *x){
-    Expr *inner=MPY_NEW0(Expr); *inner=*x; int ak=x->akind; char *kw=x->kw;
+    Expr *inner=PPY_NEW0(Expr); *inner=*x; int ak=x->akind; char *kw=x->kw;
     memset(x,0,sizeof *x); x->kind=EXPR_ATTRIBUTE; x->line=inner->line; x->a=inner; x->name="value"; x->akind=ak; x->kw=kw;
     inner->akind=0; inner->kw=NULL;
     return ck_expr(c,x);

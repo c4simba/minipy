@@ -7,14 +7,14 @@ x pad byte, c char, b/B (un)signed char, ? bool, h/H short, i/I int, l/L long,
 q/Q long long, n/N ssize_t/size_t (native only), e half float, f float,
 d double, s bytes, p Pascal string, P pointer (native only).
 
-Native sizes are those of the machine minipy runs on: a compiled program is an
+Native sizes are those of the machine plainpy runs on: a compiled program is an
 i386 one (long, size_t and pointers of 4 bytes, 8-byte values aligned to 4).
 In compiled programs the format of pack, unpack, unpack_from, iter_unpack and
 calcsize is given as a literal (the compiler lays the items out and types the
 values); Struct objects and pack_into are for the interpreter."""
 import sys
 import math
-from _mpy_typing import Callable, Generic, Iterator, TypeVar
+from _ppy_typing import Callable, Generic, Iterator, TypeVar
 
 T = TypeVar("T")
 V = TypeVar("V")

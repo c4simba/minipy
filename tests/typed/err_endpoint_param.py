@@ -1,5 +1,5 @@
 from typing import Callable
-from minipy import Endpoint
+from plainpy import Endpoint
 
 routes: list[Endpoint] = []
 

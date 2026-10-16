@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from enum import Enum
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["UUID", "uuid1", "uuid3", "uuid4", "uuid5", "uuid6", "uuid7", "uuid8", "getnode", "NAMESPACE_DNS",
            "NAMESPACE_URL", "NAMESPACE_OID", "NAMESPACE_X500", "NIL", "MAX", "SafeUUID", "RESERVED_NCS",

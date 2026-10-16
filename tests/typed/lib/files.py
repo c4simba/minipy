@@ -1,6 +1,6 @@
 # A small file browser for KolibriOS; the window is declared with a decorator.
 #
-#   minipy --compile --target kolibri files.py -o files   (or: minipy files.py)
+#   plainpy --compile --target kolibri files.py -o files  (or: plainpy files.py)
 #
 # Up/Down/PgUp/PgDn/Home/End or the wheel move, Enter or a double click opens
 # a folder / shows a file, Backspace goes up, a click selects, q or Esc quits.

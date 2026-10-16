@@ -25,7 +25,7 @@
    rewrite may span; an unrecognised instruction reads everything, and a
    function with conditional assembly in it is left alone.
 
-   MPY_NO_PEEP=1 turns the pass off; MPY_PEEP_STATS=1 counts its rewrites. */
+   PPY_NO_PEEP=1 turns the pass off; PPY_PEEP_STATS=1 counts its rewrites. */
 
 #include "aot.h"
 #include "util.h"
@@ -51,7 +51,7 @@ static const struct { const char *name; unsigned bit; int width; } regs[]={
 };
 /* the register an operand is (0 if it is none); *width its size in bits */
 static unsigned reg_of(const char *o, int *width){
-    for(size_t i=0;i<MPY_ARRAY_SIZE(regs);i++) if(!strcmp(o,regs[i].name)){ if(width) *width=regs[i].width; return regs[i].bit; }
+    for(size_t i=0;i<PPY_ARRAY_SIZE(regs);i++) if(!strcmp(o,regs[i].name)){ if(width) *width=regs[i].width; return regs[i].bit; }
     return 0;
 }
 static unsigned reg32(const char *o){ int w; unsigned r=reg_of(o,&w); return w==32 ? r : 0; }
@@ -97,9 +97,9 @@ typedef struct { Ins *v; int n, cap; } P;
 
 static long stat_count[32]; static const char *stat_name[32];
 static void count(int k, const char *name){ stat_count[k]++; stat_name[k]=name; }
-static long peep_budget=-2;     /* MPY_PEEP_MAX=n: only the first n rewrites (finding a wrong one by bisection) */
+static long peep_budget=-2;     /* PPY_PEEP_MAX=n: only the first n rewrites (finding a wrong one by bisection) */
 static int budget_left(void){
-    if(peep_budget==-2){ const char *e=getenv("MPY_PEEP_MAX"); peep_budget=e&&*e?atol(e):-1; }
+    if(peep_budget==-2){ const char *e=getenv("PPY_PEEP_MAX"); peep_budget=e&&*e?atol(e):-1; }
     if(peep_budget<0) return 1;
     if(peep_budget==0) return 0;
     peep_budget--; return 1;
@@ -190,7 +190,7 @@ static const struct { const char *name; unsigned use; } rt_inputs[]={
     {"rt_release",RA},{"rt_list_add32",RA},{"rt_list_add64",RA|RD},{"rt_list_addf",0},
 };
 static unsigned routine_use(const char *name){
-    for(size_t i=0;i<MPY_ARRAY_SIZE(rt_inputs);i++) if(!strcmp(rt_inputs[i].name,name)) return rt_inputs[i].use|RSP|RBP;
+    for(size_t i=0;i<PPY_ARRAY_SIZE(rt_inputs);i++) if(!strcmp(rt_inputs[i].name,name)) return rt_inputs[i].use|RSP|RBP;
     if(name[0]=='N' && name[1]=='A' && isdigit((unsigned char)name[2])) return RSP|RBP;   /* NA<z> (aot/codegen/none.c): raises an AttributeError */
     return R_GP;
 }
@@ -346,9 +346,9 @@ static void analyze(P *p){
 }
 
 /* replace entries [i, i+nold) by new instruction lines */
-static long trace_n=0; static int trace=-1;    /* MPY_PEEP_TRACE=1: every rewrite on stderr */
+static long trace_n=0; static int trace=-1;    /* PPY_PEEP_TRACE=1: every rewrite on stderr */
 static void replace(P *p, int i, int nold, const char *const *lines, int nnew){
-    if(trace<0){ const char *e=getenv("MPY_PEEP_TRACE"); trace=e&&*e&&strcmp(e,"0"); }
+    if(trace<0){ const char *e=getenv("PPY_PEEP_TRACE"); trace=e&&*e&&strcmp(e,"0"); }
     if(trace){
         fprintf(stderr,"--- rewrite %ld\n",++trace_n);
         for(int k=0;k<nold;k++) fprintf(stderr,"-  %s\n",p->v[i+k].txt[0]?p->v[i+k].txt:p->v[i+k].line);
@@ -427,7 +427,7 @@ static int rule_jump_next(P *p, int i){
 }
 static const char *const ccpairs[][2]={{"e","ne"},{"z","nz"},{"l","ge"},{"le","g"},{"b","ae"},{"be","a"},{"s","ns"},{"o","no"},{"p","np"},{"c","nc"},{"nge","nl"},{"nle","ng"},{"nae","nb"},{"nbe","na"},{"pe","po"}};
 static const char *cc_neg(const char *cc){
-    for(size_t i=0;i<MPY_ARRAY_SIZE(ccpairs);i++){ if(!strcmp(cc,ccpairs[i][0])) return ccpairs[i][1]; if(!strcmp(cc,ccpairs[i][1])) return ccpairs[i][0]; }
+    for(size_t i=0;i<PPY_ARRAY_SIZE(ccpairs);i++){ if(!strcmp(cc,ccpairs[i][0])) return ccpairs[i][1]; if(!strcmp(cc,ccpairs[i][1])) return ccpairs[i][0]; }
     return NULL;
 }
 /* jcc L1 / jmp L2 / L1:  ->  j!cc L2 / L1: */
@@ -831,7 +831,7 @@ static const Rule rules[]={ rule_unreachable, rule_jump_next, rule_jcc_over_jmp,
 static int peep_off=-1, peep_stats=-1;
 
 char *aot_peephole(const char *text, size_t len, size_t *outlen){
-    if(peep_off<0){ const char *e=getenv("MPY_NO_PEEP"); peep_off=e && *e && strcmp(e,"0"); }
+    if(peep_off<0){ const char *e=getenv("PPY_NO_PEEP"); peep_off=e && *e && strcmp(e,"0"); }
     P p={0};
     if(!peep_off){
         p_parse(&p,text,len);
@@ -846,7 +846,7 @@ char *aot_peephole(const char *text, size_t len, size_t *outlen){
         for(int i=0;i<p.n;i++)
             for(int tries=0;tries<4;tries++){
                 int hit=0;
-                for(size_t r=0;r<MPY_ARRAY_SIZE(rules) && budget_left();r++){
+                for(size_t r=0;r<PPY_ARRAY_SIZE(rules) && budget_left();r++){
                     if(rules[r](&p,i)){ hit=1; break; }
                     if(peep_budget>=0) peep_budget++;     /* (no rewrite: nothing spent) */
                 }
@@ -942,7 +942,7 @@ static int og_cmp(const void *x, const void *y){
 
 static int outline_off=-1;
 char *aot_outline(const char *text, size_t len, size_t *outlen){
-    if(outline_off<0){ const char *e=getenv("MPY_NO_OUTLINE"); outline_off=(e && *e && strcmp(e,"0")) || peep_off>0; }
+    if(outline_off<0){ const char *e=getenv("PPY_NO_OUTLINE"); outline_off=(e && *e && strcmp(e,"0")) || peep_off>0; }
     if(outline_off){ char *r=(char*)xmalloc(len+1); memcpy(r,text,len); r[len]=0; *outlen=len; return r; }
     /* the lines */
     int nl=0, cl=1024; const char **ls=(const char**)xmalloc(sizeof(char*)*(size_t)cl); int *ll=(int*)xmalloc(sizeof(int)*(size_t)cl);
@@ -987,7 +987,7 @@ char *aot_outline(const char *text, size_t len, size_t *outlen){
             OSite site={c,s};
             unsigned q=h&(unsigned)(ncap-1); OGroup *g=NULL;
             for(;tab[q];q=(q+1)&(unsigned)(ncap-1)) if(tab[q]->h==h && tab[q]->len==c-s && same_stretch(txt,tab[q]->v[0],site)){ g=tab[q]; break; }
-            if(!g){ g=MPY_NEW0(OGroup); g->h=h; g->len=c-s; g->size=size; g->id=-1; tab[q]=g; ng++; }
+            if(!g){ g=PPY_NEW0(OGroup); g->h=h; g->len=c-s; g->size=size; g->id=-1; tab[q]=g; ng++; }
             if(g->n==g->cap){ g->cap=g->cap?g->cap*2:4; g->v=(OSite*)xrealloc(g->v,sizeof(OSite)*(size_t)g->cap); }
             g->v[g->n++]=site;
         }
@@ -1030,7 +1030,7 @@ char *aot_outline(const char *text, size_t len, size_t *outlen){
 }
 
 void aot_peephole_report(void){
-    if(peep_stats<0){ const char *e=getenv("MPY_PEEP_STATS"); peep_stats=e && *e && strcmp(e,"0"); }
+    if(peep_stats<0){ const char *e=getenv("PPY_PEEP_STATS"); peep_stats=e && *e && strcmp(e,"0"); }
     if(!peep_stats) return;
     for(int k=0;k<32;k++) if(stat_count[k]) fprintf(stderr,"peephole: %6ld  %s\n",stat_count[k],stat_name[k]);
 }

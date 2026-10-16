@@ -69,7 +69,7 @@ static Value make_gc(void){
 Value native_module(const char *name){
     if(!strcmp(name,"sys")) return make_sys();
     if(!strcmp(name,"math")) return make_math();
-    if(!strcmp(name,"_mpy_json")) return make_json();
+    if(!strcmp(name,"_ppy_json")) return make_json();
     if(!strcmp(name,"thread")) return make_thread();
     if(!strcmp(name,"_thread")) return make__thread();
     if(!strcmp(name,"gc")) return make_gc();

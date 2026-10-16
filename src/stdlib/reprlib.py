@@ -236,7 +236,7 @@ if sys._compiled:
     # Compiled programs: the same limits for str, int, list, tuple, set, frozenset, dict and deque
     # (a typed copy of each step per kind of value); other objects: their repr() cut to maxother.
     # recursive_repr(fillvalue) keeps __repr__ as it is (typed values cannot contain themselves).
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
     from collections import deque
 
     _T = TypeVar("_T")

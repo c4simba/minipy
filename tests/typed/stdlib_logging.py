@@ -166,7 +166,7 @@ db.error("logger disabled")
 db.disabled = False
 
 # a file handler
-path = os.path.join(tempfile.gettempdir(), "minipy_logging_test.log")
+path = os.path.join(tempfile.gettempdir(), "plainpy_logging_test.log")
 if os.path.exists(path):
     os.remove(path)
 fh = logging.FileHandler(path, mode="w")

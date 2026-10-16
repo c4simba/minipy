@@ -143,7 +143,7 @@ static int dynamic(St *s){
     return codes(s,&lencode,&distcode);
 }
 
-int mpy_inflate(const unsigned char *in, size_t inlen, unsigned char *out, size_t outlen){
+int ppy_inflate(const unsigned char *in, size_t inlen, unsigned char *out, size_t outlen){
     St s; memset(&s,0,sizeof s);
     s.in=in; s.inlen=inlen; s.out=out; s.outlen=outlen;
     int last;
@@ -159,11 +159,11 @@ int mpy_inflate(const unsigned char *in, size_t inlen, unsigned char *out, size_
     return s.outpos==outlen ? 0 : -1;
 }
 
-const char *mpy_unpack(MpyPacked *p){
+const char *ppy_unpack(PpyPacked *p){
     if(!p->text){
         char *t=(char*)malloc((size_t)p->len+1);
         if(!t) return NULL;
-        if(mpy_inflate(p->data,p->clen,(unsigned char*)t,p->len)){ free(t); return NULL; }
+        if(ppy_inflate(p->data,p->clen,(unsigned char*)t,p->len)){ free(t); return NULL; }
         t[p->len]=0;
         p->text=t;
     }

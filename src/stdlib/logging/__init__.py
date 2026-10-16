@@ -2341,7 +2341,7 @@ if sys._compiled:
     import threading as _threading
     import atexit as _atexit
     import io as _io
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _L = TypeVar("_L")
     _M = TypeVar("_M")

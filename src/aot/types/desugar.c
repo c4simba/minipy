@@ -28,7 +28,7 @@ int desugar_with(Ck *c, Stmt *s){
     AFunc *fen=aot_find_method(t->cls,en), *fex=aot_find_method(t->cls,exn);
     if(!fen || !fex) ck_err(c,line,"'%s' object does not support the %scontext manager protocol (missed %s method)",t->cls->name,s->is_async?"asynchronous ":"",!fen?en:exn);
     int k=++c->nhidden; char m[48], v[48], h[48], e[48];
-    snprintf(m,sizeof m,"__mpy_with%d_mgr",k); snprintf(v,sizeof v,"__mpy_with%d_value",k); snprintf(h,sizeof h,"__mpy_with%d_hit",k); snprintf(e,sizeof e,"__mpy_with%d_exc",k);
+    snprintf(m,sizeof m,"__ppy_with%d_mgr",k); snprintf(v,sizeof v,"__ppy_with%d_value",k); snprintf(h,sizeof h,"__ppy_with%d_hit",k); snprintf(e,sizeof e,"__ppy_with%d_exc",k);
     hidden_reg(c,m); hidden_reg(c,h);
     Expr *tg= s->withtgt && s->withtgt[0] ? s->withtgt[0] : w->as[0] ? name_expr(w->as[0],line) : NULL;
     int env= ty_find(fen->ret)->k!=TY_VOID, exv= ty_find(fex->ret)->k!=TY_VOID;
@@ -38,7 +38,7 @@ int desugar_with(Ck *c, Stmt *s){
     tx(&x,"%s = 0\n",m);
     if(env) tx(&x,"%s = %s%s.%s()\n",v,aw,m,en); else tx(&x,"%s%s.%s()\n",aw,m,en);
     tx(&x,"%s = False\ntry:\n",h);
-    if(tg && env) tx(&x,"    __mpy_target = %s\n",v);
+    if(tg && env) tx(&x,"    __ppy_target = %s\n",v);
     tx(&x,"    pass\nexcept BaseException as %s:\n    %s = True\n",e,h);
     if(exv) tx(&x,"    if not %s%s.%s(type(%s), %s, None):\n        raise\n",aw,m,exn,e,e);
     else tx(&x,"    %s%s.%s(type(%s), %s, None)\n    raise\n",aw,m,exn,e,e);
@@ -49,7 +49,7 @@ int desugar_with(Ck *c, Stmt *s){
     Stmt *tr=NULL; for(int i=0;i<blk->body_count;i++) if(blk->body[i]->kind==STMT_TRY) tr=blk->body[i];
     int keep=tg&&env?1:0;
     if(keep) tr->body[0]->targets[0]=tg;
-    Stmt **nb=MPY_NEW_ARR(Stmt*,keep+s->body_count+1); int nn=0;
+    Stmt **nb=PPY_NEW_ARR(Stmt*,keep+s->body_count+1); int nn=0;
     if(keep) nb[nn++]=tr->body[0];
     for(int i=0;i<s->body_count;i++) nb[nn++]=s->body[i];
     if(!nn) nb[nn++]=stmt_new(STMT_PASS,NULL,line);
@@ -66,17 +66,17 @@ void desugar_aug_item(Ck *c, Stmt *s, AAssign *a){
     int op=a->aug; for(int i=0;ops[i].aug;i++) if(ops[i].aug==a->aug) op=ops[i].op;
     const char *ho=hidden_for(c,"augobj"), *hk=hidden_for(c,"augkey"); hidden_reg(c,ho); hidden_reg(c,hk);
     Expr *bin=xnew(EXPR_BINARY,line); bin->op=op; bin->a=ex_index(nx(ho,line),nx(hk,line),line); bin->b=a->value;
-    Stmt **b=MPY_NEW_ARR(Stmt*,3);
+    Stmt **b=PPY_NEW_ARR(Stmt*,3);
     b[0]=st_assign(nx(ho,line),t->a,line); b[1]=st_assign(nx(hk,line),t->b,line); b[2]=st_assign(ex_index(nx(ho,line),nx(hk,line),line),bin,line);
     s->kind=STMT_IF; s->expr=xnew(EXPR_TRUE,line); s->body=b; s->body_count=s->body_cap=3; s->orelse_count=0; s->aux=NULL; s->aug=0; s->targets=NULL; s->ntargets=0; s->value=NULL;
 }
 /* async for x in obj (its __aiter__ / __anext__): a while loop until StopAsyncIteration (else: when it ran out) */
 void desugar_async_for(Ck *c, Stmt *s){
     AotUnit *u=c->mod->unit; int line=s->line, k=++c->nhidden;
-    char it[48], v[48], d[48]; snprintf(it,sizeof it,"__mpy_afor%d_it",k); snprintf(v,sizeof v,"__mpy_afor%d_value",k); snprintf(d,sizeof d,"__mpy_afor%d_done",k);
+    char it[48], v[48], d[48]; snprintf(it,sizeof it,"__ppy_afor%d_it",k); snprintf(v,sizeof v,"__ppy_afor%d_value",k); snprintf(d,sizeof d,"__ppy_afor%d_done",k);
     hidden_reg(c,it); hidden_reg(c,v); hidden_reg(c,d);
     Txt x={0}; for(int i=1;i<line;i++) tx(&x,"\n");
-    tx(&x,"%s = (0).__aiter__()\n%s = False\nwhile True:\n    try:\n        %s = await %s.__anext__()\n    except StopAsyncIteration:\n        %s = True\n        break\n    __mpy_target = %s\n    pass\nif %s:\n    pass\n",it,d,v,it,d,v,d);
+    tx(&x,"%s = (0).__aiter__()\n%s = False\nwhile True:\n    try:\n        %s = await %s.__anext__()\n    except StopAsyncIteration:\n        %s = True\n        break\n    __ppy_target = %s\n    pass\nif %s:\n    pass\n",it,d,v,it,d,v,d);
     Stmt *blk=py_front_stmts(u->path,x.s,line); free(x.s);
     if(!blk) ck_err(c,line,"internal error: async for");
     blk->body[0]->value->a->a=aot_expr(u,&s->expr);                 /* (0).__aiter__() -> obj.__aiter__() */
@@ -84,7 +84,7 @@ void desugar_async_for(Ck *c, Stmt *s){
     Stmt *as=wh->body[1];
     if(s->param_count==1) as->targets[0]=name_expr(s->params[0],line);
     else { Expr *tu=xnew(EXPR_TUPLE,line); for(int i=0;i<s->param_count;i++) xpush(tu,name_expr(s->params[i],line)); as->targets[0]=tu; }
-    Stmt **nb=MPY_NEW_ARR(Stmt*,2+s->body_count); int nn=0;
+    Stmt **nb=PPY_NEW_ARR(Stmt*,2+s->body_count); int nn=0;
     nb[nn++]=wh->body[0]; nb[nn++]=as; for(int i=0;i<s->body_count;i++) nb[nn++]=s->body[i];
     wh->body=nb; wh->body_count=nn; wh->body_cap=nn;
     if(s->orelse_count){ ifd->body=s->orelse; ifd->body_count=s->orelse_count; ifd->body_cap=s->orelse_cap; }
@@ -109,20 +109,20 @@ int stores_name(Ck *c, Stmt **b, int n, const char *name){
     free(nb.v); return r;
 }
 /* try: ... except* T [as e]: ...: one except BaseException whose handler runs the clauses on the
-   parts of the group they match (__mpy_EGState of the ExceptionGroup prelude), then raises what is left */
+   parts of the group they match (__ppy_EGState of the ExceptionGroup prelude), then raises what is left */
 void desugar_trystar(Ck *c, Stmt *s){
     AotUnit *u=c->mod->unit; int line=s->line, k=++c->nhidden;
     char ex[48], st[48], m[48], x[48];
-    snprintf(ex,sizeof ex,"__mpy_eg%d_exc",k); snprintf(st,sizeof st,"__mpy_eg%d_state",k); snprintf(m,sizeof m,"__mpy_eg%d_match",k); snprintf(x,sizeof x,"__mpy_eg%d_raised",k);
+    snprintf(ex,sizeof ex,"__ppy_eg%d_exc",k); snprintf(st,sizeof st,"__ppy_eg%d_state",k); snprintf(m,sizeof m,"__ppy_eg%d_match",k); snprintf(x,sizeof x,"__ppy_eg%d_raised",k);
     hidden_reg(c,st); hidden_reg(c,m);
     Stmt *hs[32]; int nh=0; Stmt *els=NULL, *fin=NULL;
     for(int i=0;i<s->orelse_count;i++){ Stmt *b=s->orelse[i];
         if(b->block_tag==1){ if(nh==32) ck_err(c,b->line,"too many except* clauses"); if(!b->expr) ck_err(c,b->line,"expected one or more exception types"); hs[nh++]=b; }
         else if(b->block_tag==2) els=b; else if(b->block_tag==3) fin=b; }
     Txt t={0}; for(int i=1;i<line;i++) tx(&t,"\n");
-    tx(&t,"try:\n    pass\nexcept BaseException as %s:\n    %s = __mpy_EGState(%s)\n",ex,st,ex);
-    for(int i=0;i<nh;i++){ char nm[64]; if(hs[i]->name) snprintf(nm,sizeof nm,"%s",hs[i]->name); else snprintf(nm,sizeof nm,"__mpy_eg%d_group%d",k,i);
-        tx(&t,"    %s = %s.match(lambda __mpy_x: isinstance(__mpy_x, 0))\n    if %s is not None:\n        try:\n            raise %s\n        except BaseExceptionGroup as %s:\n"
+    tx(&t,"try:\n    pass\nexcept BaseException as %s:\n    %s = __ppy_EGState(%s)\n",ex,st,ex);
+    for(int i=0;i<nh;i++){ char nm[64]; if(hs[i]->name) snprintf(nm,sizeof nm,"%s",hs[i]->name); else snprintf(nm,sizeof nm,"__ppy_eg%d_group%d",k,i);
+        tx(&t,"    %s = %s.match(lambda __ppy_x: isinstance(__ppy_x, 0))\n    if %s is not None:\n        try:\n            raise %s\n        except BaseExceptionGroup as %s:\n"
               "            try:\n                pass\n            except BaseException as %s:\n                %s.handler_raised(%s)\n",m,st,m,m,nm,x,st,x); }
     tx(&t,"    %s.end()\n",st);
     Stmt *blk=py_front_stmts(u->path,t.s,line); free(t.s);
@@ -149,8 +149,8 @@ void eg_class_arg(Ck *c, Expr *e){
     if(!cls) return;
     Ty *o=ty_find(ck_expr(c,f->a)); ASym *g=symtab_find(&builtin_syms,"BaseExceptionGroup");
     if(o->k!=TY_OBJ || !g || g->kind!=AS_CLASS || !aot_subclass(o->cls,(AClass*)g->p)) return;
-    Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr("isinstance",e->line); xpush(call,name_expr("__mpy_x",e->line)); xpush(call,a);
-    Expr *lam=xnew(EXPR_LAMBDA,e->line); lam->eparams=MPY_NEW_ARR(char*,1); lam->eparams[0]="__mpy_x"; lam->neparam=1; lam->edefaults=MPY_NEW_ARR(Expr*,1);
+    Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr("isinstance",e->line); xpush(call,name_expr("__ppy_x",e->line)); xpush(call,a);
+    Expr *lam=xnew(EXPR_LAMBDA,e->line); lam->eparams=PPY_NEW_ARR(char*,1); lam->eparams[0]="__ppy_x"; lam->neparam=1; lam->edefaults=PPY_NEW_ARR(Expr*,1);
     lam->estar=lam->edstar=-1; lam->ekwonly=1; lam->a=call;
     e->items[0]=lam;
 }

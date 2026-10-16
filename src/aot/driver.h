@@ -1,4 +1,4 @@
-/* ========================= AOT driver: minipy --compile =========================
+/* ========================= AOT driver: plainpy --compile =========================
    1. import pass: parse the entry script and every module it imports. Imports
       are resolved here, at compile time, the same way the interpreter resolves
       them at run time (relative to the importing file, `<name>.py` or
@@ -12,8 +12,8 @@
       same works inside KolibriOS with its own fasm (driver.c).
 
    This header is internal to the driver's files. */
-#ifndef MPY_AOT_DRIVER_H
-#define MPY_AOT_DRIVER_H
+#ifndef PPY_AOT_DRIVER_H
+#define PPY_AOT_DRIVER_H
 
 #include "aot.h"
 #include "pystdlib.h"
@@ -39,7 +39,7 @@ extern const char CMATH_PRELUDE[];
 extern const char CMPKEY_PRELUDE[];
 int uses_complex(const char *s);
 
-/* ---- driver.c: minipy --compile */
+/* ---- driver.c: plainpy --compile */
 int load_program(Units *us, const char *src_path, char *src);
 
 /* ---- namespaces.c: namespace classes */
@@ -48,4 +48,4 @@ char *argparse_with_namespace(Units *us, const char *src, SBuf *err);
 char *optparse_with_values(Units *us, const char *src, SBuf *err);
 char *types_with_namespace(Units *us, const char *src);
 
-#endif /* MPY_AOT_DRIVER_H */
+#endif /* PPY_AOT_DRIVER_H */

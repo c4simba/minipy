@@ -1,6 +1,14 @@
-build
-minipy
-minipyc
-minipy.lib
+/build
+/plainpy
+/plainpyc
+/plainpy.lib
 config.local.mk
 .DS_Store
+__pycache__/
+# dpkg-buildpackage (debian/) leaves these in the tree
+/debian/.debhelper/
+/debian/plainpy/
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper.log
+/debian/debhelper-build-stamp

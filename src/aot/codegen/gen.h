@@ -19,8 +19,8 @@
    This header is internal to src/aot/codegen: the generator's state (G: the
    program, F: the function being generated) and the functions its files
    share, grouped by the file defining them. */
-#ifndef MPY_AOT_CODEGEN_GEN_H
-#define MPY_AOT_CODEGEN_GEN_H
+#ifndef PPY_AOT_CODEGEN_GEN_H
+#define PPY_AOT_CODEGEN_GEN_H
 
 #include "aot/model.h"
 
@@ -201,7 +201,7 @@ void incref(F *f);
 /* ---- conv.c: conversions */
 Ty *gpart(Ty *g, int i);
 extern const char *cg_path;
-MPY_NORETURN void cg_fail(int line, const char *msg);
+PPY_NORETURN void cg_fail(int line, const char *msg);
 AVar *find_var(F *f, const char *name, int line);
 void gen_owned(F *f, Expr *e);
 void gen_borrow(F *f, Expr *e);
@@ -358,4 +358,4 @@ void gc_analyze(void);
 const char *gc_class_map(AClass *c);
 void gc_closure_map(AFunc *fn);
 
-#endif /* MPY_AOT_CODEGEN_GEN_H */
+#endif /* PPY_AOT_CODEGEN_GEN_H */

@@ -32,14 +32,14 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
     if(!strcmp(name,"map")||!strcmp(name,"filter")) return ck_mapfilter(c,e,name);
     if(!strcmp(name,"iter")) return ck_iter(c,e);
     if(!strcmp(name,"sum") && e->count==3 && e->items[0]->kind==EXPR_LAMBDA && e->items[0]->neparam==2
-       && !strcmp(e->items[0]->eparams[0],"__mpy_s1")) return ck_reduce(c,e);   /* (sum of objects, made a reduce() in an earlier pass) */
+       && !strcmp(e->items[0]->eparams[0],"__ppy_s1")) return ck_reduce(c,e);   /* (sum of objects, made a reduce() in an earlier pass) */
     if(!strcmp(name,"sum")||!strcmp(name,"sorted")||!strcmp(name,"min")||!strcmp(name,"max")||!strcmp(name,"set")||!strcmp(name,"list")||!strcmp(name,"any")||!strcmp(name,"all"))
         genexp_as_list(e,0);
     if((!strcmp(name,"sum")||!strcmp(name,"sorted")||!strcmp(name,"min")||!strcmp(name,"max")||!strcmp(name,"set")||!strcmp(name,"any")||!strcmp(name,"all")
         ||!strcmp(name,"enumerate")||!strcmp(name,"frozenset")) && e->count && !e->items[0]->akind && e->items[0]->kind!=EXPR_TUPLE){   /* sorted(t), t a tuple: */
         Ty *t0=ty_find(ck_expr(c,e->items[0]));                                                                            /* sorted(list(t)) */
         if(t0->k==TY_TUPLE && !t0->names){
-            Expr *inner=MPY_NEW0(Expr); *inner=*e->items[0]; inner->akind=0; inner->kw=NULL;
+            Expr *inner=PPY_NEW0(Expr); *inner=*e->items[0]; inner->akind=0; inner->kw=NULL;
             Expr *call=xnew(EXPR_CALL,e->line); call->a=name_expr("\001list",e->line); xpush(call,inner);
             e->items[0]=call; } }
     if(!strcmp(name,"sum")||!strcmp(name,"sorted")||!strcmp(name,"min")||!strcmp(name,"max")||!strcmp(name,"set")||!strcmp(name,"list")||!strcmp(name,"any")
@@ -50,7 +50,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
         if(t->k==TY_VAR) return pending(c,line,"the argument of next()");
         if(t->k==TY_OBJ && aot_find_method(t->cls,"__next__")){      /* an iterator object: it.__next__() */
             Expr *it=e->items[0];
-            if(e->count==2){ Expr *d=e->items[1]; e->count=0; e->a=name_expr("__mpy_next",line); xpush(e,it); xpush(e,d); return ck_call_inner(c,e); }
+            if(e->count==2){ Expr *d=e->items[1]; e->count=0; e->a=name_expr("__ppy_next",line); xpush(e,it); xpush(e,d); return ck_call_inner(c,e); }
             Expr *m=xnew(EXPR_ATTRIBUTE,line); m->a=it; m->name="__next__"; e->a=m; e->count=0; return ck_call_inner(c,e); }
         if(t->k!=TY_GEN) ck_err(c,line,"next() needs a generator (or iter(...)), not %s",ty_name(t));
         if(e->count==2){ Ty *d=ck_expr_want(c,e->items[1],t->elem); no_void(c,d,line); expect(c,t->elem,d,line,"the default of next()"); }
@@ -105,7 +105,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
         return TY_INT_T; }
     if(!strcmp(name,"int") && e->count==1){ static const char *const ms[]={"__int__","__index__","__trunc__",NULL}; Ty *r=dunder_of_arg(c,e,ms); if(r) return r; }
     if(!strcmp(name,"float") && e->count==1){ static const char *const ms[]={"__float__","__index__",NULL}; Ty *r=dunder_of_arg(c,e,ms); if(r) return r; }
-    if(!strcmp(name,"round")){ static const char *const m1[]={"__round__",NULL}, *const m2[]={"__mpy_round_n","__round__",NULL};   /* round(obj, n): one result type per method */
+    if(!strcmp(name,"round")){ static const char *const m1[]={"__round__",NULL}, *const m2[]={"__ppy_round_n","__round__",NULL};   /* round(obj, n): one result type per method */
         Ty *r=dunder_of_arg(c,e,e->count==2?m2:m1); if(r) return r; }
     if(!strcmp(name,"int")){ static const char *const n_int[]={"x","base"}; kw_to_pos(c,e,name,n_int,2); ck_positional(c,e,0,2,name);
         if(e->count){ Ty *t=ty_find(arg(c,e,0)); if(t->k==TY_VAR) pending(c,line,"the argument of int()");
@@ -148,7 +148,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
             Expr *at=xnew(EXPR_ATTRIBUTE,line); at->a=e->items[1]; at->name="__rdivmod__"; e->a=at; e->count=1; return ck_call_inner(c,e); }
         if(!numeric(a)||!numeric(b)) ck_err(c,line,"divmod() needs numbers");
         Ty *r=(a->k==TY_FLOAT||b->k==TY_FLOAT)?TY_FLOAT_T:TY_INT_T; Ty *qr[2]={r,r}; return ty_tuple(qr,2); }
-    if(!strcmp(name,"open") && lookup(c,"__mpy_open_text")) return ck_open(c,e);
+    if(!strcmp(name,"open") && lookup(c,"__ppy_open_text")) return ck_open(c,e);
     if(!strcmp(name,"open")){
         int n=0; for(int i=0;i<e->count;i++){ Expr *a=e->items[i]; if(a->akind==3 && (!strcmp(a->kw,"encoding")||!strcmp(a->kw,"newline")||!strcmp(a->kw,"errors"))) continue; e->items[n++]=a; }
         e->count=n;                                      /* encoding= and friends: the bytes are the text */
@@ -177,7 +177,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
           if(ot->k==TY_OBJ && aot_find_method(ot->cls,"__format__")){
               Expr *at=xnew(EXPR_ATTRIBUTE,line); at->a=e->items[0]; at->name="__format__"; e->a=at;
               if(e->count==2){ e->items[0]=e->items[1]; e->count=1; }
-              else { Expr *lit=xnew(EXPR_LITERAL,line); lit->tok=MPY_NEW0(Tok); lit->tok->kind=T_STRING; lit->tok->text=xstrdup2(""); lit->tok->len=0; lit->tok->line=line; e->items[0]=lit; }
+              else { Expr *lit=xnew(EXPR_LITERAL,line); lit->tok=PPY_NEW0(Tok); lit->tok->kind=T_STRING; lit->tok->text=xstrdup2(""); lit->tok->len=0; lit->tok->line=line; e->items[0]=lit; }
               return ck_call_inner(c,e); } }
         if(e->count==2){ Expr *sp=e->items[1]; if(sp->kind!=EXPR_LITERAL||sp->tok->kind!=T_STRING) ck_err(c,line,"format() needs a literal spec in compiled code"); }
         return TY_STR_T; }
@@ -186,7 +186,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
     if(!strcmp(name,"sum") && e->count>=1 && e->count<=2){ Ty *t=ty_find(arg(c,e,0));      /* sum(objects[, start]): start + x0 + x1 ... (their __add__) */
         if(t->k==TY_VAR) return pending(c,line,"the argument of sum()");
         if((t->k==TY_LIST||t->k==TY_SET) && ty_find(t->elem)->k==TY_OBJ){
-            Expr *lam=py_front_expr(c->mod->unit->path,"lambda __mpy_s1, __mpy_s2: __mpy_s1 + __mpy_s2",line);
+            Expr *lam=py_front_expr(c->mod->unit->path,"lambda __ppy_s1, __ppy_s2: __ppy_s1 + __ppy_s2",line);
             Expr *start= e->count==2 ? e->items[1] : py_front_expr(c->mod->unit->path,"0",line);
             Expr *xs=e->items[0]; start->kw=NULL; start->akind=0;
             e->count=0; xpush(e,lam); xpush(e,xs); xpush(e,start);
@@ -266,7 +266,7 @@ Ty *ck_builtin(Ck *c, Expr *e, const char *name){
         if(t->k==TY_VAR) return pending(c,line,"the argument of dict()");
         if(t->k==TY_DICT){ xi->name="dict_copy"; return t; }
         Expr *src=e->items[0];                          /* dict(pairs) -> {k: v for k, v in pairs} */
-        char **vars=MPY_NEW_ARR(char*,2); vars[0]="__d0"; vars[1]="__d1";
+        char **vars=PPY_NEW_ARR(char*,2); vars[0]="__d0"; vars[1]="__d1";
         make_comprehension(e,'D',name_expr("__d0",line),name_expr("__d1",line),vars,2,src);
         return ck_comprehension(c,e); }
     if(!strcmp(name,"tuple")){                          /* tuple(xs): a tuple[T, ...] */
@@ -296,7 +296,7 @@ void kw_to_pos(Ck *c, Expr *e, const char *m, const char *const *names, int n){
     int has=0;
     for(int i=0;i<e->count;i++) if(e->items[i]->akind==3) has=1;
     if(!has) return;
-    Expr **p=MPY_NEW_ARR(Expr*,n); int np=0;
+    Expr **p=PPY_NEW_ARR(Expr*,n); int np=0;
     memset(p,0,sizeof(Expr*)*(size_t)n);
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
         if(a->akind==0){ if(np>=n) ck_err(c,e->line,"%s() takes at most %d arguments",m,n); p[np++]=a; continue; }
@@ -308,7 +308,7 @@ void kw_to_pos(Ck *c, Expr *e, const char *m, const char *const *names, int n){
     }
     int last=-1;
     for(int j=0;j<n;j++) if(p[j]) last=j;
-    for(int j=0;j<=last;j++) if(!p[j]){ Expr *x=MPY_NEW0(Expr); x->kind=EXPR_NONE; x->line=e->line; p[j]=x; }
+    for(int j=0;j<=last;j++) if(!p[j]){ Expr *x=PPY_NEW0(Expr); x->kind=EXPR_NONE; x->line=e->line; p[j]=x; }
     e->items=p; e->count=last+1;
 }
 /* start / end of find, count, startswith ...: ints (None: the default) */

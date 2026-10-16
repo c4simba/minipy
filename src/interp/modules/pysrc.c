@@ -1,5 +1,5 @@
 /* ========================= Interpreter, modules: modules written in Python =========================
-   Native awaitables of asyncio; the source of asyncio, minipy,
+   Native awaitables of asyncio; the source of asyncio, plainpy,
    dataclasses, _excgroup, string.templatelib, cmath and __future__,
    compiled when first imported. */
 
@@ -164,15 +164,15 @@ static const char SRC_ASYNCIO[]=
 "        return self._items.pop(0)\n"
 "    def get_nowait(self):\n        return self._items.pop(0)\n";
 
-static const char SRC_MINIPY[]=
-"import _mpy_json as _json\n"
+static const char SRC_PLAINPY[]=
+"import _ppy_json as _json\n"
 "import asyncio as _asyncio\n"
-"Endpoint = 'minipy.Endpoint'\n"
+"Endpoint = 'plainpy.Endpoint'\n"
 "_YES = ('1', 'true', 't', 'yes', 'y', 'on')\n"
 "_NO = ('0', 'false', 'f', 'no', 'n', 'off')\n"
 "def endpoint(fn):\n"
-"    if getattr(fn, '__minipy_endpoint__', False):\n        return fn\n"
-"    ann = fn.__minipy_types__\n"
+"    if getattr(fn, '__plainpy_endpoint__', False):\n       return fn\n"
+"    ann = fn.__plainpy_types__\n"
 "    code = fn.__code__\n"
 "    names = code.co_varnames[:code.co_argcount]\n"
 "    defaults = fn.__defaults__ or ()\n"
@@ -201,7 +201,7 @@ static const char SRC_MINIPY[]=
 "        r = fn(*args)\n"
 "        if type(r).__name__ == 'coroutine':\n            r = _asyncio._run_nested(r)\n"
 "        return _json.dumps(r, separators=(',', ':'), ensure_ascii=False)\n"
-"    adapter.__minipy_endpoint__ = True\n"
+"    adapter.__plainpy_endpoint__ = True\n"
 "    adapter.__name__ = fn.__name__\n"
 "    return adapter\n";
 
@@ -752,7 +752,7 @@ static const char SRC_FUTURE[]=
 
 const char *py_source(const char *name){
     if(!strcmp(name,"asyncio")) return SRC_ASYNCIO;
-    if(!strcmp(name,"minipy")) return SRC_MINIPY;
+    if(!strcmp(name,"plainpy")) return SRC_PLAINPY;
     if(!strcmp(name,"dataclasses")) return SRC_DATACLASSES;
     if(!strcmp(name,"_excgroup")) return SRC_EXCGROUP;
     if(!strcmp(name,"cmath")) return SRC_CMATH;

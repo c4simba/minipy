@@ -73,7 +73,7 @@ if not sys._compiled:
 if sys._compiled:
     import threading as _threading
     import time as _time
-    from _mpy_typing import Callable, Generic, TypeVar
+    from _ppy_typing import Callable, Generic, TypeVar
 
     _T = TypeVar("_T")
     _F = TypeVar("_F")

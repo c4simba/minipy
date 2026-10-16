@@ -1,0 +1,6 @@
+plainpy (0.1.0-1) unstable; urgency=medium
+
+  * Initial release. (tools/launchpad.sh writes the entry of each upload:
+    the version of the release and the Ubuntu series it is built for.)
+
+ -- Dmitry P <simba@twimir.com>  Fri, 16 Oct 2026 12:00:00 +0300

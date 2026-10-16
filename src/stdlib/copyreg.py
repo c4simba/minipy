@@ -222,7 +222,7 @@ def clear_extension_cache():
 # Extension codes are assigned by the Python Software Foundation.
 
 
-# object.__reduce_ex__ / __reduce__ / __getstate__ (minipy's interpreter calls these; CPython has them in C)
+# object.__reduce_ex__ / __reduce__ / __getstate__ (plainpy's interpreter calls these; CPython has them in C)
 
 def _overrides(cls, name):
     """Whether a class before object in cls's MRO defines name."""
@@ -239,7 +239,7 @@ def _object_getstate(obj):
     except AttributeError:
         d = None
     names = _slotnames(type(obj))
-    if d and names:                     # (minipy keeps slots in the dict as well)
+    if d and names:                     # (plainpy keeps slots in the dict as well)
         d = {k: v for k, v in d.items() if k not in names}
     state = dict(d) if d else None
     if names:

@@ -113,7 +113,7 @@ static void exec_into(Value mod, const char *src, const char *file){
 /* ---------------------------------------------------------------- import */
 static char *dir_of_globals(DictObj *g){
     Value f;
-    if(g && mp_dict_get_s(g,"__file__",&f) && IS_STR(f)) return mpy_fs_dirname(mp_cstr(f));
+    if(g && mp_dict_get_s(g,"__file__",&f) && IS_STR(f)) return ppy_fs_dirname(mp_cstr(f));
     return xstrdup2(mp_main_dir);
 }
 static int is_package_file(const char *path){
@@ -124,12 +124,12 @@ static int is_package_file(const char *path){
 static Value load_module(const char *full, DictObj *importer, int leaf){
     Value m;
     if(mp_dict_get_s(mp_modules,full,&m)) return m;
-    { const char *al=mpy_stdlib_alias(full);                          /* os.path: posixpath */
+    { const char *al=ppy_stdlib_alias(full);                          /* os.path: posixpath */
       if(al){ m=load_module(al,importer,1); mp_dict_set_s(mp_modules,full,m); return m; } }
     const char *ps=py_source(full);
     if(ps){
         m=register_module(full);
-        char file[128]; snprintf(file,sizeof file,"<minipy:%s>",full);
+        char file[128]; snprintf(file,sizeof file,"<plainpy:%s>",full);
         Catch c;
         if(!CATCH_BEGIN(c)){ exec_into(m,ps,file); CATCH_END(c); }
         else { Value e=mp_catch_exc(&c); mp_dict_del(mp_modules,mp_str(full)); mp_raise(e); }
@@ -137,12 +137,12 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
     }
     m=native_module(full);
     if(m.k!=V_UNDEF) return m;
-    { int pkg=0; const char *ss=mpy_stdlib_source(full,&pkg);         /* the standard library written in Python */
+    { int pkg=0; const char *ss=ppy_stdlib_source(full,&pkg);         /* the standard library written in Python */
       if(ss){
         m=register_module(full);
-        char file[160]; snprintf(file,sizeof file,"<minipy:%s>",full);
+        char file[160]; snprintf(file,sizeof file,"<plainpy:%s>",full);
         mp_dict_set_s(mdict(m),"__package__",mp_str(pkg?full:""));
-        if(pkg){ char pk[160]; const char *d=strrchr(full,'.'); (void)d; snprintf(pk,sizeof pk,"<minipy:%s>",full); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(pk)); mp_dict_set_s(mdict(m),"__path__",pl); }
+        if(pkg){ char pk[160]; const char *d=strrchr(full,'.'); (void)d; snprintf(pk,sizeof pk,"<plainpy:%s>",full); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(pk)); mp_dict_set_s(mdict(m),"__path__",pl); }
         else { const char *d=strrchr(full,'.'); char pk[160]; snprintf(pk,sizeof pk,"%.*s",d?(int)(d-full):0,full); mp_dict_set_s(mdict(m),"__package__",mp_str(pk)); }
         Catch c;
         if(!CATCH_BEGIN(c)){ exec_into(m,ss,file); CATCH_END(c); }
@@ -150,17 +150,17 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
         if(!strcmp(full,"io")){ Value o; if(mp_dict_get_s(mp_builtins,"open",&o)) mp_dict_set_s(mdict(m),"open",o); }   /* io.open is open */
         return m;
       } }
-    /* a file: inside the parent package's folder, else the importer's, the main script's, MINIPYPATH, lib */
+    /* a file: inside the parent package's folder, else the importer's, the main script's, PLAINPYPATH, lib */
     char *path=NULL;
     const char *dot=strrchr(full,'.');
     if(dot){
         char parent[256]; snprintf(parent,sizeof parent,"%.*s",(int)(dot-full),full);
         Value pm, pathv;
         if(mp_dict_get_s(mp_modules,parent,&pm) && IS(pm,T_module) && mp_dict_get_s(mdict(pm),"__path__",&pathv) && IS_LIST(pathv) && AS_LIST(pathv)->len)
-            path=mpy_fs_find_module(mp_cstr(AS_LIST(pathv)->items[0]),dot+1);
+            path=ppy_fs_find_module(mp_cstr(AS_LIST(pathv)->items[0]),dot+1);
     }
-    if(!path){ char *dir=dir_of_globals(importer); path=mpy_fs_find_module(dir,full); free(dir); }
-    if(!path) path=mpy_fs_find_module(mp_main_dir,full);
+    if(!path){ char *dir=dir_of_globals(importer); path=ppy_fs_find_module(dir,full); free(dir); }
+    if(!path) path=ppy_fs_find_module(mp_main_dir,full);
     if(!path){
         if(!leaf){ m=register_module(full); return m; }        /* a namespace package */
         Value nm=mp_str(full);
@@ -169,12 +169,12 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
         mp_raise(e);
     }
     char *err=NULL;
-    char *src=mpy_fs_try_read_file(path,&err);
+    char *src=ppy_fs_try_read_file(path,&err);
     if(!src){ free(err); Value e=mp_exc(E_ImportError,"cannot read %s",path); free(path); mp_raise(e); }
     m=register_module(full);
     mp_dict_set_s(mdict(m),"__file__",mp_str(path));
     if(is_package_file(path)){
-        char *d=mpy_fs_dirname(path); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(d)); free(d);
+        char *d=ppy_fs_dirname(path); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(d)); free(d);
         mp_dict_set_s(mdict(m),"__path__",pl);
         mp_dict_set_s(mdict(m),"__package__",mp_str(full));
     } else {
@@ -249,8 +249,8 @@ Value mp_builtin_import(int argc, Value *argv, TupleObj *kw){
 }
 Value mp_run_main(const char *path){
     char *err=NULL;
-    char *src=mpy_fs_try_read_file(path,&err);
-    if(!src){ fprintf(stderr,"minipy: can't open file '%s': %s\n",path,err?err:"no such file"); free(err); exit(2); }
+    char *src=ppy_fs_try_read_file(path,&err);
+    if(!src){ fprintf(stderr,"plainpy: can't open file '%s': %s\n",path,err?err:"no such file"); free(err); exit(2); }
     Value m=register_module("__main__");
     mp_dict_set_s(mdict(m),"__file__",mp_str(path));
     mp_dict_set_s(mdict(m),"__package__",v_none());

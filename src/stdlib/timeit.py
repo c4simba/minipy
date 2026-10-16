@@ -384,7 +384,7 @@ def inner(_it, _timer{init}):
 if sys._compiled:
     # Compiled programs time callables (statements in strings need the interpreter).
     import time as _time
-    from _mpy_typing import Callable, TypeVar
+    from _ppy_typing import Callable, TypeVar
 
     _F = TypeVar("_F")
     _G = TypeVar("_G")

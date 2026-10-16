@@ -8,7 +8,7 @@ The files are those named on the command line (sys.argv[1:]), or standard input 
 input(), filename(), lineno(), filelineno(), fileno(), isfirstline(), isstdin(), nextfile(), close();
 the FileInput class. No in-place editing (inplace=True) here."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _F = TypeVar("_F")
 _H = TypeVar("_H")

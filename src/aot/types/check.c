@@ -129,7 +129,7 @@ static void layout_class(AClass *cls){
         if(!fd->over && fd->cvar && fd->inst_set && !fd->overridden){ fd->setoff=off; off+=4; } }
     cls->size=off;
     int n=cls->base?cls->base->nvt:0;
-    cls->vt=MPY_NEW_ARR(AFunc*,n+cls->nmethods+1);
+    cls->vt=PPY_NEW_ARR(AFunc*,n+cls->nmethods+1);
     for(int i=0;i<n;i++) cls->vt[i]=cls->base->vt[i];
     for(int i=0;i<cls->nmethods;i++){ AFunc *m=cls->methods[i];
         if(m->is_static) continue;
@@ -181,49 +181,49 @@ static void final_class(Ck *c, AClass *cls){
 AProg *aot_check(AotUnit **units, int nunits, AotTarget target){
     if(!TY_INT_T){ TY_INT_T=ty_new(TY_INT,NULL,NULL); TY_BOOL_T=ty_new(TY_BOOL,NULL,NULL); TY_FLOAT_T=ty_new(TY_FLOAT,NULL,NULL);
         TY_STR_T=ty_new(TY_STR,NULL,NULL); TY_VOID_T=ty_new(TY_VOID,NULL,NULL); TY_BUF_T=ty_new(TY_BUF,NULL,NULL); TY_BYTES_T=ty_new(TY_BYTES,NULL,NULL); TY_TYPE_T=ty_new(TY_TYPE,NULL,NULL); }
-    AProg *p=MPY_NEW0(AProg); p->target=target;
+    AProg *p=PPY_NEW0(AProg); p->target=target;
     Ck ck; memset(&ck,0,sizeof ck); ck.p=p; Ck *c=&ck;
     if(setjmp(ck.fail)) return NULL;
-    p->nmods=nunits; p->mods=MPY_NEW_ARR(AModule*,nunits);
-    for(int i=0;i<nunits;i++){ AModule *m=MPY_NEW0(AModule); m->unit=units[i]; m->name=units[i]->name; m->index=i; p->mods[i]=m; }
+    p->nmods=nunits; p->mods=PPY_NEW_ARR(AModule*,nunits);
+    for(int i=0;i<nunits;i++){ AModule *m=PPY_NEW0(AModule); m->unit=units[i]; m->name=units[i]->name; m->index=i; p->mods[i]=m; }
     make_builtin_exceptions(p,p->mods[0]);
     for(int i=0;i<nunits;i++) if(units[i]->ast) module_step(c,p->mods[i],collect_module);
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"__mpy_eg")){    /* the ExceptionGroup prelude's classes: built-in names */
-        static const char *const eg[]={"BaseExceptionGroup","ExceptionGroup","__mpy_EGState",NULL};
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"__ppy_eg")){    /* the ExceptionGroup prelude's classes: built-in names */
+        static const char *const eg[]={"BaseExceptionGroup","ExceptionGroup","__ppy_EGState",NULL};
         for(int k=0;eg[k];k++){ ASym *s=module_sym(p->mods[i],eg[k]); if(s) symtab_add(&builtin_syms,eg[k],s->kind,s->p); } }
     for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"codecs")){         /* encode() / decode() */
-        ASym *s=module_sym(p->mods[i],"decode"); if(s) symtab_add(&builtin_syms,"__mpy_decode",s->kind,s->p);
-        s=module_sym(p->mods[i],"encode"); if(s) symtab_add(&builtin_syms,"__mpy_encode",s->kind,s->p); }
+        ASym *s=module_sym(p->mods[i],"decode"); if(s) symtab_add(&builtin_syms,"__ppy_decode",s->kind,s->p);
+        s=module_sym(p->mods[i],"encode"); if(s) symtab_add(&builtin_syms,"__ppy_encode",s->kind,s->p); }
     for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"io")){              /* open(): io's files */
-        ASym *s=module_sym(p->mods[i],"_open_text"); if(s) symtab_add(&builtin_syms,"__mpy_open_text",s->kind,s->p);
-        s=module_sym(p->mods[i],"_open_binary"); if(s) symtab_add(&builtin_syms,"__mpy_open_binary",s->kind,s->p); }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_mpy_iter")){
-        static const char *const fs[]={"__mpy_iter","__mpy_next",NULL};
+        ASym *s=module_sym(p->mods[i],"_open_text"); if(s) symtab_add(&builtin_syms,"__ppy_open_text",s->kind,s->p);
+        s=module_sym(p->mods[i],"_open_binary"); if(s) symtab_add(&builtin_syms,"__ppy_open_binary",s->kind,s->p); }
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_ppy_iter")){
+        static const char *const fs[]={"__ppy_iter","__ppy_next",NULL};
         for(int k=0;fs[k];k++){ ASym *s=module_sym(p->mods[i],fs[k]); if(s) symtab_add(&builtin_syms,fs[k],s->kind,s->p); } }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_sysargs")){ ASym *s=module_sym(p->mods[i],"__mpy_argv"); if(s) symtab_add(&builtin_syms,"__mpy_argv",s->kind,s->p); }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_mpy_exit")){ static const char *const n[]={"__mpy_sysexit_int","__mpy_sysexit_str","__mpy_sysexit_none","__mpy_uncaught"};
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_sysargs")){ ASym *s=module_sym(p->mods[i],"__ppy_argv"); if(s) symtab_add(&builtin_syms,"__ppy_argv",s->kind,s->p); }
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_ppy_exit")){ static const char *const n[]={"__ppy_sysexit_int","__ppy_sysexit_str","__ppy_sysexit_none","__ppy_uncaught"};
         for(int k=0;k<4;k++){ ASym *s=module_sym(p->mods[i],n[k]); if(s) symtab_add(&builtin_syms,n[k],s->kind,s->p); }
-        ASym *u=module_sym(p->mods[i],"__mpy_uncaught"); if(u && u->kind==AS_FUNC){ ((AFunc*)u->p)->ncalls++; ((AFunc*)u->p)->direct=1; p->uncaught_fn=(AFunc*)u->p; } }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_mpy_exit")){ static const char *const n[]={"__mpy_sysexit_int","__mpy_sysexit_str","__mpy_sysexit_none","__mpy_uncaught"};
+        ASym *u=module_sym(p->mods[i],"__ppy_uncaught"); if(u && u->kind==AS_FUNC){ ((AFunc*)u->p)->ncalls++; ((AFunc*)u->p)->direct=1; p->uncaught_fn=(AFunc*)u->p; } }
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_ppy_exit")){ static const char *const n[]={"__ppy_sysexit_int","__ppy_sysexit_str","__ppy_sysexit_none","__ppy_uncaught"};
         for(int k=0;k<4;k++){ ASym *s=module_sym(p->mods[i],n[k]); if(s) symtab_add(&builtin_syms,n[k],s->kind,s->p); }
-        ASym *u=module_sym(p->mods[i],"__mpy_uncaught"); if(u && u->kind==AS_FUNC){ ((AFunc*)u->p)->ncalls++; ((AFunc*)u->p)->direct=1; p->uncaught_fn=(AFunc*)u->p; } }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_sysio")){ static const char *const n[]={"__mpy_stdout","__mpy_stderr","__mpy_stdin"};
+        ASym *u=module_sym(p->mods[i],"__ppy_uncaught"); if(u && u->kind==AS_FUNC){ ((AFunc*)u->p)->ncalls++; ((AFunc*)u->p)->direct=1; p->uncaught_fn=(AFunc*)u->p; } }
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_sysio")){ static const char *const n[]={"__ppy_stdout","__ppy_stderr","__ppy_stdin"};
         for(int k=0;k<3;k++){ ASym *s=module_sym(p->mods[i],n[k]); if(s) symtab_add(&builtin_syms,n[k],s->kind,s->p); } }
     for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"_oserror")){        /* OSError(errno, strerror): built-in names */
-        static const char *const fs[]={"__mpy_oserror","__mpy_oserror_new","__mpy_decode_error","__mpy_encode_error",NULL};
+        static const char *const fs[]={"__ppy_oserror","__ppy_oserror_new","__ppy_decode_error","__ppy_encode_error",NULL};
         for(int k=0;fs[k];k++){ ASym *s=module_sym(p->mods[i],fs[k]); if(s) symtab_add(&builtin_syms,fs[k],s->kind,s->p); } }
     for(int i=0;i<nunits;i++) if(units[i]->ast && (!strcmp(units[i]->name,"struct") || !strcmp(units[i]->name,"tempfile") || !strcmp(units[i]->name,"re") || !strcmp(units[i]->name,"contextlib") || !strcmp(units[i]->name,"_mathx"))){   /* their helpers: */
         SymTab *st=&p->mods[i]->syms; int k0=st->n;                                                    /* what pack(...) etc. become */
         for(int k=0;k<k0;k++) if(st->v[k].name[0]=='_' && st->v[k].name[1]!='_' && (st->v[k].kind==AS_FUNC||st->v[k].kind==AS_CLASS)){
-            char nm[96]; snprintf(nm,sizeof nm,"__mpy_%s_%s",units[i]->name,st->v[k].name); symtab_add(&builtin_syms,nm,st->v[k].kind,st->v[k].p); } }
-    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"__mpy_cmpkey")){ ASym *s=module_sym(p->mods[i],"__mpy_CmpKey"); if(s) symtab_add(&builtin_syms,"__mpy_CmpKey",s->kind,s->p); }
+            char nm[96]; snprintf(nm,sizeof nm,"__ppy_%s_%s",units[i]->name,st->v[k].name); symtab_add(&builtin_syms,nm,st->v[k].kind,st->v[k].p); } }
+    for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"__ppy_cmpkey")){ ASym *s=module_sym(p->mods[i],"__ppy_CmpKey"); if(s) symtab_add(&builtin_syms,"__ppy_CmpKey",s->kind,s->p); }
     for(int i=0;i<nunits;i++) if(units[i]->ast && !strcmp(units[i]->name,"cmath") && units[i]->path && !strcmp(units[i]->path,"<cmath>")){   /* complex: a built-in name */
         ASym *s=module_sym(p->mods[i],"complex"); if(s){ symtab_add(&builtin_syms,"complex",s->kind,s->p); complex_class=(AClass*)s->p; }
-        s=module_sym(p->mods[i],"__mpy_complex_parse"); if(s) symtab_add(&builtin_syms,"__mpy_complex_parse",s->kind,s->p); }
+        s=module_sym(p->mods[i],"__ppy_complex_parse"); if(s) symtab_add(&builtin_syms,"__ppy_complex_parse",s->kind,s->p); }
     for(int i=nunits-1;i>=0;i--) if(units[i]->ast) module_step(c,p->mods[i],link_imports);
     for(int i=0;i<nunits;i++) if(units[i]->ast) module_step(c,p->mods[i],collect_functions);
     if(aot_check_mode) for(int i=0;i<nunits;i++) if(!p->mods[i]->body){     /* (a module that failed: an empty body) */
-        AFunc *body=MPY_NEW0(AFunc); body->name=xstrdup2(p->mods[i]->name); body->mod=p->mods[i]; body->ret=TY_VOID_T; body->line=1;
+        AFunc *body=PPY_NEW0(AFunc); body->name=xstrdup2(p->mods[i]->name); body->mod=p->mods[i]; body->ret=TY_VOID_T; body->line=1;
         body->unused=1; add_func(p,body); p->mods[i]->body=body; }
     for(int i=0;i<p->nclasses;i++){ AClass *m=p->classes[i]; int vb=0, lay=0;      /* a class only used as a mixin: its methods live on as copies */
         for(int j=0;j<p->nclasses;j++){ AClass *k=p->classes[j]; if(k->base==m) lay=1; for(int v=0;v<k->nvbases;v++) if(k->vbases[v]==m) vb=1; }

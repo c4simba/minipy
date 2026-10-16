@@ -4,14 +4,14 @@
 
 #include "check.h"
 
-MPY_NORETURN void ck_err(Ck *c, int line, const char *fmt, ...){
+PPY_NORETURN void ck_err(Ck *c, int line, const char *fmt, ...){
     va_list ap; va_start(ap,fmt);
     AotUnit *u=c->mod?c->mod->unit:NULL;
     fprintf(stderr,"%s:%d: error: ",u&&u->path?u->path:"<source>",line);
     vfprintf(stderr,fmt,ap); fputc('\n',stderr);
     va_end(ap);
     if(aot_check_mode) aot_check_errors++;
-    if(getenv("MPY_CKDEBUG") && c->fn) fprintf(stderr,"  (in %s%s%s, class %p%s, ncalls %d, direct %d, origin %p, ninsts %d, strict %d)\n",c->fn->cls?c->fn->cls->name:"",c->fn->cls?".":"",c->fn->name,(void*)c->fn->cls,c->fn->cls&&c->fn->cls->bare?" bare":"",c->fn->ncalls,c->fn->direct,(void*)c->fn->origin,c->fn->ninsts,c->strict);
+    if(getenv("PPY_CKDEBUG") && c->fn) fprintf(stderr,"  (in %s%s%s, class %p%s, ncalls %d, direct %d, origin %p, ninsts %d, strict %d)\n",c->fn->cls?c->fn->cls->name:"",c->fn->cls?".":"",c->fn->name,(void*)c->fn->cls,c->fn->cls&&c->fn->cls->bare?" bare":"",c->fn->ncalls,c->fn->direct,(void*)c->fn->origin,c->fn->ninsts,c->strict);
     longjmp(c->fail,1);
 }
 

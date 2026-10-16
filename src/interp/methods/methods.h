@@ -5,8 +5,8 @@
 
    This header is internal to src/interp/methods: what its files share,
    grouped by the file defining it. */
-#ifndef MPY_INTERP_METHODS_H
-#define MPY_INTERP_METHODS_H
+#ifndef PPY_INTERP_METHODS_H
+#define PPY_INTERP_METHODS_H
 
 #include "interp/interp.h"
 #include <math.h>
@@ -64,4 +64,4 @@ void mp_number_methods_init(void);
 /* ---- object.c: objects */
 void mp_object_methods_init(void);
 
-#endif /* MPY_INTERP_METHODS_H */
+#endif /* PPY_INTERP_METHODS_H */

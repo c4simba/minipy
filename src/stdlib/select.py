@@ -5,7 +5,7 @@ has received) every 10 ms until one is ready or the time is up; it counts as
 writable at once."""
 import sys
 import _os
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 T = TypeVar("T")
 

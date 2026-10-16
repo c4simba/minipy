@@ -33,7 +33,7 @@ int is_builtin_call(Ck *c, Expr *e, const char *name){
 }
 /* Types produced by iterating `it` into n targets. range/enumerate/zip/d.items() are understood directly. */
 /* An iterable object whose __iter__() gives an iterator (an object with __next__): it
-   becomes __mpy_iter(obj.__iter__()), a generator of the __next__() values (_mpy_iter.py),
+   becomes __ppy_iter(obj.__iter__()), a generator of the __next__() values (_ppy_iter.py),
    which every loop and builtin takes */
 static int iterator_object(Ty *t){
     t=ty_find(t); if(t->k!=TY_OBJ) return 0;
@@ -54,12 +54,12 @@ void iterator_protocol(Ck *c, Expr *it){
             Expr *meth=xnew(EXPR_ATTRIBUTE,line); meth->a=orig; meth->name="__iter__";
             it->kind=EXPR_CALL; it->line=line; it->a=meth; } }
         return; }
-    if(!lookup(c,"__mpy_iter")) ck_err(c,it->line,"internal error: an iterator object without _mpy_iter.py");
+    if(!lookup(c,"__ppy_iter")) ck_err(c,it->line,"internal error: an iterator object without _ppy_iter.py");
     Expr *orig=xnew(EXPR_NONE,it->line); *orig=*it;
     Expr *meth=xnew(EXPR_ATTRIBUTE,it->line); meth->a=orig; meth->name="__iter__";
     Expr *call=xnew(EXPR_CALL,it->line); call->a=meth;
     int line=it->line; memset(it,0,sizeof *it);
-    it->kind=EXPR_CALL; it->line=line; it->a=name_expr("__mpy_iter",line); xpush(it,call);
+    it->kind=EXPR_CALL; it->line=line; it->a=name_expr("__ppy_iter",line); xpush(it,call);
 }
 void iter_types(Ck *c, Expr *it, int n, Ty **out, int line){
     XInfo *xi=xinfo(it);
@@ -92,7 +92,7 @@ void iter_types(Ck *c, Expr *it, int n, Ty **out, int line){
         if(it->count==1 && it->items[0]->akind==1 && pure_ref(it->items[0])){   /* zip(*t), t a tuple: zip(t[0], t[1] ...) */
             Expr *t=it->items[0]; Ty *tt=ty_find(ck_expr(c,t));
             if(tt->k==TY_VAR){ pending(c,line,"the unpacked argument"); out[0]=ty_var(); for(int i=1;i<n;i++) out[i]=ty_var(); return; }
-            if(tt->k==TY_TUPLE && !tt->names){ Expr *base=MPY_NEW0(Expr); *base=*t; base->akind=0; it->count=0;
+            if(tt->k==TY_TUPLE && !tt->names){ Expr *base=PPY_NEW0(Expr); *base=*t; base->akind=0; it->count=0;
                 for(int i=0;i<tt->nelems;i++){ Expr *ix=xnew(EXPR_INDEX,line); ix->a=base; ix->b=lit_int(line,i); xpush(it,ix); } } }
         if(it->count<1 || it->count>8) ck_err(c,line,"zip() of 1 to 8 iterables in compiled code");
         for(int i=0;i<it->count;i++) if(it->items[i]->akind) ck_err(c,line,"zip() takes positional arguments (strict= is not supported in compiled code)");
@@ -145,7 +145,7 @@ void async_iter_ok(Ck *c, Expr *it, int is_async, int line){
 Expr *expr_subst(Expr *e, const char *var, Expr *with){
     if(!e) return NULL;
     if(var && e->kind==EXPR_NAME && e->name && !strcmp(e->name,var)) return expr_subst(with,NULL,NULL);
-    Expr *n=MPY_NEW0(Expr); *n=*e; n->ty=NULL; n->cm_done=0;
+    Expr *n=PPY_NEW0(Expr); *n=*e; n->ty=NULL; n->cm_done=0;
     if(var && e->kind==EXPR_LAMBDA) for(int k=0;k<e->neparam;k++) if(!strcmp(e->eparams[k],var)) var=NULL;   /* (bound again there) */
     if(var && e->kind==EXPR_COMPREHENSION) for(int i=0;i<e->nclause;i++) for(int k=0;k<e->clauses[i].nvars;k++) if(!strcmp(e->clauses[i].vars[k],var)) var=NULL;
     n->a=expr_subst(e->a,var,with); n->b=expr_subst(e->b,var,with); n->c=expr_subst(e->c,var,with); n->d=expr_subst(e->d,var,with);
@@ -219,10 +219,10 @@ Ty *ck_genexp(Ck *c, Expr *e){
     AFunc *gf=xi->fn;
     int plain=!loop_form(c,e->clauses[0].iter);
     if(!gf){
-        gf=MPY_NEW0(AFunc); gf->name="<genexpr>"; gf->mod=c->mod; gf->outer=c->fn; gf->genexp=e; gf->line=e->line;
+        gf=PPY_NEW0(AFunc); gf->name="<genexpr>"; gf->mod=c->mod; gf->outer=c->fn; gf->genexp=e; gf->line=e->line;
         gf->star=gf->dstar=-1; gf->is_gen=1;
         gf->nparams=plain?1:0; gf->kwonly=gf->nparams;
-        gf->params=MPY_NEW_ARR(AVar*,1); gf->defaults=MPY_NEW_ARR(Expr*,1);
+        gf->params=PPY_NEW_ARR(AVar*,1); gf->defaults=PPY_NEW_ARR(Expr*,1);
         if(plain){ gf->params[0]=new_local(gf,".0",NULL); Expr *nm=xnew(EXPR_NAME,e->line); nm->name=".0"; xi->key=nm; }
         gf->yield_ty=ty_var(); gf->ret=ty_new(TY_GEN,gf->yield_ty,NULL);
         add_func(c->p,gf); xi->fn=gf;

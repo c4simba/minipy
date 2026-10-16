@@ -4,7 +4,7 @@ Formatter (str.format() as a class; the interpreter's) - CPython's string.
 whitespace, ascii_lowercase, ascii_uppercase, ascii_letters, digits, hexdigits,
 octdigits, punctuation, printable."""
 import sys
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 __all__ = ["ascii_letters", "ascii_lowercase", "ascii_uppercase", "capwords",
            "digits", "hexdigits", "octdigits", "printable", "punctuation",

@@ -71,8 +71,8 @@ static void enum_transform(Ck *c, AClass *cls){
     Stmt *def=cls->def; AotUnit *u=cls->mod->unit; const char *cn=def->name; int line=def->line;
     int flag=enum_base(cls,"Flag")!=NULL, intk=enum_base(cls,"IntEnum")||enum_base(cls,"IntFlag"), strk=enum_base(cls,"StrEnum")!=NULL;
     enum { MAXM=512 };
-    char **names=MPY_NEW_ARR(char*,MAXM); Expr **vals=MPY_NEW_ARR(Expr*,MAXM); Stmt **stmts=MPY_NEW_ARR(Stmt*,MAXM);
-    int *alias=MPY_NEW_ARR(int,MAXM), *isint=MPY_NEW_ARR(int,MAXM); long long *iv=MPY_NEW_ARR(long long,MAXM); int n=0;
+    char **names=PPY_NEW_ARR(char*,MAXM); Expr **vals=PPY_NEW_ARR(Expr*,MAXM); Stmt **stmts=PPY_NEW_ARR(Stmt*,MAXM);
+    int *alias=PPY_NEW_ARR(int,MAXM), *isint=PPY_NEW_ARR(int,MAXM); long long *iv=PPY_NEW_ARR(long long,MAXM); int n=0;
     char *vt=NULL; int vt_bad=0; char vt_user[300]={0};
     Stmt *user_init=NULL; int has_missing=0, has_repr=0, has_str=0, done=0;
     for(int i=0;i<def->body_count;i++){ Stmt *s=def->body[i];
@@ -183,7 +183,7 @@ static void enum_transform(Ck *c, AClass *cls){
     Stmt *blk=py_front_stmts(u->path,b,line);
     if(!blk || blk->body_count!=1 || blk->body[0]->kind!=STMT_CLASS_DEF) ck_err(c,line,"internal error: enum %s",cn);
     Stmt *g=blk->body[0];
-    Stmt **nb=MPY_NEW_ARR(Stmt*,def->body_count+g->body_count);
+    Stmt **nb=PPY_NEW_ARR(Stmt*,def->body_count+g->body_count);
     for(int i=0;i<def->body_count;i++) nb[i]=def->body[i];
     for(int i=0;i<g->body_count;i++){ nb[def->body_count+i]=g->body[i]; }
     def->body=nb; def->body_count+=g->body_count; def->body_cap=def->body_count;
@@ -193,7 +193,7 @@ static void enum_transform(Ck *c, AClass *cls){
 int enum_members_expr(Ck *c, Expr *e){
     if(!e || (e->kind!=EXPR_NAME && e->kind!=EXPR_ATTRIBUTE)) return 0;
     AClass *k=class_expr(c,e); if(!k || !k->is_enum) return 0;
-    Expr *orig=MPY_NEW0(Expr); *orig=*e; orig->ty=NULL; orig->akind=0; orig->kw=NULL;
+    Expr *orig=PPY_NEW0(Expr); *orig=*e; orig->ty=NULL; orig->akind=0; orig->kw=NULL;
     int line=e->line, ak=e->akind; char *kw=e->kw; memset(e,0,sizeof *e); e->kind=EXPR_ATTRIBUTE; e->line=line; e->a=orig; e->name="_members_"; e->akind=ak; e->kw=kw;
     return 1;
 }
@@ -223,10 +223,10 @@ void fill_class(Ck *c, AClass *cls){
     if(def->ntparams) cls->generic=1;
     { Stmt *ini=body_def(def,"__init__"); if(ini){ for(int i=1;i<ini->param_count;i++) if(!ini->annotations || i>=ini->annotation_cap || !ini->annotations[i]) cls->generic=1; } }
     for(int i=0;i<def->body_count;i++){ Stmt *s=def->body[i];
-        if(s->kind==STMT_FUNCTION_DEF && s->decorator_count==1){                 /* @x.setter def x(self, v): the method __mpy_set_x */
+        if(s->kind==STMT_FUNCTION_DEF && s->decorator_count==1){                 /* @x.setter def x(self, v): the method __ppy_set_x */
             Expr *d=aot_expr(u,&s->decorator_exprs[0]);
             if(d->kind==EXPR_ATTRIBUTE && d->a->kind==EXPR_NAME && !strcmp(d->a->name,s->name) && (!strcmp(d->name,"setter")||!strcmp(d->name,"deleter"))){
-                char nm[300]; snprintf(nm,sizeof nm,"__mpy_%s_%s",d->name[0]=='s'?"set":"del",s->name);
+                char nm[300]; snprintf(nm,sizeof nm,"__ppy_%s_%s",d->name[0]=='s'?"set":"del",s->name);
                 s->name=xstrdup2(nm); s->decorator_count=0; } }
         if(s->kind==STMT_FUNCTION_DEF){
             AFunc *f=new_func(c,NULL,s->src_mod?(AModule*)s->src_mod:cls->mod,cls,s,NULL);   /* (a mixin's: in its module) */

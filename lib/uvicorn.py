@@ -1,4 +1,4 @@
-# uvicorn for MiniPy: serves a fastapi.FastAPI app over HTTP/1.1, one
+# uvicorn for PlainPy: serves a fastapi.FastAPI app over HTTP/1.1, one
 # connection at a time, with the C library's sockets (ctypes).
 #
 #   uvicorn.run(app, host="0.0.0.0", port=8000)

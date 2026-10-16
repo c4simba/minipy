@@ -1,5 +1,5 @@
 /* ========================= Interpreter, modules: sys =========================
-   sys: exit, exceptions, frames, argv, and minipy's raw memory and
+   sys: exit, exceptions, frames, argv, and plainpy's raw memory and
    system calls (sys.syscall, sys.buffer, peek / poke). */
 
 #include "modules.h"
@@ -46,7 +46,7 @@ static Value sys_getframemodulename(int argc, Value *argv, TupleObj *kw){
    the i386 Linux system calls (int 0x80) a compiled program for Linux makes, done
    with the host's calls as the macos target's programs do them: the same numbers,
    flags and results (-errno) on every host. */
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
 #define LX_WORD intptr_t
 #define LX_PTR(a) ((void*)(a))
 #define LX_BLOCKING_BEGIN Thread *lx_self_=mp_ts; mp_gil_release()
@@ -69,10 +69,10 @@ static Value sys_syscall(int argc, Value *argv, TupleObj *kw){
         else mp_raise_t(E_TypeError,"syscall() arguments must be int, str, buffer or None");
     }
     Value l=mp_list(6,NULL);
-#if defined(MPY_KOLIBRI)
+#if defined(PPY_KOLIBRI)
     uint32_t in32[7], out[6]={0};
     for(int i=0;i<7;i++) in32[i]=(uint32_t)in[i];
-    mpy_platform_syscall(in32,out);
+    ppy_platform_syscall(in32,out);
     for(int i=0;i<6;i++) AS_LIST(l)->items[i]=v_int((int64_t)(int32_t)out[i]);   /* the registers, as compiled code reads them */
 #else
     AS_LIST(l)->items[0]=v_int(lx_syscall(in));
@@ -120,14 +120,14 @@ static Value sys_poke_bytes(int argc, Value *argv, TupleObj *kw){ mod_no_kw("pok
     int64_t n=AS_BYTES(argv[2])->len;
     if(off<0||off+n>b->len) mp_raise_t(E_IndexError,"buffer offset out of range");
     memcpy(b->data+off,AS_BYTES(argv[2])->s,(size_t)n); return v_none(); }
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
 extern char **environ;
 #endif
 /* sys._rawargs(0): the arguments; (1): the environment as "NAME=value" strings (os.environ) */
 static Value sys_rawargs(int argc, Value *argv, TupleObj *kw){ mod_no_kw("_rawargs",kw); mod_nargs("_rawargs",argc,1,1);
     Value l=mp_list(0,NULL);
     if(mp_index(argv[0],"_rawargs")==0){ if(argv_list.k==V_OBJ) for(int64_t i=0;i<AS_LIST(argv_list)->len;i++) mp_list_append(l,AS_LIST(argv_list)->items[i]); return l; }
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
     for(char **e=environ;e && *e;e++) mp_list_append(l,mp_str(*e));
 #endif
     return l; }
@@ -201,7 +201,7 @@ Value make_sys(void){
 #else
     const char *os="host";
 #endif
-    mp_dict_set_s(mdict(m),"platform",mp_str(mpy_platform_has_syscall()?"kolibrios":os));
+    mp_dict_set_s(mdict(m),"platform",mp_str(ppy_platform_has_syscall()?"kolibrios":os));
     mp_dict_set_s(mdict(m),"argv",argv_list.k==V_OBJ?argv_list:mp_list(0,NULL));
     mp_dict_set_s(mdict(m),"modules",v_obj(mp_modules));
     mp_dict_set_s(mdict(m),"path",mp_list(0,NULL));
@@ -209,7 +209,7 @@ Value make_sys(void){
     mp_dict_set_s(mdict(m),"maxsize",v_int(INT64_MAX));
     mp_dict_set_s(mdict(m),"byteorder",mp_str("little"));
     mp_dict_set_s(mdict(m),"_compiled",v_bool(0));          /* (compiled programs: True, folded by the compiler) */
-    mp_dict_set_s(mdict(m),"version",mp_str("3.14.0 (minipy)"));
+    mp_dict_set_s(mdict(m),"version",mp_str("3.14.0 (plainpy)"));
     { Value vi[5]={v_int(3),v_int(14),v_int(0),mp_str("final"),v_int(0)}; mp_dict_set_s(mdict(m),"version_info",mp_tuple(5,vi)); }
     mp_dict_set_s(mdict(m),"stdout",mp_std_stream(0)); mp_dict_set_s(mdict(m),"stderr",mp_std_stream(1));
     mp_dict_set_s(mdict(m),"__stdout__",mp_std_stream(0)); mp_dict_set_s(mdict(m),"__stderr__",mp_std_stream(1));
@@ -223,7 +223,7 @@ Value make_sys(void){
     mp_dict_set_s(mdict(m),"__excepthook__",mp_dict_get_s(mdict(m),"excepthook",NULL)?mp_native("excepthook",sys_excepthook):v_none());
     set_fn(m,"getdefaultencoding",sys_getdefaultencoding); set_fn(m,"getfilesystemencoding",sys_getdefaultencoding);
     mp_dict_set_s(mdict(m),"maxunicode",v_int(0x10FFFF)); mp_dict_set_s(mdict(m),"hexversion",v_int(0x030E00F0));
-    mp_dict_set_s(mdict(m),"executable",mp_str(mpy_platform_exe_path()?mpy_platform_exe_path():"minipy"));
+    mp_dict_set_s(mdict(m),"executable",mp_str(ppy_platform_exe_path()?ppy_platform_exe_path():"plainpy"));
     return m;
 }
 

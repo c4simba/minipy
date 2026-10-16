@@ -1,23 +1,23 @@
 /* ========================= Interpreter: modules =========================
-   Importing (the importer's folder, the main script's, MINIPYPATH, <minipy>/lib;
+   Importing (the importer's folder, the main script's, PLAINPYPATH, <plainpy>/lib;
    packages, relative imports, a module in sys.modules before its body runs),
    the modules written in C (sys, math, time, random, json, thread, _ctypes)
    and those written in Python, compiled from the text in pysrc.c when first
-   imported (asyncio with a real event loop, minipy.endpoint, functools,
+   imported (asyncio with a real event loop, plainpy.endpoint, functools,
    typing, abc, collections.abc, dataclasses). random is xorshift32, the same
    numbers as compiled programs get.
 
    This header is internal to src/interp/modules: what its files share,
    grouped by the file defining it. */
-#ifndef MPY_INTERP_MODULES_H
-#define MPY_INTERP_MODULES_H
+#ifndef PPY_INTERP_MODULES_H
+#define PPY_INTERP_MODULES_H
 
 #include "interp/interp.h"
 #include "pystdlib.h"
 #include "fs.h"
 #include <math.h>
 #include <time.h>
-#if !defined(MPY_KOLIBRI)
+#if !defined(PPY_KOLIBRI)
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -69,4 +69,4 @@ Value make_ctypes_native(void);
 /* ---- pysrc.c: modules written in Python */
 const char *py_source(const char *name);
 
-#endif /* MPY_INTERP_MODULES_H */
+#endif /* PPY_INTERP_MODULES_H */

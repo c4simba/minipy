@@ -37,7 +37,7 @@ static int errors_of(Value errs){
     mp_raise_t(E_LookupError,"unknown error handler name '%s'",e);
 }
 /* UnicodeDecodeError / UnicodeEncodeError(encoding, object, start, end, reason), as the codecs raise them */
-static MPY_NORETURN void unicode_error(Type *t, const char *codec, Value obj, int64_t start, int64_t end, const char *reason){
+static PPY_NORETURN void unicode_error(Type *t, const char *codec, Value obj, int64_t start, int64_t end, const char *reason){
     Value a[5]={mp_str(codec),obj,v_int(start),v_int(end),mp_str(reason)};
     mp_raise(mp_call(v_obj(t),5,a,NULL));
 }

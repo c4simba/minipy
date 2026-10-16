@@ -1,7 +1,7 @@
 """Base16, Base32, Base64 (RFC 4648), Base85 and Ascii85 data encodings (CPython's base64)."""
 import sys
 import binascii
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 S = TypeVar("S")
 

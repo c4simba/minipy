@@ -1,7 +1,7 @@
 """Context variables (CPython's contextvars): ContextVar, Token, Context, copy_context().
 Typed: a ContextVar holds values of one type; a context made by copy() sees the later changes of
 the one it was copied from to the variables it has not set itself."""
-from _mpy_typing import Generic, TypeVar
+from _ppy_typing import Generic, TypeVar
 
 __all__ = ("Context", "ContextVar", "Token", "copy_context")
 

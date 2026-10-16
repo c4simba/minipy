@@ -30,7 +30,7 @@ typedef struct C {
     Scope *top;
 } C;
 
-MPY_NORETURN static void cfail(C *c, int line, const char *fmt, ...){
+PPY_NORETURN static void cfail(C *c, int line, const char *fmt, ...){
     char buf[512]; va_list ap; va_start(ap,fmt); vsnprintf(buf,sizeof buf,fmt,ap); va_end(ap);
     c->err=xstrdup2(buf); c->errline=line; longjmp(c->jb,1);
 }
@@ -47,7 +47,7 @@ static Sym *sym_add(Scope *s, const char *name, int flags){
 }
 static Scope *scope_new(C *c, int kind, PyNode *node, Scope *parent, const char *name){
     (void)c;
-    Scope *s=MPY_NEW0(Scope); s->kind=kind; s->node=node; s->parent=parent; s->name=xstrdup2(name);
+    Scope *s=PPY_NEW0(Scope); s->kind=kind; s->node=node; s->parent=parent; s->name=xstrdup2(name);
     if(parent){
         if(parent->nkids==parent->kcap){ parent->kcap=parent->kcap?parent->kcap*2:8; parent->kids=(Scope**)xrealloc(parent->kids,sizeof(Scope*)*(size_t)parent->kcap); }
         parent->kids[parent->nkids++]=s;
@@ -753,8 +753,8 @@ static void ex(G *g, PyNode *n){
             break;
         case PK_FormattedValue: fstring_part(g,n); break;
         case PK_Starred: cfail(g->c,n->line,"can't use starred expression here");
-        case PK_TemplateStr:                          /* t"...": __mpy_tstr__(str, (value, expression, conversion, spec), ...) */
-            name_op(g,"__mpy_tstr__",0);
+        case PK_TemplateStr:                          /* t"...": __ppy_tstr__(str, (value, expression, conversion, spec), ...) */
+            name_op(g,"__ppy_tstr__",0);
             for(int i=0;i<n->L[0].n;i++){ PyNode *v=n->L[0].v[i];
                 if(v->kind!=PK_Interpolation){ ex(g,v); continue; }
                 ex(g,v->n[0]);
@@ -1365,7 +1365,7 @@ static void ann_into(SBuf *b, PyNode *a){
     }
 }
 static char *ann_text(PyNode *a){ SBuf b={0}; ann_into(&b,a); if(!b.s) return xstrdup2(""); return b.s; }
-/* the type an annotation names for minipy.endpoint: its first name other than Optional / Union / typing */
+/* the type an annotation names for plainpy.endpoint: its first name other than Optional / Union / typing */
 static const char *first_type_name(PyNode *a){
     if(!a) return NULL;
     switch(a->kind){

@@ -230,7 +230,7 @@ int gen_call(F *f, Expr *e){
         case X_ASYNC: return gen_asyncio(f,e,xi);
         case X_BMOD: if(!strncmp(xi->name,"ctypes.",7)) return gen_ctypes_fn(f,e,xi);
             if(!strcmp(xi->name,"json.dumps")) return gen_json_dumps(f,e,xi);
-            if(!strcmp(xi->name,"minipy.endpoint")){ gen_as(f,e->items[0],TY(e),1); return 1; }
+            if(!strcmp(xi->name,"plainpy.endpoint")){ gen_as(f,e->items[0],TY(e),1); return 1; }
             return gen_bmod(f,e,xi);
         case X_CCALL: return gen_ccall(f,e,xi);
         default: cg_fail(e->line,"unsupported call");

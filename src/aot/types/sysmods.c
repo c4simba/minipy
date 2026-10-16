@@ -18,9 +18,9 @@ Ty *lexical_exception(Ck *c, Expr *e){
     xi->kind=X_VAR; xi->var=v;
     return v->ty;
 }
-Expr *lit_int(int line, long long v){ Expr *x=xnew(EXPR_LITERAL,line); x->tok=MPY_NEW0(Tok); x->tok->kind=T_NUMBER; x->tok->i=v;
+Expr *lit_int(int line, long long v){ Expr *x=xnew(EXPR_LITERAL,line); x->tok=PPY_NEW0(Tok); x->tok->kind=T_NUMBER; x->tok->i=v;
     char b[32]; snprintf(b,sizeof b,"%lld",v); x->tok->text=xstrdup2(b); x->tok->len=(int64_t)strlen(b); x->tok->line=line; return x; }
-Expr *lit_str(int line, const char *v){ Expr *x=xnew(EXPR_LITERAL,line); x->tok=MPY_NEW0(Tok); x->tok->kind=T_STRING;
+Expr *lit_str(int line, const char *v){ Expr *x=xnew(EXPR_LITERAL,line); x->tok=PPY_NEW0(Tok); x->tok->kind=T_STRING;
     x->tok->text=xstrdup2(v); x->tok->len=(int64_t)strlen(v); x->tok->line=line; return x; }
 /* sys._site("line" / "file" / "func" / "module") (the call `d` of a parameter's default, for a
    call at line): where that call is, as a literal (logging's records: lineno, pathname, funcName) */
@@ -160,7 +160,7 @@ Ty *ck_bmod(Ck *c, Expr *e, const char *mod, const char *m){
     #undef FARG
     #undef what_
     if(!strcmp(mod,"math")){                                              /* math.f written in Python: _mathx.py */
-        char nm[96]; snprintf(nm,sizeof nm,"__mpy__mathx__%s",m);
+        char nm[96]; snprintf(nm,sizeof nm,"__ppy__mathx__%s",m);
         if(lookup(c,nm)){ e->a=name_expr(xstrdup2(nm),line); xi->kind=X_NONE; xi->name=NULL; return ck_call_inner(c,e); } }
     ck_err(c,line,"%s.%s is not available in compiled code",mod,m);
 }

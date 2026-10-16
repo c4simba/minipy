@@ -50,11 +50,11 @@ print(list(csv.reader(['a|b'], 'pipes')))
 rr = csv.reader(['h1,h2', 'v1,v2'])
 header = next(rr)
 print(header, [row for row in rr])
-with open("_mpy_csv_test.csv", "w", newline="") as f:
+with open("_ppy_csv_test.csv", "w", newline="") as f:
     cw = csv.writer(f)
     cw.writerow(["id", "name"])
     cw.writerow(["1", "Ann, B"])
-with open("_mpy_csv_test.csv", newline="") as f:
+with open("_ppy_csv_test.csv", newline="") as f:
     print(list(csv.reader(f)))
 import os
-os.remove("_mpy_csv_test.csv")
+os.remove("_ppy_csv_test.csv")

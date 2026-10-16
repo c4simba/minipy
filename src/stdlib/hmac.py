@@ -1,7 +1,7 @@
 """HMAC (keyed hashing for message authentication, RFC 2104) over hashlib's hashes
 (CPython's hmac)."""
 import hashlib
-from _mpy_typing import TypeVar
+from _ppy_typing import TypeVar
 
 _B = TypeVar("_B")
 _C = TypeVar("_C")

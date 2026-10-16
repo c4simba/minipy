@@ -683,7 +683,7 @@ if sys._compiled:
     # str, bytes and the numbers); a typed copy of each step per kind of value. Tuples and other
     # objects are shown by their repr() (not split over lines).
     import re as _re
-    from _mpy_typing import TypeVar
+    from _ppy_typing import TypeVar
 
     _T = TypeVar("_T")
     _S = TypeVar("_S")
