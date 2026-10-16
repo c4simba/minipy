@@ -10,8 +10,8 @@
        ppy_fs_read_file / ppy_fs_try_read_file / ppy_fs_dirname
        ppy_fs_module_path / ppy_fs_backend_name
 
-   Backend contract (implemented per platform under platform/host and
-   platform/kolibri):
+   Backend contract (implemented per platform under targets/posix and
+   targets/kolibri):
        ppy_fs_backend_name and ppy_fs_backend_read_file
 
    Contract:

@@ -393,6 +393,9 @@ Value  mp_new_module(const char *name);
 Value  mp_run_main(const char *path);           /* run a script as __main__ */
 void   mp_set_argv(int argc, char **argv);
 void   mp_flush_stdout(void);
+#if defined(PPY_WASM)
+void   mp_gc_safe_point(void);                 /* (obj.c) the collection that waited, now that C holds no objects */
+#endif
 void   mp_write_out(const char *s, int64_t n);  /* stdout (buffered) */
 void   mp_write_err(const char *s, int64_t n);
 extern const char *mp_main_dir;

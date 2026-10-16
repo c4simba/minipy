@@ -3,6 +3,7 @@
    literals. */
 
 #include "gen.h"
+#include "targets/targets.h"
 
 /* ---- tuples: +8 descriptor TD<i> (count, element kinds), items from +12 ---- */
 int tuple_off(Ty *t, int i){ t=ty_find(t); int off=12; for(int k=0;k<i;k++) off+=esize(t->elems[k]); return off; }
@@ -118,7 +119,7 @@ void gen_syscall_regs(F *f, Expr *e, int keep){
     static const char *regs[6]={"eax","ebx","ecx","edx","esi","edi"};
     E(f,"push ebp"); E(f,"mov ebp,[esp+28]");                         /* (on Linux: the 6th argument) */
     for(int i=5;i>=0;i--) E(f,"mov %s,[esp+%d]",regs[i],4+4*i);
-    E(f,gg->target==AOT_TARGET_KOLIBRI?"int 0x40":"int 0x80");
+    E(f,aot_target(gg->target)->abi==AOT_ABI_KOLIBRI?"int 0x40":"int 0x80");
     for(int i=0;i<6;i++) if(keep&(1<<i)) E(f,"mov [esp+%d],%s",4+4*i,regs[i]);
     E(f,"pop ebp");
 }

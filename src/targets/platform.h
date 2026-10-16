@@ -43,7 +43,7 @@
 #define setjmp(buf)      __builtin_setjmp((void**)(buf))
 #define longjmp(buf,val) __builtin_longjmp((void**)(buf),1)
 
-/* KolibriOS console interface (implemented in platform/kolibri/console.c). */
+/* KolibriOS console interface (implemented in targets/kolibri/console.c). */
 int  kol_console_init(void);
 void kol_console_deinit(void);
 void kol_console_printf(const char *fmt, ...);
@@ -52,7 +52,7 @@ void kol_console_gets(char *buf, int maxlen);
 void kol_console_cls(void);
 
 /* Dual printf: format to a buffer, echo to stderr AND the console.
-   Defined in platform/kolibri/console.c. */
+   Defined in targets/kolibri/console.c. */
 void _dual_printf(const char *fmt, ...);
 #undef printf
 #define printf(...) _dual_printf(__VA_ARGS__)
@@ -71,7 +71,7 @@ void  kos_free(void *p);
 #endif /* PPY_KOLIBRI */
 
 /* Platform lifecycle / entry hooks. Implemented per platform under
-   platform/host/ and platform/kolibri/. */
+   targets/posix/ and targets/kolibri/. */
 void        ppy_platform_init(void);              /* early startup (reloc, heap) */
 void        ppy_platform_shutdown(void);          /* teardown */
 const char *ppy_platform_default_script(void);    /* NULL when none (host) */

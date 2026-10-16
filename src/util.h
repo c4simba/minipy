@@ -1,7 +1,7 @@
 #ifndef PPY_UTIL_H
 #define PPY_UTIL_H
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 
 /* ========================= Small utility macros ========================= */
 

@@ -3,7 +3,7 @@
    (aot/driver.c; plainpyc --help). A program of its own, without the
    interpreter: `plainpy --compile ...` runs it. */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include "aot/aot.h"
 #include "fs.h"
 

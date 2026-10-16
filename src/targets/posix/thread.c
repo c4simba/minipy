@@ -1,6 +1,6 @@
 /* Host threading backend: POSIX threads. */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>

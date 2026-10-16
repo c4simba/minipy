@@ -20,7 +20,8 @@
 #   TARGET   linux (default), kolibri or macos; tests named *_linux / *_kolibri
 #            run only for that target (*_linux also for macos, unless they need
 #            the scripted HTTP clients of x86run: <name>.requests). macos
-#            programs are native: no FASM, no RUN.
+#            programs are native: no FASM, no RUN. c: the C target with its
+#            posix port (src/targets/c), built and run here, as macos.
 #            interp: no compilation - the interpreter runs every program the
 #            host can (as macos does) and must print what the compiled one
 #            does (its traceback lines left out: a compiled program reports
@@ -73,7 +74,8 @@ for f in $files; do
             else fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (interpreter)"; diff "$exp" "$OUT/$n.got" | head -20; fi
             continue
         fi
-        if ! "$PLAINPY" --compile --target "$TARGET" --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
+        port=; [ "$TARGET" = c ] && port="--port posix"
+        if ! "$PLAINPY" --compile --target "$TARGET" $port --fasm "$FASM" "$f" -o "$OUT/$n" >"$OUT/$n.log" 2>&1; then
             fail=$((fail+1)); failed="$failed $n"; echo "FAIL $n (does not compile)"; head -10 "$OUT/$n.log"; continue
         fi
         inp=/dev/null; [ -f "$DIR/$n.in" ] && inp="$DIR/$n.in"

@@ -2,6 +2,7 @@
    sys, asyncio, math, time, random; ctypes calls. */
 
 #include "check.h"
+#include "targets/targets.h"
 
 /* sys.exception() in compiled code: the exception of the except clause it is in (lexically; None
    outside one). A clause without `as` gets a hidden variable for it. */
@@ -168,7 +169,7 @@ Ty *ck_bmod(Ck *c, Expr *e, const char *mod, const char *m){
    its type: int/bool c_int, float c_double, str and buffers char *, None NULL. */
 Ty *ck_ccall(Ck *c, Expr *e, ACFunc *cf){
     XInfo *xi=xinfo(e); xi->kind=X_CCALL; xi->cfn=cf; int line=e->line;
-    if(c->p->target==AOT_TARGET_KOLIBRI) ck_err(c,line,"C functions (ctypes) need the linux or macos target");
+    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"C functions (ctypes) need a target with C functions (linux, macos, c, esp32)");
     if(e->count>16) ck_err(c,line,"%s(): at most 16 arguments",cf->sym);
     if(cf->nargtypes>=0 && e->count<cf->nargtypes) ck_err(c,line,"%s() takes %d arguments (its argtypes), not %d",cf->sym,cf->nargtypes,e->count);
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
@@ -207,7 +208,7 @@ Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
     static const char *names[]={"ctypes.create_string_buffer","ctypes.string_at","ctypes.addressof","ctypes.get_errno",NULL};
     XInfo *xi=xinfo(e); xi->kind=X_BMOD; xi->name=m; int line=e->line;
     for(int i=0;names[i];i++) if(!strcmp(names[i]+7,m)) xi->name=names[i];
-    if(c->p->target==AOT_TARGET_KOLIBRI) ck_err(c,line,"ctypes needs the linux or macos target");
+    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"ctypes needs a target with C functions (linux, macos, c, esp32)");
     if(!strcmp(m,"create_string_buffer")){ ck_positional(c,e,1,1,"create_string_buffer"); Ty *t=ty_find(arg(c,e,0));
         if(t->k!=TY_INT&&t->k!=TY_STR&&t->k!=TY_VAR) ck_err(c,line,"create_string_buffer() takes a size or a str");
         return TY_BUF_T; }

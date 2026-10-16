@@ -1,0 +1,12 @@
+# plainpy (plainpy --compile --target esp32); `idf.py menuconfig` changes the rest
+CONFIG_IDF_TARGET="@CHIP@"
+# the program's C runs in the main task: the guest stack is in the arena, but
+# the translated code itself wants a few KiB more than ESP-IDF's 3.5
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# a program that loops without sleeping keeps the idle task from running: no watchdog warnings for that
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# room for a big program
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

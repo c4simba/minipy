@@ -1,7 +1,7 @@
 /* KolibriOS platform hooks: runtime relocation, process-heap init, page
    allocator, console lifecycle. */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include "util.h"
 
 /* Page allocator over f68 (libc malloc crashes without TLS setup).

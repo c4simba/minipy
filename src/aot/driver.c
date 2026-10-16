@@ -1,47 +1,31 @@
 /* ========================= AOT driver: plainpyc (plainpy --compile) =========================
-   Options, then the import pass, the listing (aot_compile), and the
-   tools that make the executable: fasm (and kpack) or, for macos, the C
-   translation and the C compiler. */
+   Options, then the import pass, the listing (aot_compile), and the target's
+   build step (src/targets: fasm, kpack, the C translation and a C compiler,
+   an ESP-IDF project). */
 
 #include "driver.h"
-
-/* macos: the C compiler; override with --cc/--cc-args or PPY_CC/PPY_CC_ARGS. */
-#ifndef PPY_AOT_CC
-#  define PPY_AOT_CC "cc"
-#endif
-#ifndef PPY_AOT_CC_ARGS            /* {in} {out} {dir} are substituted */
-#  define PPY_AOT_CC_ARGS "-O1 -w {in} -o {out} -lm"
-#endif
-
-/* Defaults; override with --fasm/--fasm-args or PPY_FASM/PPY_FASM_ARGS. */
-#ifndef PPY_AOT_FASM
-#  if defined(PPY_KOLIBRI)
-#    define PPY_AOT_FASM "/sys/develop/fasm"
-#  else
-#    define PPY_AOT_FASM "fasm"
-#  endif
-#endif
-#ifndef PPY_AOT_FASM_ARGS          /* {in} {out} {dir} are substituted */
-#  if defined(PPY_KOLIBRI)
-#    define PPY_AOT_FASM_ARGS "{in},{out},{dir}"
-#  else
-#    define PPY_AOT_FASM_ARGS "-m 262144 {in} {out}"
-#  endif
-#endif
+#include "targets/targets.h"
 
 static void usage(const char *program){
     fprintf(stderr,
         "usage: %s [options] file.py   (plainpy --compile [options] file.py)\n"
-        "  -o FILE          output executable (default: the script name without .py)\n"
-        "  --target T       linux (i386 ELF), kolibri (KolibriOS application) or macos\n"
-        "                   (native: the listing translated to C, FILE.c, built by cc);\n"
-        "                   default: the system plainpy runs on\n"
+        "  -o FILE          output (default: the script name without .py)\n"
+        "  --target T       what to make (default: for the system plainpy runs on):\n",program);
+    aot_targets_help(stderr);
+    fprintf(stderr,
         "  -S               only write the assembly listing (FILE.asm)\n"
         "  --fasm PATH      fasm executable                       [env PPY_FASM]\n"
         "  --fasm-args A    fasm arguments, {in} {out} {dir} replaced  [env PPY_FASM_ARGS]\n"
-        "  --cc PATH        macos: C compiler                     [env PPY_CC]\n"
-        "  --cc-args A      macos: its arguments, {in} {out} {dir} replaced  [env PPY_CC_ARGS]\n"
-        "  --stack BYTES    kolibri: application stack size (default 65536)\n"
+        "  --cc PATH        macos, c: C compiler                  [env PPY_CC]\n"
+        "  --cc-args A      its arguments, {in} {out} {dir} replaced  [env PPY_CC_ARGS]\n"
+        "  --port P         c: also a port: posix (FILE.c built for this computer),\n"
+        "                   template (ppy_port_template.c to fill in for a board)\n"
+        "  --chip C         esp32: esp32, esp32s2, esp32s3, esp32c3, esp32c6, ...\n"
+        "  --build, --no-build  esp32: run idf.py build (default: when ESP-IDF is found)\n"
+        "  --arena BYTES    c, esp32: the memory the program asks the port for\n"
+        "  --stack BYTES    kolibri, c, esp32: the main stack\n"
+        "  --costack BYTES  the stack of each generator and task\n"
+        "  --chunk BYTES    memory the allocator takes from the system at a time\n"
         "  --no-pack        kolibri: leave the executable unpacked (by default it is\n"
         "                   LZMA-packed as kpack does it; KolibriOS unpacks it on loading)\n"
         "  -v               print the commands being run\n"
@@ -50,49 +34,13 @@ static void usage(const char *program){
         "                   every error, and the functions it cannot check (`plainpy check`)\n"
         "Compiled programs are statically typed: every variable, parameter, field and\n"
         "container element keeps one type (annotated or inferred), None is the zero\n"
-        "value of that type, and imports must be at the top of a module.\n",
-        program);
+        "value of that type, and imports must be at the top of a module.\n");
 }
-
-/* ---------------------------------------------------------------- running tools */
 
 static char *strip_ext(const char *path){
     size_t n=strlen(path); const char *slash=strrchr(path,'/'), *dot=strrchr(path,'.');
     if(dot && (!slash || dot>slash) && strcmp(dot,".py")==0) n=(size_t)(dot-path);
     return xstrndup2(path,(int)n);
-}
-static char *concat(const char *a, const char *b){ size_t la=strlen(a), lb=strlen(b); char *r=(char*)xmalloc(la+lb+1); memcpy(r,a,la); memcpy(r+la,b,lb+1); return r; }
-
-/* Quote one argument for the platform's command line. */
-static char *quote_arg(const char *s){
-#if defined(PPY_KOLIBRI)
-    return xstrdup2(s);                                   /* KolibriOS passes the parameter string verbatim */
-#else
-    size_t n=strlen(s), k=2; for(size_t i=0;i<n;i++) k+= s[i]=='\'' ? 4 : 1;
-    char *r=(char*)xmalloc(k+1), *o=r; *o++='\'';
-    for(size_t i=0;i<n;i++){ if(s[i]=='\''){ memcpy(o,"'\\''",4); o+=4; } else *o++=s[i]; }
-    *o++='\''; *o=0; return r;
-#endif
-}
-/* Expand {in} {out} {dir} in a fasm argument template. */
-static char *fasm_args(const char *tmpl, const char *in, const char *out){
-    char *dir=ppy_fs_dirname(in), *qi=quote_arg(in), *qo=quote_arg(out), *qd=quote_arg(dir);
-    size_t cap=strlen(tmpl)+strlen(qi)+strlen(qo)+strlen(qd)*4+16; char *r=(char*)xmalloc(cap); size_t k=0;
-    for(const char *p=tmpl;*p;){
-        const char *rep=NULL; size_t skip=0;
-        if(!strncmp(p,"{in}",4)){ rep=qi; skip=4; } else if(!strncmp(p,"{out}",5)){ rep=qo; skip=5; } else if(!strncmp(p,"{dir}",5)){ rep=qd; skip=5; }
-        if(rep){ size_t l=strlen(rep); if(k+l+1>cap){ cap=(k+l+1)*2; r=(char*)xrealloc(r,cap); } memcpy(r+k,rep,l); k+=l; p+=skip; }
-        else { if(k+2>cap){ cap*=2; r=(char*)xrealloc(r,cap); } r[k++]=*p++; }
-    }
-    r[k]=0; free(dir); free(qi); free(qo); free(qd);
-    return r;
-}
-static int run_tool(const char *program, const char *args, const char *option, int verbose){
-    if(verbose) printf("%s %s\n",program,args);
-    int rc=ppy_platform_run(program,args);
-    if(rc==127) fprintf(stderr,"plainpy: cannot run `%s`; is it installed? (choose another with %s)\n",program,option);
-    else if(rc!=0) fprintf(stderr,"plainpy: `%s` failed (exit status %d)\n",program,rc);
-    return rc;
 }
 
 /* ---------------------------------------------------------------- entry */
@@ -172,49 +120,57 @@ int load_program(Units *us, const char *src_path, char *src){
 
 
 int aot_main(int argc, char **argv, const char *program){
-    const char *src_path=NULL, *out=NULL, *fasm=getenv("PPY_FASM"), *fasm_tmpl=getenv("PPY_FASM_ARGS");
-    const char *cc=getenv("PPY_CC"), *cc_tmpl=getenv("PPY_CC_ARGS");
-    int only_asm=0, verbose=0; unsigned stack=0;
-    int count_allocs=0, pack=1, check=0;
+    const char *src_path=NULL;
+    AotBuild b; memset(&b,0,sizeof b);
+    b.fasm=getenv("PPY_FASM"); b.fasm_args=getenv("PPY_FASM_ARGS"); b.cc=getenv("PPY_CC"); b.cc_args=getenv("PPY_CC_ARGS");
+    b.pack=1; b.run_build=-1;
+    const char *out=NULL;
+    int only_asm=0, count_allocs=0, check=0;
+    unsigned costack=0, chunk=0;
     char **inputs=(char**)xmalloc(sizeof(char*)*(size_t)(argc+1)); int ninputs=0;
-#if defined(PPY_KOLIBRI)
-    AotTarget target=AOT_TARGET_KOLIBRI;
-#elif defined(__APPLE__)
-    AotTarget target=AOT_TARGET_MACOS;
-#else
-    AotTarget target=AOT_TARGET_LINUX;
-#endif
+    const AotTargetDef *t=aot_target(aot_target_host());
+    b.target_name=t->name;
     for(int i=0;i<argc;i++){
         const char *a=argv[i];
         #define NEXT() (i+1<argc ? argv[++i] : (usage(program), (char*)NULL))
+        #define BYTES(v) do{ const char *x_=NEXT(); if(!x_) return 2; v=(unsigned)strtoul(x_,NULL,0); }while(0)
         if(!strcmp(a,"-o")){ if(!(out=NEXT())) return 2; }
-        else if(!strcmp(a,"--target")){ const char *t=NEXT(); if(!t) return 2;
-            if(!strcmp(t,"linux")) target=AOT_TARGET_LINUX; else if(!strcmp(t,"kolibri")||!strcmp(t,"kolibrios")) target=AOT_TARGET_KOLIBRI;
-            else if(!strcmp(t,"macos")||!strcmp(t,"darwin")) target=AOT_TARGET_MACOS;
-            else { fprintf(stderr,"plainpy: unknown target '%s' (linux, kolibri, macos)\n",t); return 2; } }
+        else if(!strcmp(a,"--target")){ const char *n=NEXT(); if(!n) return 2;
+            if(!(t=aot_target_find(n))){ fprintf(stderr,"plainpy: unknown target '%s'; the targets:\n",n); aot_targets_help(stderr); return 2; }
+            b.target_name=n; }
         else if(!strcmp(a,"-S")) only_asm=1;
-        else if(!strcmp(a,"--fasm")){ if(!(fasm=NEXT())) return 2; }
-        else if(!strcmp(a,"--fasm-args")){ if(!(fasm_tmpl=NEXT())) return 2; }
-        else if(!strcmp(a,"--cc")){ if(!(cc=NEXT())) return 2; }
-        else if(!strcmp(a,"--cc-args")){ if(!(cc_tmpl=NEXT())) return 2; }
-        else if(!strcmp(a,"--stack")){ const char *v=NEXT(); if(!v) return 2; stack=(unsigned)strtoul(v,NULL,0); }
-        else if(!strcmp(a,"-v")) verbose=1;
+        else if(!strcmp(a,"--fasm")){ if(!(b.fasm=NEXT())) return 2; }
+        else if(!strcmp(a,"--fasm-args")){ if(!(b.fasm_args=NEXT())) return 2; }
+        else if(!strcmp(a,"--cc")){ if(!(b.cc=NEXT())) return 2; }
+        else if(!strcmp(a,"--cc-args")){ if(!(b.cc_args=NEXT())) return 2; }
+        else if(!strcmp(a,"--port")){ if(!(b.port=NEXT())) return 2; }
+        else if(!strcmp(a,"--chip")){ if(!(b.chip=NEXT())) return 2; }
+        else if(!strcmp(a,"--build")) b.run_build=1;
+        else if(!strcmp(a,"--no-build")) b.run_build=0;
+        else if(!strcmp(a,"--arena")) BYTES(b.arena);
+        else if(!strcmp(a,"--stack")) BYTES(b.stack);
+        else if(!strcmp(a,"--costack")) BYTES(costack);
+        else if(!strcmp(a,"--chunk")) BYTES(chunk);
+        else if(!strcmp(a,"-v")) b.verbose=1;
         else if(!strcmp(a,"--count-allocs")) count_allocs=1;
-        else if(!strcmp(a,"--no-pack")) pack=0;
+        else if(!strcmp(a,"--no-pack")) b.pack=0;
         else if(!strcmp(a,"--check")) check=1;
         else if(!strcmp(a,"-h")||!strcmp(a,"--help")){ usage(program); return 0; }
         else if(a[0]=='-'){ fprintf(stderr,"plainpy: unknown option '%s'\n",a); usage(program); return 2; }
         else inputs[ninputs++]=(char*)a;
         #undef NEXT
+        #undef BYTES
     }
-    if(check) return aot_check_modules(inputs,ninputs,target);   /* modules to check, not a program */
+    b.t=t;
+    if(check) return aot_check_modules(inputs,ninputs,t->id);   /* modules to check, not a program */
     if(ninputs>1){ fprintf(stderr,"plainpy: more than one input file\n"); return 2; }
     if(ninputs==1) src_path=inputs[0];
     if(!src_path){ usage(program); return 2; }
-    if(!fasm) fasm=PPY_AOT_FASM;
-    if(!fasm_tmpl) fasm_tmpl=PPY_AOT_FASM_ARGS;
-    if(!cc) cc=PPY_AOT_CC;
-    if(!cc_tmpl) cc_tmpl=PPY_AOT_CC_ARGS;
+    if(b.port && t->id==AOT_TARGET_C && !strcmp(b.port,"posix")){   /* a program for this computer: its memory as on the others */
+        if(!costack) costack=65536;
+        if(!chunk) chunk=65536;
+        if(!b.stack) b.stack=1u<<20;
+    }
 
     /* 1. the entry script and, transitively, its imports */
     ppy_fs_use_project(src_path);                          /* (the project's packages: those that passed `plainpy check`) */
@@ -223,55 +179,18 @@ int aot_main(int argc, char **argv, const char *program){
     if(!src){ fprintf(stderr,"plainpy: %s\n",err?err:"cannot read input"); free(err); return 1; }
     if(load_program(&us,src_path,src)) return 1;
     /* 2. types, then one listing for the whole program */
-    AotCodegenOptions co; co.target=target; co.stack_size=stack; co.count_allocs=count_allocs;
+    AotCodegenOptions co; memset(&co,0,sizeof co);
+    co.target=t->id; co.stack_size=b.stack?b.stack:t->stack; co.count_allocs=count_allocs;
+    co.chunk=chunk?chunk:t->chunk; co.costack=costack?costack:t->costack;
     char *listing=NULL; size_t len=0;
     if(aot_compile(&co,us.v,us.n,&listing,&len)) return 1;
     char *base=out?xstrdup2(out):strip_ext(src_path);
-    char *asm_path=concat(base,".asm");
-    char *werr=NULL;
-    if(ppy_fs_write_file(asm_path,listing,len,&werr)){ fprintf(stderr,"plainpy: %s\n",werr?werr:"cannot write listing"); return 1; }
-    if(verbose) printf("wrote %s (%d module%s)\n",asm_path,us.n,us.n==1?"":"s");
+    char *asm_path=aot_concat(base,".asm");
+    if(aot_write_file(asm_path,listing,len,0)) return 1;
+    if(b.verbose) printf("wrote %s (%d module%s)\n",asm_path,us.n,us.n==1?"":"s");
     if(only_asm) return 0;
-
-    if(target==AOT_TARGET_MACOS){                          /* 3. C, then the C compiler */
-        char *csrc=NULL; size_t clen=0;
-        if(aot_x2c(listing,len,&csrc,&clen)) return 1;
-        char *c_path=concat(base,".c");
-        if(ppy_fs_write_file(c_path,csrc,clen,&werr)){ fprintf(stderr,"plainpy: %s\n",werr?werr:"cannot write the C file"); return 1; }
-        free(csrc);
-        if(verbose) printf("wrote %s\n",c_path);
-        ppy_fs_remove(base);
-        const char *tmpl=cc_tmpl; char big[256];
-        #if defined(__APPLE__)
-        if(cc_tmpl==(const char*)PPY_AOT_CC_ARGS && clen>400000){     /* a big program: one huge C function, whose register */
-            snprintf(big,sizeof big,"%s -mllvm -join-liveintervals=false -mllvm -enable-misched=false",PPY_AOT_CC_ARGS); tmpl=big; }   /* coalescing and instruction scheduling take clang most of the time */
-        #else
-        (void)big;
-        #endif
-        char *args=fasm_args(tmpl,c_path,base);
-        int rc=run_tool(cc,args,"--cc",verbose); free(args);
-        if(rc) return 1;
-        if(!ppy_fs_exists(base)){ fprintf(stderr,"plainpy: %s did not produce %s\n",cc,base); return 1; }
-        return 0;
-    }
-
-    /* 3. fasm writes the executable */
-    ppy_fs_remove(base);                                   /* fasm's exit status is not visible on KolibriOS */
-    char *args=fasm_args(fasm_tmpl,asm_path,base);
-    int rc=run_tool(fasm,args,"--fasm",verbose); free(args);
-    if(rc) return 1;
-    if(!ppy_fs_exists(base)){ fprintf(stderr,"plainpy: fasm did not produce %s (see its output)\n",base); return 1; }
-    if(target==AOT_TARGET_LINUX) ppy_platform_make_executable(base);   /* (fasm leaves it 0644) */
-    if(target==AOT_TARGET_KOLIBRI && pack){                /* 4. kpack: LZMA, unpacked by the kernel as it loads the program */
-        char *rerr=NULL, *raw=ppy_fs_try_read_file(base,&rerr); size_t rawn=ppy_fs_last_len;
-        if(!raw){ fprintf(stderr,"plainpy: %s\n",rerr?rerr:"cannot read the executable"); return 1; }
-        unsigned char *packed=NULL; size_t pn=0;
-        if(!aot_kpack((const unsigned char*)raw,rawn,&packed,&pn)){
-            if(ppy_fs_write_file(base,(const char*)packed,pn,&werr)){ fprintf(stderr,"plainpy: %s\n",werr?werr:"cannot write the executable"); return 1; }
-            if(verbose) printf("packed %s: %lu -> %lu bytes\n",base,(unsigned long)rawn,(unsigned long)pn);
-            free(packed);
-        }
-        free(raw);
-    }
-    return 0;
+    /* 3. the target makes the program */
+    b.src_path=src_path; b.base=base; b.asm_path=asm_path; b.listing=listing; b.len=len;
+    if(!b.stack) b.stack=co.stack_size;
+    return t->build(&b);
 }

@@ -2,7 +2,9 @@
 
 PlainPy is a compact bytecode compiler and stack-based virtual machine for a Python-shaped language, written from scratch in C. It has no external runtime dependencies beyond the standard C library. The project is designed to be portable and can target both host systems (Linux, macOS) and KolibriOS.
 
-Website: <https://c4simba.github.io/plainpy/> (`site/`).
+Website: <https://c4simba.github.io/plainpy/> (`site/`) - with a terminal where
+plainpy itself, compiled to WebAssembly, runs in the page (`make wasm`,
+[src/targets/wasm](src/targets/wasm/README.md)).
 
 ## Install
 
@@ -105,7 +107,11 @@ src/
   inflate.c                 inflating what tools/pack.c deflated into plainpy.lib
   stdlib/*.py               library modules written in Python (both modes)
   stdlib/_ppy_pkg/          the package manager (plainpy add / sync / check ...)
-  platform/                 the host (POSIX) and KolibriOS backends
+  targets/                  a folder per platform: its system interface and how plainpyc compiles
+                            for it (README.md): posix (plainpy on Linux/macOS, lx_emul.c, devsim.c),
+                            linux, kolibri, macos (x2c_host.c), c (ppy_port.h, x2c_port.c, ports),
+                            esp32 (port_esp32.c, the ESP-IDF project), wasm (the interpreter for the
+                            website's terminal: web.c)
   interp/                   the interpreter
     interp.h                its objects and API
     compile.c eval.c        bytecode compiler and the eval loop
@@ -127,11 +133,12 @@ src/
     runtime/*.asm           the runtime routines of compiled programs, by subject
     peep.c                  peephole pass and outlining over the listing
     kpack.c                 LZMA packing of KolibriOS executables
-    x2c.c x2c_rt.c          macos: the listing translated to C
+    x2c.c                   the listing translated to C (macos, c, esp32)
+    x2c_machine.c x2c_float.c  the i386 machine in C; floats as text, exactly, without a C library
 tools/pack.c                the build's packer: plainpy.lib (Python modules without comments and
-                            docstrings, the runtime routines, x2c_rt.c; deflated), kpack
+                            docstrings, the runtime routines, the C runtimes and ports; deflated), kpack
 tools/kolibrios-toolchain.sh  the i586-kolibrios cross toolchain (KolibriOS build)
-lib/*.py                    modules every program can import: kolibri (KolibriOS), ctypes, fastapi
+lib/*.py                    modules every program can import: kolibri (KolibriOS), machine (devices), ctypes, fastapi
 .github/workflows/build.yml builds, tests and releases (Linux, macOS, KolibriOS), uploads to the PPA
 .github/workflows/pages.yml the website (site/) on GitHub Pages
 debian/                     the Debian packaging Launchpad builds from (tools/launchpad.sh)
@@ -209,8 +216,9 @@ files or directories (the standard library, site-packages).
 ### Compile to a native executable
 
 See [Compiled mode](#compiled-mode-ahead-of-time-fasm) below: statically
-typed programs become small i386 executables for Linux or KolibriOS, or
-native macOS executables.
+typed programs become small i386 executables for Linux or KolibriOS, native
+macOS executables, or portable C for microcontrollers - ESP32 included
+([Targets](#targets-microcontrollers-esp32)).
 
 ## Compiled mode (ahead-of-time, fasm)
 
@@ -221,6 +229,8 @@ native executables:
 ./plainpy --compile --target linux app.py    # Linux i386 executable ./app
 ./plainpy --compile --target kolibri app.py  # KolibriOS application ./app
 ./plainpy --compile --target macos app.py    # native macOS executable ./app (via C, see below)
+./plainpy --compile --target c app.py        # portable C for a port: app.c + ppy_port.h
+./plainpy --compile --target esp32 app.py    # an ESP-IDF project app/ for an ESP32 chip
 ./plainpy --compile -S app.py                # only the assembly listing app.asm
 ```
 
@@ -763,7 +773,7 @@ builds into a native executable - arm64 on Apple silicon, no Rosetta, no fasm:
 ```
 
 The C program keeps the i386 machine the listing was written for
-(`src/aot/x2c_rt.c`, at the start of every such C file): 32-bit registers
+(`src/targets/macos/x2c_host.c` with `src/aot/x2c_machine.c`, at the start of every such C file): 32-bit registers
 and flags (kept lazily: what the last instruction compared, so `cmp` + `jl`
 becomes a C comparison), the x87 stack in double precision (which compiled
 code selects anyway), and a 4 GiB guest address space reserved in one
@@ -794,6 +804,70 @@ tests natively (the `*_linux` ones too, except those that need the scripted
 HTTP clients of `tests/x86run.py`); `tests/typed/expected/<name>.<target>.out`
 overrides a test's expected output for one target (`sys_linux.macos.out`:
 `darwin`).
+
+## Targets: microcontrollers, ESP32
+
+Every target is a folder of [src/targets](src/targets/README.md): its
+system interface, how plainpyc makes a program for it (`target.c`) and its
+README. The compiler is the same for all of them; what comes out of it is
+one i386 listing, which fasm assembles (linux, kolibri) or `aot/x2c.c`
+translates into C (macos, c, esp32).
+
+**The c target** writes the program as one portable C file plus
+[ppy_port.h](src/targets/c/ppy_port.h): the compiled Python, the runtime
+routines it uses and the i386 machine it was compiled for, in C variables,
+with no C library and no operating system needed - memory comes from an
+arena the port gives, print, input, time and everything else through a
+handful of port functions. Floats print and parse exactly without the C
+library (the same digits as CPython); only `math.sin`, `exp`, `log`, float
+`**` and the like take libm's when a program uses them. A port is one C
+file for a board; `--port template` writes one to fill in, `--port posix`
+one for this computer (and builds the program, to try it here):
+
+```sh
+plainpy --compile --target c --port template app.py   # app.c, ppy_port.h, ppy_port_template.c
+arm-none-eabi-gcc -mcpu=cortex-m4 -O2 -ffreestanding -DPPY_PORT_NO_LIBC -c app.c ppy_port_template.c
+```
+
+[src/targets/c/README.md](src/targets/c/README.md) is the porting guide:
+what a board needs (GCC or Clang, a 32/64-bit little-endian CPU, 64 KiB
+and up for the arena), building without any C library and with one, which
+standard library modules need which system calls, the device calls.
+
+**The esp32 target** is the c target with ESP-IDF's port
+([port_esp32.c](src/targets/esp32/port_esp32.c)) in an ESP-IDF project, built
+with `idf.py` when ESP-IDF is set up - any chip of the family
+(`--target esp32s3`, `esp32c3`, ...):
+
+```sh
+plainpy --compile --target esp32 examples/esp32/blink.py -o blink   # blink/, built
+cd blink && idf.py flash monitor
+```
+
+**Devices: `lib/machine.py`** is MicroPython's API, in part - `Pin`, `ADC`,
+`PWM`, `I2C`, `SPI`, `UART`, `sleep_ms`, `ticks_ms`, `reset`, `freq`,
+`unique_id`, `deepsleep` - over device calls a port answers
+(`ppy_port.h`: `PPY_DEV_*`). On a computer the interpreter, macos programs
+and the posix port answer them with a simulated board that prints what the
+program does, so device code runs without a board:
+
+```text
+$ plainpy examples/esp32/blink.py
+[pin 2] out
+[pin 2] = 1
+...
+```
+
+With the c and esp32 targets `ctypes` calls are linked with the program:
+`ctypes.CDLL(None).esp_get_free_heap_size()` calls ESP-IDF directly.
+
+**The interpreter in a browser** ([src/targets/wasm](src/targets/wasm/README.md)):
+`make wasm` builds plainpy with Emscripten - the same C, its standard library
+in Emscripten's memory file system - for the website's "Try it" terminal,
+which runs it in a Web Worker as a REPL. `make wasm-node` builds the same
+interpreter as a command for node, so its tests run on WebAssembly too
+(`node tests/wasm/repl_check.js` checks the REPL, `tests/wasm/page_check.js`
+the page in headless Chrome).
 
 ## Packages from PyPI
 
@@ -975,7 +1049,7 @@ The CI does the same (the toolchain kept between runs) and puts
 `plainpy-kolibrios.zip` into every release.
 
 `KOS_PORTS=1` takes newlib as the toolchain's one static `libc.a` (with
-`libm.a`; `src/platform/kolibri/ports_libc.c` gives the two things it leaves
+`libm.a`; `src/targets/kolibri/ports_libc.c` gives the two things it leaves
 to the program). Without it the Makefile expects an SDK with newlib as
 `libc.dll` (the layout under `/home/autobuild/tools/win32`):
 
@@ -1002,7 +1076,7 @@ Put the three files (and `lib/`) into one folder. The programs are packed
 the way plainpyc packs the KolibriOS programs it compiles (`src/aot/kpack.c`,
 the format of the system's kpack). Both use the system's SHELL as their
 console - through a ring buffer in the `{PID}-SHELL` shared memory
-(`src/platform/kolibri/console.c`) - and plainpyc runs `/sys/develop/fasm`.
+(`src/targets/kolibri/console.c`) - and plainpyc runs `/sys/develop/fasm`.
 Started without a script, the interpreter runs `main.py` of `KOS_IMPORT_DIR`
 (`make kolibrios KOS_IMPORT_DIR=...`, default `/hd0/1/import_path`).
 
@@ -1013,8 +1087,8 @@ Filesystem access is abstracted behind `src/fs.c` with swappable backends:
 | File | Purpose |
 |------|---------|
 | `src/fs.c` | Common path/module helpers and backend dispatch |
-| `src/platform/host/fs_host.c` | Default stdio backend for host builds |
-| `src/platform/kolibri/fs_kolibri.c` | KolibriOS/newlib backend (enabled with `PPY_FS_KOLIBRI`) |
+| `src/targets/posix/fs_host.c` | Default stdio backend for host builds |
+| `src/targets/kolibri/fs_kolibri.c` | KolibriOS/newlib backend (enabled with `PPY_FS_KOLIBRI`) |
 
 ### Public API
 

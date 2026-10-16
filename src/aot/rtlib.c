@@ -4,18 +4,19 @@
    those, their dependencies and their data end up in the program. */
 
 #include "model.h"
+#include "targets/targets.h"
 #include "pystdlib.h"
 
 typedef enum { RB_CODE, RB_DATA, RB_BSS } RtKind;
 typedef struct { RtKind kind; char name[48]; int target; /* -1 any */ char deps[16][48]; int ndeps; const char *text; size_t len; } RtBlock;
 
 struct AotRt {
-    AotTarget target;
+    AotAbi abi;                     /* the blocks of this system interface */
     RtBlock *b; int n;
     char (*used)[48]; int nused, cap;
 };
 
-static int parse_target(const char *w){ if(!strcmp(w,"linux")) return AOT_TARGET_LINUX; if(!strcmp(w,"kolibri")) return AOT_TARGET_KOLIBRI; return -2; }
+static int parse_target(const char *w){ if(!strcmp(w,"linux")) return AOT_ABI_LINUX; if(!strcmp(w,"kolibri")) return AOT_ABI_KOLIBRI; return -2; }
 
 /* Split the library into its ";;; kind name [target] [: deps]" blocks. */
 static void rt_parse(AotRt *rt){
@@ -51,7 +52,7 @@ static void rt_parse(AotRt *rt){
 
 AotRt *aot_rt_new(AotTarget target){
     AotRt *rt=PPY_NEW0(AotRt);
-    rt->target=target==AOT_TARGET_MACOS?AOT_TARGET_LINUX:target;          /* macos runs the Linux routines (aot/x2c.c) */
+    rt->abi=aot_target(target)->abi;                                  /* (macos, c, esp32 run the Linux routines: aot/x2c.c) */
     rt_parse(rt); return rt;
 }
 
@@ -63,7 +64,7 @@ void aot_rt_use(AotRt *rt, const char *name){
     snprintf(rt->used[rt->nused++],48,"%s",name);
     int found=0;
     for(int i=0;i<rt->n;i++){ RtBlock *b=&rt->b[i];
-        if(strcmp(b->name,name)||(b->target>=0&&b->target!=(int)rt->target)) continue;
+        if(strcmp(b->name,name)||(b->target>=0&&b->target!=(int)rt->abi)) continue;
         found=1;
         for(int d=0;d<b->ndeps;d++) aot_rt_use(rt,b->deps[d]);
     }
@@ -73,7 +74,7 @@ void aot_rt_use(AotRt *rt, const char *name){
 /* Append the used blocks of one kind, in library order. */
 void aot_rt_emit(AotRt *rt, int kind, void (*put)(void *ctx, const char *s, size_t n), void *ctx){
     for(int i=0;i<rt->n;i++){ RtBlock *b=&rt->b[i];
-        if((int)b->kind!=kind||(b->target>=0&&b->target!=(int)rt->target)||!aot_rt_used(rt,b->name)) continue;
+        if((int)b->kind!=kind||(b->target>=0&&b->target!=(int)rt->abi)||!aot_rt_used(rt,b->name)) continue;
         put(ctx,b->text,b->len);
     }
 }

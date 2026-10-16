@@ -17,7 +17,11 @@
 
 int mp_next2(IterObj *it, Value *a, Value *b);   /* (ops.c) */
 
+#if defined(PPY_WASM)
+#define RECURSION_LIMIT 250      /* (a browser's stack holds some 470 calls: RecursionError comes first) */
+#else
 #define RECURSION_LIMIT 1000
+#endif
 Value mp_iter_kind(int kind, Value src, Value aux, Value aux2);
 
 Value mp_set_copy(SetObj *s, Type *t);

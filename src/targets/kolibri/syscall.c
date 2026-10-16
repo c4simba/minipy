@@ -8,7 +8,7 @@
  * See https://wiki.kolibrios.org/wiki/SysFn (function reference).
  */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 
 int ppy_platform_has_syscall(void){ return 1; }
 

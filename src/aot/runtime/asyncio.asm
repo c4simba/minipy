@@ -19,10 +19,10 @@ rt_task_new:                    ; eax = argument bytes, edx = entry -> eax = new
         mov     ebx,eax
         mov     dword [ebx],2   ; the caller's reference and the scheduler's
         mov     dword [ebx+4],rt_task_free
-        mov     eax,65536
+        mov     eax,RT_COSTACK  ; its stack (a constant of the program: its target's)
         call    rt_os_alloc
         mov     [ebx+16],eax
-        add     eax,65536-64
+        add     eax,RT_COSTACK-64
         sub     eax,esi
         and     eax,-16
         sub     eax,20          ; edi esi ebx ebp, then "return" into the entry
@@ -49,7 +49,7 @@ rt_task_free:                   ; destroy routine of tasks
         mov     eax,[ebx+24]
         call    rt_decref
 @@:     mov     eax,[ebx+16]
-        mov     edx,65536
+        mov     edx,RT_COSTACK
         call    rt_os_free
         mov     eax,ebx
         pop     ebx

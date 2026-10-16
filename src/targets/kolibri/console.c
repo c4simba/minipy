@@ -22,7 +22,7 @@
  * All output is also echoed to stderr (the debug board).
  */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 
 /* ---- protocol constants (must match the shell's program_console.h) -------- */
 #define SC_EXIT 1

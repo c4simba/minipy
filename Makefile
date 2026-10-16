@@ -29,8 +29,11 @@ HOST_STRIP ?= $(if $(filter Darwin,$(shell uname -s)),strip -x,strip -s)
 #   src/aot/types/*        ... its type checker
 #   src/aot/codegen/*      ... its code generator
 #   src/aot/runtime/*.asm  ... the runtime routines of compiled programs
-#   src/platform/host/*    hosted (POSIX/stdio) backend
-#   src/platform/kolibri/* KolibriOS backend
+#   src/targets/*          a folder per platform: what runs there and how plainpyc
+#                          compiles for it (src/targets/README.md)
+#   src/targets/posix/*    plainpy and plainpyc on Linux and macOS (POSIX/stdio),
+#                          Linux system calls on other hosts (lx_emul.c)
+#   src/targets/kolibri/*  KolibriOS: plainpy's backend, the console of compiled programs
 # Every .c is compiled separately to a .o and linked. Headers live next to
 # their .c; all includes resolve through -Isrc. Two programs: plainpy (the
 # interpreter) and plainpyc (the compiler); neither carries the other.
@@ -38,15 +41,16 @@ HOST_STRIP ?= $(if $(filter Darwin,$(shell uname -s)),strip -x,strip -s)
 
 INTERP_SRC = $(patsubst src/%.c,%,$(sort $(wildcard src/interp/*.c src/interp/*/*.c)))
 AOT_SRC    = $(addprefix aot/,driver imports preludes namespaces pkgcheck rtlib peep kpack x2c) \
-             $(patsubst src/%.c,%,$(sort $(wildcard src/aot/types/*.c src/aot/codegen/*.c)))
+             $(patsubst src/%.c,%,$(sort $(wildcard src/aot/types/*.c src/aot/codegen/*.c))) \
+             targets/targets $(patsubst src/%.c,%,$(sort $(wildcard src/targets/*/target.c)))
 COMMON_SRC = util fs inflate ast py_lex py_parse py_dump py_front
 PLAINPY_SRC = $(COMMON_SRC) $(INTERP_SRC) main
 PLAINPYC_SRC = $(COMMON_SRC) $(AOT_SRC) aot/main
-HOST_PLATFORM_SRC    = platform/host/startup platform/host/fs_host platform/host/thread
-KOLIBRI_PLATFORM_SRC = platform/kolibri/startup platform/kolibri/console platform/kolibri/fs_kolibri platform/kolibri/syscall platform/kolibri/thread \
-                       platform/kolibri/ports_libc
+HOST_PLATFORM_SRC    = targets/posix/startup targets/posix/fs_host targets/posix/thread
+KOLIBRI_PLATFORM_SRC = targets/kolibri/startup targets/kolibri/console targets/kolibri/fs_kolibri targets/kolibri/syscall targets/kolibri/thread \
+                       targets/kolibri/ports_libc
 
-HEADERS  = $(wildcard src/*.h src/platform/*.h src/interp/*.h src/interp/*/*.h src/aot/*.h src/aot/*/*.h)
+HEADERS  = $(wildcard src/*.h src/targets/*.h src/targets/*/*.h src/interp/*.h src/interp/*/*.h src/aot/*.h src/aot/*/*.h)
 INCLUDES = -Isrc -I$(BUILD_DIR)/gen
 
 # plainpy is three files: plainpy, plainpyc and plainpy.lib, their data - the
@@ -63,13 +67,23 @@ PACK_SRC = tools/pack.c src/py_lex.c src/util.c src/inflate.c src/aot/kpack.c
 # src/aot/rtlib.c includes the generated file).
 RTLIB_ASM = $(addprefix src/aot/runtime/,$(addsuffix .asm,system exceptions memory gc str unicode_tables unicode \
             str_index str_search str_methods bytes codecs int_bytes strbuild float int64 int_text int_math none kinds \
-            list tuple set dict object file asyncio generator closure time math float_ops input kolibri_console))
-ifneq ($(filter-out $(RTLIB_ASM),$(wildcard src/aot/runtime/*.asm)),)
-$(error RTLIB_ASM (Makefile) does not list $(filter-out $(RTLIB_ASM),$(wildcard src/aot/runtime/*.asm)))
+            list tuple set dict object file asyncio generator closure time math float_ops input)) \
+            src/targets/kolibri/console.asm
+ifneq ($(filter-out $(RTLIB_ASM),$(wildcard src/aot/runtime/*.asm src/targets/*/*.asm)),)
+$(error RTLIB_ASM (Makefile) does not list $(filter-out $(RTLIB_ASM),$(wildcard src/aot/runtime/*.asm src/targets/*/*.asm)))
 endif
 RTLIB_TXT = $(BUILD_DIR)/gen/rtlib.asm
-# ... and the start of the C programs of the macos target (src/aot/x2c.c)
-X2C_TXT = $(BUILD_DIR)/gen/x2c_rt.c.txt
+# ... and the C files of the targets that make C (src/targets/*): the start of
+# every translated program (the runtime of a hosted one, of one for a port),
+# the port's interface and ports - name:file, the .c files a file includes
+# put in it (tools/cinline.awk)
+C_TEXT_SRC = x2c_rt:src/targets/macos/x2c_host.c x2c_port:src/targets/c/x2c_port.c port_h:src/targets/c/ppy_port.h \
+             port_posix:src/targets/c/port_posix.c port_template:src/targets/c/port_template.c \
+             esp32_port:src/targets/esp32/port_esp32.c esp32_cmake:src/targets/esp32/project/CMakeLists.txt \
+             esp32_main_cmake:src/targets/esp32/project/main/CMakeLists.txt esp32_sdkconfig:src/targets/esp32/project/sdkconfig.defaults
+C_TEXT_DEPS = $(foreach t,$(C_TEXT_SRC),$(word 2,$(subst :, ,$(t)))) src/aot/x2c_machine.c src/aot/x2c_float.c \
+              src/targets/posix/lx_emul.c src/targets/posix/devsim.c tools/cinline.awk
+C_TEXTS = $(BUILD_DIR)/gen/text/.stamp
 # ... and the standard library modules written in Python (src/pystdlib.c)
 STDLIB_PY  = $(shell find src/stdlib -name '*.py')
 # Each program carries only the modules it can use (a module and its submodules):
@@ -84,8 +98,8 @@ LIB_ID = $(BUILD_DIR)/gen/libid.h
 # the version (rewritten only when VERSION changes: the programs are built again then)
 VERSION_H = $(BUILD_DIR)/gen/version.h
 
-.PHONY: all test test-update test-typed test-leaks test-pkg bench clean kolibrios kolibrios-debug clean-kolibri debug \
-        install uninstall dist deb rpm kolibrios-dist print-version FORCE
+.PHONY: all test test-update test-typed test-leaks test-pkg test-port bench clean kolibrios kolibrios-debug clean-kolibri debug \
+        install uninstall dist deb rpm kolibrios-dist print-version wasm wasm-node FORCE
 
 all: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 
@@ -97,17 +111,19 @@ $(RTLIB_TXT): $(RTLIB_ASM)
 	@mkdir -p $(dir $@)
 	cat $(RTLIB_ASM) > $@
 
-$(X2C_TXT): src/aot/x2c_rt.c src/lx_emul.c
+$(C_TEXTS): $(C_TEXT_DEPS)
 	@mkdir -p $(dir $@)
-	awk '/^#include "lx_emul.c"/{ while((getline l < "src/lx_emul.c")>0) print l; next } { print }' src/aot/x2c_rt.c > $@
+	@for t in $(C_TEXT_SRC); do awk -f tools/cinline.awk "$${t#*:}" > "$(dir $@)$${t%%:*}.txt" || exit 1; done
+	@touch $@
 
 # plainpy.lib and its id (libid.h, compiled into the programs)
-$(LIB): $(STDLIB_PY) $(RTLIB_TXT) $(X2C_TXT) $(PACK) Makefile
+$(LIB): $(STDLIB_PY) $(RTLIB_TXT) $(C_TEXTS) $(PACK) Makefile
 	@mkdir -p $(dir $@)
 	$(PACK) lib $@ $(LIB_ID).tmp src/stdlib $(addprefix -i ,$(INTERP_ONLY_MODULES)) $(addprefix -c ,$(COMPILE_ONLY_MODULES)) \
-		-t rtlib $(RTLIB_TXT) -t x2c_rt $(X2C_TXT) $(sort $(STDLIB_PY))
+		-t rtlib $(RTLIB_TXT) $(foreach t,$(C_TEXT_SRC),-t $(word 1,$(subst :, ,$(t))) $(BUILD_DIR)/gen/text/$(word 1,$(subst :, ,$(t))).txt) \
+		$(sort $(STDLIB_PY))
 	cmp -s $(LIB_ID).tmp $(LIB_ID) || cp $(LIB_ID).tmp $(LIB_ID)
-$(LIB_ID): $(LIB)
+$(LIB_ID): $(LIB) ; @:      # (a recipe: make looks at libid.h again after the lib is made, so the programs are built again)
 
 $(HOST_LIB): $(LIB)
 	cp $< $@
@@ -135,7 +151,7 @@ $(BUILD_DIR)/host/pystdlib_compile.o: src/pystdlib.c $(LIB_ID) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(INCLUDES) -DPPY_LIB_COMPILER=1 -c $< -o $@
 
 # (CPPFLAGS and LDFLAGS: what a distribution's build adds - debian/rules)
-$(BUILD_DIR)/host/%.o: src/%.c $(HEADERS) src/lx_emul.c
+$(BUILD_DIR)/host/%.o: src/%.c $(HEADERS) src/targets/posix/lx_emul.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread $(INCLUDES) -c $< -o $@
 
@@ -168,6 +184,10 @@ test-typed: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 test-leaks: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 	@TARGET=$${TARGET:-$(TYPED_TARGET)} sh tests/run_leak_tests.sh
 
+# the c target: exact float text, the program's C freestanding, the typed suite on its posix port
+test-port: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
+	@sh tests/run_port_tests.sh
+
 # the package manager (plainpy add / sync / check ...) on a package index of its own
 test-pkg: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 	@TARGET=$${TARGET:-$(TYPED_TARGET)} sh tests/run_pkg_tests.sh
@@ -199,7 +219,7 @@ KOS_KPACK     ?= 1
 # KOS_PORTS=1: the toolchain tools/kolibrios-toolchain.sh builds from
 # KolibriOS/ports (KOS32_SDK=<where it is>: what the CI uses) - newlib as one
 # static libc.a in the toolchain's sysroot, a few things it leaves out given
-# by src/platform/kolibri/ports_libc.c. Otherwise an SDK with newlib as
+# by src/targets/kolibri/ports_libc.c. Otherwise an SDK with newlib as
 # libc.dll (KOS_SDK_LIBDIR) and its crt.
 KOS_PORTS ?= 0
 ifeq ($(KOS_PORTS),1)
@@ -264,6 +284,44 @@ $(KOS_BIN) $(KOS_BINC): $(KOS_BUILD_DIR)/%:
 
 $(KOS_BIN): $(KOS_OBJ) $(PACK)
 $(KOS_BINC): $(KOS_OBJC) $(PACK)
+
+# ---------------------------- WebAssembly (src/targets/wasm) ---------------
+# The interpreter in a browser page (site/try.js), built with Emscripten's emcc
+# (EMCC=..., or in its Docker image: emscripten/emsdk):
+#   make wasm        build/wasm/plainpy.js, .wasm, .data (plainpy.lib and lib/ inside)
+#   make wasm-node   build/wasm/node/plainpy: the same interpreter as a command for
+#                    node, to run the tests on it: PLAINPY=build/wasm/node/plainpy sh tests/run_tests.sh
+# (WebAssembly keeps locals where the collector's stack scan cannot see them: it collects
+# between the REPL's pieces only - src/interp/obj.c, mp_gc_safe_point.)
+EMCC     ?= emcc
+WASM_DIR  = $(BUILD_DIR)/wasm
+WASM_SRC  = $(addprefix src/,$(addsuffix .c,$(COMMON_SRC) $(INTERP_SRC) $(HOST_PLATFORM_SRC))) src/pystdlib.c
+WASM_CFLAGS = -std=gnu99 -O2 -w -DPPY_WASM=1 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm $(INCLUDES)
+WASM_LDFLAGS = -O2 -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sSTACK_SIZE=8388608 -lm
+WASM_OBJ  = $(patsubst src/%.c,$(WASM_DIR)/obj/%.o,$(WASM_SRC))
+$(WASM_DIR)/obj/%.o: src/%.c $(HEADERS) src/targets/posix/lx_emul.c src/targets/posix/devsim.c
+	@mkdir -p $(dir $@)
+	$(EMCC) $(WASM_CFLAGS) -c $< -o $@
+$(WASM_DIR)/obj/pystdlib.o: $(LIB_ID)
+$(WASM_DIR)/obj/main.o: $(VERSION_H)
+wasm: $(WASM_DIR)/plainpy.js
+$(WASM_DIR)/plainpy.js: $(WASM_OBJ) $(WASM_DIR)/obj/targets/wasm/web.o $(LIB) $(LIB_PY)
+	@mkdir -p $(WASM_DIR)/data/lib
+	cp $(LIB) $(WASM_DIR)/data/plainpy.lib
+	cp $(LIB_PY) $(WASM_DIR)/data/lib/
+	$(EMCC) $(WASM_OBJ) $(WASM_DIR)/obj/targets/wasm/web.o -o $@ $(WASM_LDFLAGS) \
+		-sMODULARIZE=1 -sEXPORT_NAME=createPlainpy -sENVIRONMENT=web,worker,node -sINVOKE_RUN=0 -sEXIT_RUNTIME=0 \
+		-sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_ppy_web_start,_ppy_web_run -sEXPORTED_RUNTIME_METHODS=ccall,FS \
+		--preload-file $(WASM_DIR)/data@/plainpy
+wasm-node: $(WASM_DIR)/node/plainpy
+$(WASM_DIR)/node/plainpy: $(WASM_OBJ) $(WASM_DIR)/obj/main.o src/targets/wasm/node_pre.js $(LIB) $(LIB_PY)
+	@mkdir -p $(WASM_DIR)/node/lib
+	cp $(LIB) $(WASM_DIR)/node/plainpy.lib
+	cp $(LIB_PY) $(WASM_DIR)/node/lib/
+	$(EMCC) $(WASM_OBJ) $(WASM_DIR)/obj/main.o -o $(WASM_DIR)/node/plainpy.js $(WASM_LDFLAGS) \
+		-sENVIRONMENT=node -sNODERAWFS=1 -sEXIT_RUNTIME=1 --pre-js src/targets/wasm/node_pre.js
+	printf '#!/bin/sh\nexec node "$$(dirname "$$0")/plainpy.js" "$$@"\n' > $@
+	chmod +x $@
 
 # ---------------------------- Installing, packages -------------------------
 # make install puts the programs into $(PREFIX)/bin and their data into

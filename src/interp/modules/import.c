@@ -26,14 +26,24 @@ static Value syntax_error(const char *file, int line, const char *msg){
     Value ent[3]={mp_str(file),v_int(line),mp_str("<module>")}; mp_list_append(x->tb,mp_tuple(3,ent));
     return e;
 }
-static CodeObj *compile_source(const char *src, const char *file, const char *modname){
+/* every line number of a tree moved by d (eval's wrapper adds a line before the expression) */
+static void shift_lines(PyNode *n, int d){
+    if(!n) return;
+    n->line+=d; if(n->line<1) n->line=1;
+    n->end_line+=d; if(n->end_line<1) n->end_line=1;
+    for(int i=0;i<4;i++) shift_lines(n->n[i],d);
+    for(int i=0;i<5;i++) for(int j=0;j<n->L[i].n;j++) shift_lines(n->L[i].v[j],d);
+}
+static CodeObj *compile_source_at(const char *src, const char *file, const char *modname, int shift){
     PyParse pp;
-    if(py_parse(&pp,file,src,strlen(src))){ char m[512]; snprintf(m,sizeof m,"%s",pp.error); mp_raise(syntax_error(file,pp.error_line,m)); }
+    if(py_parse(&pp,file,src,strlen(src))){ char m[512]; snprintf(m,sizeof m,"%s",pp.error); mp_raise(syntax_error(file,pp.error_line+shift>0?pp.error_line+shift:1,m)); }
+    if(shift) shift_lines(pp.mod,shift);
     char *err=NULL; int line=0;
     CodeObj *co=mp_compile(pp.mod,file,modname,&err,&line);
     if(!co) mp_raise(syntax_error(file,line,err));
     return co;
 }
+static CodeObj *compile_source(const char *src, const char *file, const char *modname){ return compile_source_at(src,file,modname,0); }
 /* compile(source, filename, mode): a code object; mode "eval": the expression's value is left in
    __mp_eval__ (CO_EVAL marks it), "exec" / "single": statements */
 #define CO_EVAL 0x40000000
@@ -50,8 +60,8 @@ Value mp_compile_text(Value src, const char *file, const char *mode){
     if(ev){ while(*s==' '||*s=='\t') s++;                       /* (eval: leading spaces and tabs are allowed) */
         size_t n=strlen(s); text=(char*)xmalloc(n+32); snprintf(text,n+32,"__mp_eval__ = (\n%s\n)\n",s); }
     else text=xstrdup2(s);
-    mp_remember_source(file,text);
-    CodeObj *co=compile_source(text,file,"__main__");
+    mp_remember_source(file,ev?s:text);                      /* (eval: its lines as given: the wrapper is not shown) */
+    CodeObj *co=compile_source_at(text,file,"__main__",ev?-1:0);
     free(text);
     if(ev) co->flags|=CO_EVAL;
     return v_obj(co);

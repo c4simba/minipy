@@ -57,6 +57,8 @@ jobs:
       - name: Typed tests (compiled to i386 Linux programs)
         if: matrix.arch == 'x86_64'
         run: make test-typed
+      - name: The C target (exact floats, freestanding C, the typed suite on its posix port)
+        run: make test-port
       - name: Packages
         run: |
           make dist deb rpm VERSION="$VERSION"
@@ -90,6 +92,8 @@ jobs:
         run: make -j"$(sysctl -n hw.ncpu)" VERSION="$VERSION"
       - name: Tests
         run: make test
+      - name: The C target (exact floats, freestanding C)
+        run: QUICK=1 make test-port
       - name: Tarball
         run: |
           make dist VERSION="$VERSION"
@@ -204,9 +208,62 @@ jobs:
           cd /tmp && plainpy -v
           printf 'import json\nprint(json.dumps([1, "two"]))\n' > t.py && plainpy t.py
 
+  # the interpreter as WebAssembly (the website's terminal): built, its REPL checked,
+  # the interpreter's tests run on it (but those that need threads: a page has none)
+  wasm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+      - name: Build
+        run: |
+          make -j"$(nproc)"
+          make -j"$(nproc)" wasm wasm-node
+          ls -l build/wasm
+      - name: The REPL of the website's terminal
+        run: node tests/wasm/repl_check.js
+      - name: The interpreter's tests on WebAssembly
+        run: SKIP="thread_test stdlib_threading_test stdlib_logging_handlers_test" PLAINPY=build/wasm/node/plainpy sh tests/run_tests.sh
+
+  # the esp32 target: the examples built for chips of both kinds (Xtensa, RISC-V) by ESP-IDF
+  esp32:
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v6.1
+    strategy:
+      fail-fast: false
+      matrix:
+        chip: [esp32, esp32s3, esp32c3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: plainpy
+        run: |
+          command -v cc >/dev/null || (apt-get update && apt-get install -y build-essential)
+          make -j"$(nproc)"
+      - name: The examples as ESP-IDF projects, built
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          for ex in blink sensors; do
+            ./plainpy --compile --target ${{ matrix.chip }} --build examples/esp32/$ex.py -o build/esp32/$ex
+            ls -l build/esp32/$ex/build/$ex.bin
+          done
+      - name: blink in QEMU's ESP32
+        if: matrix.chip == 'esp32'
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa && . "$IDF_PATH/export.sh"
+          cd build/esp32/blink/build
+          esptool.py --chip esp32 merge_bin -o merged.bin --fill-flash-size 4MB @flash_args
+          timeout 30 qemu-system-xtensa -nographic -machine esp32 -m 4M -drive file=merged.bin,if=mtd,format=raw > qemu.log 2>&1 || true
+          tr -d '\r' < qemu.log | grep -E 'blinked|exit status'
+          grep -q 'blinked 3 times in' qemu.log && grep -q 'exit status 0' qemu.log
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, macos, kolibrios, packages, launchpad-check]
+    needs: [linux, macos, kolibrios, packages, launchpad-check, esp32, wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

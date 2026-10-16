@@ -2,6 +2,7 @@
    Calls of C functions through ctypes (cdecl). */
 
 #include "gen.h"
+#include "targets/targets.h"
 
 /* A C function through ctypes (cdecl, i386 System V): the arguments are
    built in a block the call finds 16-byte aligned, the old esp saved above
@@ -30,7 +31,7 @@ static int c_variadic_fixed(const char *sym){
     return -1;
 }
 static void ccall_marker(F *f, ACFunc *cf, const int *kinds, int n){
-    if(gg->target!=AOT_TARGET_MACOS) return;
+    if(aot_target(gg->target)->out!=AOT_OUT_C) return;            /* (the C translation calls the function itself: aot/x2c.c) */
     char sig[64]; int k=0, fixed=cf->nargtypes>=0 ? cf->nargtypes : c_variadic_fixed(cf->sym);
     sig[k++]=ct_letter(cf->restype); sig[k++]=':';
     for(int i=0;i<n;i++){ if(i==fixed) sig[k++]='|'; sig[k++]=ct_letter(kinds[i]); }

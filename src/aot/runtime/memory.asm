@@ -84,10 +84,10 @@ rt_alloc:                       ; eax = bytes -> eax = zeroed memory
         cmp     ecx,ebx
         jae     .take
         push    edx
-        mov     eax,65536
+        mov     eax,RT_CHUNK    ; (a constant of the program: its target's)
         call    rt_os_alloc
         pop     edx
-        lea     ecx,[eax+65536]
+        lea     ecx,[eax+RT_CHUNK]
         mov     [rt_arena_end],ecx
 .take:  lea     ecx,[eax+ebx]
         mov     [rt_arena],ecx

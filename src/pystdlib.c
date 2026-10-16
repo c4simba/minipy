@@ -1,7 +1,7 @@
 /* The standard library modules written in Python, from plainpy.lib (see
    pystdlib.h; tools/pack.c writes the file and says how it is laid out). */
 #include "pystdlib.h"
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include "inflate.h"
 #include "fs.h"
 #include "libid.h"

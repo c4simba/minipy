@@ -2,6 +2,7 @@
    The type of every expression (ck_expr). */
 
 #include "check.h"
+#include "targets/targets.h"
 
 /* the number of arguments of a built-in type's method taken as a value (xs.append: 1); -1: not one of those */
 static int builtin_method_arity(Ty *t, const char *m){
@@ -142,7 +143,7 @@ Ty *ck_expr_inner(Ck *c, Expr *e){
         case EXPR_ATTRIBUTE:{
             if(is_sys(c,e->a)){
                 if(!strcmp(e->name,"_compiled")){ e->kind=EXPR_TRUE; e->a=NULL; xi->kind=X_NONE; return TY_BOOL_T; }   /* (True here) */
-                if(!strcmp(e->name,"platform")){ xi->kind=X_CONST_STR; xi->name=c->p->target==AOT_TARGET_KOLIBRI?"kolibrios":c->p->target==AOT_TARGET_MACOS?"darwin":"linux"; return TY_STR_T; }
+                if(!strcmp(e->name,"platform")){ xi->kind=X_CONST_STR; xi->name=aot_target(c->p->target)->platform; return TY_STR_T; }
                 if(!strcmp(e->name,"version")){ xi->kind=X_CONST_STR; xi->name="3.14.0 (plainpy)"; return TY_STR_T; }  /* (as the interpreter's) */
                 if(!strcmp(e->name,"byteorder")){ xi->kind=X_CONST_STR; xi->name="little"; return TY_STR_T; }
                 if(!strcmp(e->name,"maxsize") || !strcmp(e->name,"maxunicode")){ Expr *v=lit_int(e->line,e->name[3]=='s'?0x7FFFFFFFFFFFFFFFLL:0x10FFFF); void *keep=e->ty; *e=*v; e->ty=keep; return ck_expr_inner(c,e); }

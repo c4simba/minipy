@@ -14,20 +14,53 @@ rt_ffloor:                      ; st0 -> st0 = floor(st0)
         add     esp,4
         ret
 
-;;; code rt_fmod : rt_panic_zero rt_ffloor
+;;; code rt_fmod : rt_panic_zero
+; As CPython: r = fmod(a, b) (exact, fprem), b added when r and b differ in
+; sign, a zero r gets b's sign (a - floor(a/b)*b loses all of r for a big a)
 rt_fmod:                        ; st0 = a, st1 = b (both popped) -> st0 = a % b (sign of b)
         fxch
         ftst
         fnstsw  ax
         sahf
+        jp      @f              ; (b is a NaN: so is the result)
         jz      rt_panic_zero   ; b == 0
-        fxch                    ; st0 = a, st1 = b
-        fld     st0
-        fdiv    st0,st2
-        call    rt_ffloor       ; st0 = floor(a/b), st1 = a, st2 = b
-        fmul    st0,st2
-        fsubp   st1,st0         ; st0 = a - floor(a/b)*b, st1 = b
-        fstp    st1
+@@:     fxch                    ; st0 = a, st1 = b
+.again: fprem
+        fnstsw  ax
+        sahf
+        jp      .again          ; st0 = r = fmod(a, b), st1 = b
+        ftst
+        fnstsw  ax
+        sahf
+        jp      .done           ; (a NaN)
+        jz      .zero
+        jb      .rneg
+        fxch                    ; r > 0: b added when b < 0
+        ftst
+        fnstsw  ax
+        sahf
+        fxch
+        jae     .done
+        fadd    st0,st1
+        jmp     .done
+.rneg:  fxch                    ; r < 0: b added when b > 0
+        ftst
+        fnstsw  ax
+        sahf
+        fxch
+        jb      .done
+        fadd    st0,st1
+        jmp     .done
+.zero:  fstp    st0             ; st0 = b
+        ftst
+        fnstsw  ax
+        fstp    st0
+        fldz
+        sahf
+        jae     @f
+        fchs                    ; -0.0 for a negative b
+@@:     ret
+.done:  fstp    st1
         ret
 
 ;;; code rt_ffloordiv : rt_panic_zero rt_ffloor

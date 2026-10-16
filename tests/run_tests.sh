@@ -9,6 +9,7 @@
 #   tests/run_tests.sh --update   regenerate the golden files
 #
 # PLAINPY env var overrides the interpreter path (default: ./plainpy).
+# SKIP: tests left out, space-separated (the WebAssembly build has no threads).
 
 set -u
 
@@ -41,6 +42,7 @@ run_one() {
 
 if [ "$UPDATE" -eq 1 ]; then
     for t in $TESTS; do
+    case " ${SKIP:-} " in *" $t "*) continue;; esac
         run_one "$t" > "$EXP_DIR/$t.out"
         echo "updated $t.out"
     done
@@ -51,6 +53,7 @@ pass=0
 fail=0
 failed=""
 for t in $TESTS; do
+    case " ${SKIP:-} " in *" $t "*) continue;; esac
     exp="$EXP_DIR/$t.out"
     got=$(run_one "$t")
     if [ ! -f "$exp" ]; then

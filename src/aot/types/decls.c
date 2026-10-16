@@ -4,6 +4,7 @@
    (decided while compiling), the module's functions and classes. */
 
 #include "check.h"
+#include "targets/targets.h"
 
 /* typing.X or X (a name of the typing module or a built-in generic) */
 static const char *typing_name(Expr *e){
@@ -108,7 +109,7 @@ static void cached_properties(Ck *c, AotUnit *u, Stmt *cls){
 /* `if sys.platform == "kolibrios":` (!=, in, startswith, not/and/or of such): decided when
    compiling, only the branch for the target is kept (the other may use another system's
    calls, or define the same names) -> 1 true, 0 false, -1 not a platform test */
-static const char *target_platform(Ck *c){ return c->p->target==AOT_TARGET_KOLIBRI?"kolibrios":c->p->target==AOT_TARGET_MACOS?"darwin":"linux"; }
+static const char *target_platform(Ck *c){ return aot_target(c->p->target)->platform; }
 static int is_sys_platform(Expr *e){ return e->kind==EXPR_ATTRIBUTE && !strcmp(e->name,"platform") && e->a->kind==EXPR_NAME && !strcmp(e->a->name,"sys"); }
 static int is_str_lit(Expr *e){ return e->kind==EXPR_LITERAL && e->tok->kind==T_STRING && e->tok->i!=2; }
 static int platform_test(Ck *c, Expr *e){

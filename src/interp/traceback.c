@@ -201,12 +201,18 @@ static void print_one(SBuf *b, Value e){
     if(x->tb.k==V_OBJ && AS_LIST(x->tb)->len){
         sb_puts(b,"Traceback (most recent call last):\n");
         ListObj *l=AS_LIST(x->tb);
-        for(int64_t i=l->len-1;i>=0;i--){
+        TupleObj *prev=NULL; int64_t same=0;                      /* as CPython: a frame repeated more than 3 times in a row -> */
+        for(int64_t i=l->len-1;i>=0;i--){                         /* "[Previous line repeated N more times]" */
             TupleObj *t=AS_TUPLE(l->items[i]);
+            if(!prev || strcmp(mp_cstr(prev->items[0]),mp_cstr(t->items[0])) || prev->items[1].u.i!=t->items[1].u.i || strcmp(mp_cstr(prev->items[2]),mp_cstr(t->items[2]))){
+                if(same>3) sb_printf(b,"  [Previous line repeated %lld more time%s]\n",(long long)(same-3),same-3>1?"s":"");
+                prev=t; same=0; }
+            if(++same>3) continue;
             sb_printf(b,"  File \"%s\", line %lld, in %s\n",mp_cstr(t->items[0]),(long long)t->items[1].u.i,mp_cstr(t->items[2]));
             if(t->len>=5) frame_source(b,mp_cstr(t->items[0]),(int)t->items[1].u.i,IS(t->items[3],T_code)?(CodeObj*)t->items[3].u.o:NULL,(int)t->items[4].u.i);
             else source_line(b,mp_cstr(t->items[0]),(int)t->items[1].u.i);
         }
+        if(same>3) sb_printf(b,"  [Previous line repeated %lld more time%s]\n",(long long)(same-3),same-3>1?"s":"");
     }
     Type *t=TYPE(e);
     Value mod=mp_type_lookup_s(t,"__module__");

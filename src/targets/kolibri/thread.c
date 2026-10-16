@@ -7,7 +7,7 @@
  * new thread copies it out and flags that the slot is free to reuse.
  */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 
 #define KOS_TSTACK (64*1024)
 

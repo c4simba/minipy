@@ -1,6 +1,6 @@
 /* ========================= Entry point ========================= */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include "interp/interp.h"
 #include "fs.h"
 #include "py_ast.h"

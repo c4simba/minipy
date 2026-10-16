@@ -43,6 +43,7 @@ static void xb_printf(XBuf *b, const char *fmt, ...){
 
 static jmp_buf x_fail;
 static int x_line;
+static int x_port;                  /* X2C_PORT: a program for a port (targets/c/x2c_port.c) */
 static void xfail(const char *fmt, ...){
     va_list ap; va_start(ap,fmt);
     fprintf(stderr,"plainpy: C translation, listing line %d: ",x_line); vfprintf(stderr,fmt,ap); fprintf(stderr,"\n");
@@ -747,7 +748,7 @@ static void ccall(Item *it, Opnd *o){
     xb_printf(&out,"{ u32 s_=esp; ");
     if(ret!='v') xb_printf(&out,"%s r_=",rt);
     xb_printf(&out,"((%s(*)(%s))CFN(%d))(%s); ",rt,proto.s,imp,args.s);
-    if(!errno_fn) xb_printf(&out,"x2c_errno=errno; ");
+    if(!errno_fn) xb_printf(&out,x_port?"x2c_errno=ppy_port_errno(); ":"x2c_errno=errno; ");
     switch(ret){
         case 'v': break;
         case 'q': case 'Q': xb_printf(&out,"eax=(u32)r_; edx=(u32)((unsigned long long)r_>>32); "); break;
@@ -944,7 +945,7 @@ static void insn(Item *it){
     else if(IS("leave")) xb_printf(&out,"esp=ebp; ebp=D(esp); esp+=4; ");
     else if(IS("int")){
         if(n!=1 || o[0].k!=O_IMM || o[0].imm!=0x80) xfail("only int 0x80 is supported");
-        xb_printf(&out,"X2cRegs r_={eax,ebx,ecx,edx,esi,edi,ebp}; eax=x2c_syscall(m,&r_); ");
+        xb_printf(&out,"X2cRegs r_={eax,ebx,ecx,edx,esi,edi,ebp}; eax=x2c_syscall(m,&r_); %s",x_port?"if(x2c_exited) return; ":"");
     }
     else if(IS("sahf")) xb_printf(&out,"fk=FK_SAHF; fr=(eax>>8)&0xFFu; ");
     else if(IS("cld")) xb_printf(&out,"df=0; ");
@@ -1084,8 +1085,9 @@ static void reset(void){
     memset(&out,0,sizeof out);
 }
 
-int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
+int aot_x2c(const char *listing, size_t len, const X2cOptions *opt, char **res, size_t *reslen){
     reset();
+    x_port=opt && opt->mode==X2C_PORT;
     x_line=0;
     if(setjmp(x_fail)) return 1;
     /* lines, comments, markers */
@@ -1104,7 +1106,11 @@ int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
     layout(1);
     build_image();
 
-    { const char *x2c_prelude=ppy_lib_text("x2c_rt");                 /* (in plainpy.lib) */
+    if(x_port){                                                       /* what a port's build may change with -D */
+        xb_printf(&out,"/* plainpy --compile: a program for a port (ppy_port.h) */\n#ifndef PPY_ARENA_SIZE\n#define PPY_ARENA_SIZE %uu  /* the memory to ask ppy_port_arena() for (0: any) */\n#endif\n"
+                       "#ifndef PPY_STACK_SIZE\n#define PPY_STACK_SIZE %uu  /* the main stack, in the arena */\n#endif\n",opt->arena,opt->stack?opt->stack:32768u);
+    }
+    { const char *x2c_prelude=ppy_lib_text(x_port?"x2c_port":"x2c_rt");   /* (in plainpy.lib) */
       if(!x2c_prelude){ fprintf(stderr,"plainpyc: plainpy.lib has no C prelude\n"); exit(1); }
       xb_put(&out,x2c_prelude,strlen(x2c_prelude)); }
     xb_printf(&out,"\n/* ---------------- the program (translated from the listing) */\n");
@@ -1118,8 +1124,16 @@ int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
         if(col>=100 && i+1<image_len){ xb_put(&out,"\"\n\"",3); col=0; }
     }
     xb_printf(&out,"\";\n");
-    xb_printf(&out,"static X2cImport x2c_imports[%d] = {",nimports+1);
-    for(int i=0;i<nimports;i++) xb_printf(&out,"{\"%s\",\"%s\",0},",imports[i].lib,imports[i].sym);
+    if(x_port){                                       /* C functions linked with the program */
+        for(int i=0;i<nimports;i++) if(strcmp(imports[i].sym,"__errno_location")) xb_printf(&out,"extern void x2c_cfn%d(void) __asm__(X2C_ASMNAME(\"%s\"));\n",i,imports[i].sym);
+        xb_printf(&out,"static X2cImport x2c_imports[%d] = {",nimports+1);
+        for(int i=0;i<nimports;i++){
+            if(!strcmp(imports[i].sym,"__errno_location")) xb_printf(&out,"{\"%s\",\"%s\",(void*)x2c_errno_cell},",imports[i].lib,imports[i].sym);
+            else xb_printf(&out,"{\"%s\",\"%s\",(void*)x2c_cfn%d},",imports[i].lib,imports[i].sym,i); }
+    } else {
+        xb_printf(&out,"static X2cImport x2c_imports[%d] = {",nimports+1);
+        for(int i=0;i<nimports;i++) xb_printf(&out,"{\"%s\",\"%s\",0},",imports[i].lib,imports[i].sym);
+    }
     xb_printf(&out,"{0,0,0}};\n\n");
 
     int start=sym_find(entry_name[0]?entry_name:"start");
@@ -1154,7 +1168,12 @@ int aot_x2c(const char *listing, size_t len, char **res, size_t *reslen){
     for(int i=0;i<nctab;i++){ if(i%8==0) xb_printf(&out,"\n            ");
         if(ctab[i]>=0) xb_printf(&out,"&&L%d,",ctab[i]); else xb_printf(&out,"&&R%d,",-1-ctab[i]); }
     xb_printf(&out,"0};\n        u32 i_=(pc-0x%Xu)>>2;\n        if(i_>=%du || (pc&3u)) x2c_bad_jump(pc);\n        goto *ctab[i_];\n    }\n}\n\n",CODE_BASE,nctab);
-    xb_printf(&out,"int main(int argc, char **argv){\n"
+    if(x_port) xb_printf(&out,"int ppy_main(int argc, char **argv){\n"
+                   "    u32 sp=x2c_start(X2C_DATA_END,argc,argv);\n"
+                   "    memcpy(M+X2C_DATA_BASE,x2c_image,sizeof x2c_image-1);\n"
+                   "    x2c_run(M,sp);\n"
+                   "    return x2c_status;\n}\n");
+    else xb_printf(&out,"int main(int argc, char **argv){\n"
                    "    x2c_argc=argc; x2c_argv=argv;\n"
                    "    signal(SIGPIPE,SIG_IGN);\n"
                    "    x2c_map();\n"

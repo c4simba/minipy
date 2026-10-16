@@ -1,12 +1,14 @@
 # The website (site/) on GitHub Pages: https://<owner>.github.io/plainpy/.
 # Once, in the repository's Settings -> Pages: Source "GitHub Actions".
-# The page names the latest release; a new release publishes it again.
+# The page names the latest release; a new release publishes it again. Its
+# "Try it" terminal runs the interpreter built to WebAssembly here (make wasm:
+# Emscripten) into site/wasm/.
 name: pages
 
 on:
   push:
     branches: [main]
-    paths: ['site/**', '.github/workflows/pages.yml']
+    paths: ['site/**', 'src/**', 'lib/**', 'Makefile', '.github/workflows/pages.yml']
   release:
     types: [published]
   workflow_dispatch:
@@ -28,6 +30,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+      - name: The interpreter as WebAssembly (site/wasm)
+        run: |
+          make -j"$(nproc)"
+          make wasm
+          node tests/wasm/repl_check.js
+          mkdir -p site/wasm && cp build/wasm/plainpy.js build/wasm/plainpy.wasm build/wasm/plainpy.data site/wasm/
+          ls -l site/wasm
       - name: The latest release into the page
         env:
           GH_TOKEN: ${{ github.token }}

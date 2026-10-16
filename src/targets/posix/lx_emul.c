@@ -6,8 +6,9 @@
    linux_dirent64 / sockaddr layouts. Errors stay the host's errno values (-errno), as
    CPython reports them there: the standard library picks its tables by sys.platform.
 
-   This file is #included twice: by the interpreter (interp/modules/sys.c, sys.syscall) and,
-   as text, by the C programs of the macos target (aot/x2c_rt.c). The includer defines
+   This file is #included by the interpreter (interp/modules/sys.c, sys.syscall) and, as
+   text, by the C programs of the macos target (targets/macos/x2c_host.c) and the c
+   target's posix port (targets/c/port_posix.c). The includer defines
      LX_WORD                 the type of a register value (an address is one of them)
      LX_PTR(a)               the host pointer for an address a program passed
      LX_BLOCKING_BEGIN/END   around a call that may wait (the interpreter lets its other
@@ -218,6 +219,9 @@ static int64_t lx_new_socket(int fd, LX_WORD type){
     return fd;
 }
 
+/* the device calls of lib/machine.py (0x7000..0x7FFF): a simulated board */
+#include "targets/posix/devsim.c"
+
 static int64_t lx_syscall(const LX_WORD *r){
     #define P(i) ((void*)LX_PTR(r[i]))
     switch((uint32_t)r[0]){
@@ -382,6 +386,7 @@ static int64_t lx_syscall(const LX_WORD *r){
             return n; }
         case 373: LX_RET(shutdown((int)r[1],(int)r[2]));
         default:
+            if(((uint32_t)r[0]&0xFFFFF000u)==0x7000u) return lx_devsim(r);
             return -ENOSYS;                                 /* ENOSYS */
     }
     #undef P

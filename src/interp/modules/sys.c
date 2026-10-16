@@ -52,7 +52,7 @@ static Value sys_getframemodulename(int argc, Value *argv, TupleObj *kw){
 #define LX_BLOCKING_BEGIN Thread *lx_self_=mp_ts; mp_gil_release()
 #define LX_BLOCKING_END mp_gil_acquire(lx_self_)
 #define LX_FLUSH() mp_flush_stdout()
-#include "lx_emul.c"
+#include "targets/posix/lx_emul.c"
 #endif
 static Value sys_syscall(int argc, Value *argv, TupleObj *kw){
     mod_no_kw("syscall",kw);

@@ -196,7 +196,22 @@ NO_ASAN static void scan_words(void *lo, void *hi){
     for(void **p=(void**)a;(void*)p<hi;p++){ Obj *o=find_obj((uintptr_t)*p); if(o) mark_obj(o); }
 }
 static Obj **gc_gens; static int64_t ngc_gens, cgc_gens;   /* the generators among the objects (one walk finds them) */
+#if defined(PPY_WASM)
+/* WebAssembly keeps a function's locals outside memory, where scan_words
+   cannot see the objects C code holds: a collection waits for a point where
+   C holds none - between two pieces of a REPL (targets/wasm/web.c), or the
+   end of a program - and runs there (mp_gc_safe_point). */
+static int gc_pending, gc_safe;
+static void gc_collect_now(void);
+void mp_gc_collect(void){ if(!gc_safe){ gc_pending=1; return; } gc_collect_now(); }
+void mp_gc_safe_point(void){
+    if(!gc_pending && gc_count<gc_threshold) return;
+    gc_pending=0; gc_safe=1; gc_collect_now(); gc_safe=0;
+}
+static void gc_collect_now(void){
+#else
 void mp_gc_collect(void){
+#endif
     sorted=(Obj**)xrealloc(sorted,sizeof(Obj*)*(size_t)(gc_count>0?gc_count:1)); nsorted=0; ngc_gens=0;
     msp=0;
     for(Obj *o=gc_head;o;o=o->gcnext){ o->mark=0; sorted[nsorted++]=o;    /* one walk of the list: the rest goes by the array */

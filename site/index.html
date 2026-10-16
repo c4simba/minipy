@@ -319,6 +319,37 @@ th { color: var(--ink-3); font-weight: 500; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chart-foot { margin: 16px 0 0; color: var(--ink-3); font-size: 13.5px; line-height: 1.55; }
 
+/* ---------------------------------------------------------------- try it */
+.try { padding-bottom: 0; }
+.repl { margin-top: 36px; border-radius: 12px; border: 1px solid var(--term-edge); background: var(--term-bg); color: var(--term-ink); overflow: hidden; box-shadow: 0 24px 48px -28px rgba(25,24,20,.45); }
+.repl-bar { display: flex; align-items: center; gap: 7px; padding: 10px 12px 10px 14px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.repl-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3a3832; }
+.repl-bar span { margin: 0 auto 0 8px; font: 12px/1 var(--mono); color: var(--term-dim); }
+.repl-btn { padding: 4px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; background: transparent; color: var(--term-ink); font: 12px/1.4 var(--sans); cursor: pointer; }
+.repl-btn:hover:not(:disabled) { border-color: rgba(255,255,255,.35); }
+.repl-btn:disabled { opacity: .35; cursor: default; }
+.repl-screen { position: relative; height: 380px; overflow: auto; padding: 14px 16px 18px; font: 13.5px/1.6 var(--mono); cursor: text; }
+@media (max-width: 480px) { .repl-screen { height: 340px; font-size: 12.5px; padding: 12px; } }
+.repl-out { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.repl-out .in { color: var(--term-ink); }
+.repl-out .err { color: #ff9a8a; }
+.repl-out .dim { color: var(--term-dim); }
+.repl-out span:not(.in):not(.err):not(.dim) { color: #cfe8c4; }
+.repl-line { display: flex; align-items: flex-start; }
+.repl-prompt { color: var(--term-accent); white-space: pre; user-select: none; -webkit-user-select: none; }
+.repl-in { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; background: transparent; color: var(--term-ink); font: inherit; caret-color: var(--term-accent); }
+.repl-start {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border: 0; border-radius: 999px;
+  background: var(--accent); color: #fff; font: 600 15px/1 var(--sans); cursor: pointer; box-shadow: 0 8px 24px -10px rgba(0,0,0,.6);
+}
+.repl-start:hover { filter: brightness(1.08); }
+.repl [hidden] { display: none !important; }
+.repl-start svg { width: 18px; height: 18px; }
+.repl-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; color: var(--ink-3); }
+.chip { padding: 5px 12px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--surface); color: var(--ink-2); font: 13px/1.4 var(--sans); cursor: pointer; }
+.chip:hover { color: var(--ink); border-color: var(--ink-3); }
+
 /* ---------------------------------------------------------------- install */
 .ways { display: grid; gap: 16px; margin-top: 44px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 860px) { .ways { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -353,9 +384,10 @@ footer p { margin: 0 0 6px; max-width: 46em; }
       plainpy
     </a>
     <nav class="nav-links" aria-label="Sections">
+      <a href="#try">Try</a>
       <a class="hide-sm" href="#why">Why</a>
       <a class="hide-sm" href="#speed">Speed</a>
-      <a href="#install">Install</a>
+      <a class="hide-sm" href="#install">Install</a>
       <a class="hide-sm" href="https://github.com/c4simba/plainpy#readme">Docs</a>
       <a href="https://github.com/c4simba/plainpy">GitHub</a>
       <button class="theme-btn" type="button" aria-label="Switch between light and dark">
@@ -373,10 +405,10 @@ footer p { margin: 0 0 6px; max-width: 46em; }
       <div class="kicker">
         <a class="pill" href="https://github.com/c4simba/plainpy/releases/latest">Releases <span class="release" hidden></span></a>
         <span class="pill">MIT</span>
-        <span class="pill">Linux · macOS · KolibriOS</span>
+        <span class="pill">Linux · macOS · KolibriOS · ESP32</span>
       </div>
       <h1>Python,<br>plain<span class="dot">.</span></h1>
-      <p class="lead"><strong>plainpy</strong> runs Python&nbsp;3.14 programs and compiles typed ones into small native executables. One C codebase written from scratch, with <mark>nothing to install but itself</mark>.</p>
+      <p class="lead"><strong>plainpy</strong> runs Python&nbsp;3.14 programs and compiles typed ones into small native executables, or into C for microcontrollers. One C codebase written from scratch, with <mark>nothing to install but itself</mark>.</p>
 
       <div class="install" data-tabs>
         <div class="tabs" role="tablist" aria-label="Install plainpy">
@@ -414,6 +446,7 @@ footer p { margin: 0 0 6px; max-width: 46em; }
       </div>
       <div class="hero-links">
         <a href="#install">All the ways to install →</a>
+        <a href="#try">Try it in the browser</a>
         <a href="https://github.com/c4simba/plainpy#readme">Read the docs</a>
       </div>
     </div>
@@ -441,6 +474,33 @@ Hello, world!</pre>
     <div class="fact"><b>15.3×</b><span>faster than CPython&nbsp;3.14 on integer loops, compiled</span></div>
   </div>
 </div>
+
+<section id="try" class="try">
+  <div class="wrap">
+    <p class="eyebrow">Try it</p>
+    <h2>Python, right here in the page.</h2>
+    <p class="section-lead">The interpreter itself, compiled to WebAssembly with its standard library, runs in your browser: nothing is installed and nothing is sent anywhere. About 2&nbsp;MB, loaded when you start it.</p>
+    <div class="repl" id="repl">
+      <div class="repl-bar"><i></i><i></i><i></i><span>plainpy · WebAssembly</span>
+        <button type="button" class="repl-btn" data-act="stop" disabled>Stop</button>
+        <button type="button" class="repl-btn" data-act="clear">Clear</button>
+      </div>
+      <div class="repl-screen">
+        <pre class="repl-out" aria-live="polite"></pre>
+        <div class="repl-line" hidden><span class="repl-prompt">&gt;&gt;&gt; </span><textarea class="repl-in" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Python input"></textarea></div>
+        <button type="button" class="repl-start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>Start plainpy</button>
+      </div>
+    </div>
+    <div class="repl-examples"><span>Try:</span>
+        <button type="button" class="chip" data-repl-code="[n * n for n in range(10)]">squares</button>
+        <button type="button" class="chip" data-repl-code="def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\nprint([fib(i) for i in range(15)])">a function</button>
+        <button type="button" class="chip" data-repl-code="import json\nprint(json.dumps({&quot;name&quot;: &quot;plainpy&quot;, &quot;targets&quot;: [&quot;linux&quot;, &quot;macos&quot;, &quot;esp32&quot;]}, indent=2))">json</button>
+        <button type="button" class="chip" data-repl-code="from machine import Pin, sleep_ms\nled = Pin(2, Pin.OUT)\nfor i in range(6):\n    led.toggle()\n    sleep_ms(300)">a blinking LED</button>
+        <button type="button" class="chip" data-repl-code="class Vec:\n    def __init__(self, x, y):\n        self.x, self.y = x, y\n    def __add__(self, o):\n        return Vec(self.x + o.x, self.y + o.y)\n    def __repr__(self):\n        return f&quot;Vec({self.x}, {self.y})&quot;\n\nprint(Vec(1, 2) + Vec(3, 4))">a class</button>
+        <button type="button" class="chip" data-repl-code="{&quot;a&quot;: 1}[&quot;b&quot;]">an error</button>
+    </div>
+  </div>
+</section>
 
 <section id="why">
   <div class="wrap">
@@ -485,8 +545,8 @@ Hello, world!</pre>
       </article>
       <article class="feature">
         <div class="n">08</div>
-        <h3>C libraries through ctypes</h3>
-        <p><code>ctypes</code> over <code>dlopen</code> calls into any shared library, in both modes. The FastAPI server itself talks to libc’s sockets this way.</p>
+        <h3>Down to microcontrollers</h3>
+        <p><code>--target c</code> writes the program as portable C that needs no C library; <code>--target esp32</code> makes an ESP-IDF project. <code>machine</code> drives pins, PWM, ADC, I2C, SPI and UARTs, and <code>ctypes</code> calls the board’s SDK.</p>
       </article>
       <article class="feature">
         <div class="n">09</div>
@@ -812,5 +872,6 @@ print(fib(<span class="s">90</span>), <span class="s">2</span> ** <span class="s
   addEventListener("scroll", hide, { passive: true });
 })();
 </script>
+<script src="try.js" defer></script>
 </body>
 </html>

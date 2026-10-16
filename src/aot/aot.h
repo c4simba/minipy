@@ -9,10 +9,11 @@
    source --(py_parse, py_front)--> AST of the entry module and, transitively,
    of every module it imports --(aot/types)--> every name, parameter, return
    value, field and element gets one static type (annotated or inferred) --
-   (aot/codegen)--> one fasm listing for i386 --(fasm)--> a standalone
-   executable: a Linux ELF using int 0x80, or a KolibriOS application using
-   int 0x40. For macos the listing is translated to C instead (aot/x2c.c) and
-   the system C compiler builds a native executable. No libc, no linker, no runtime library: the few runtime routines a
+   (aot/codegen)--> one fasm listing for i386 --(the target's build step,
+   src/targets)--> a standalone program: a Linux ELF using int 0x80 or a
+   KolibriOS application using int 0x40 (fasm), or C (aot/x2c.c) that a C
+   compiler builds - natively on macOS, or for a port (a microcontroller,
+   ESP32). No libc, no linker, no runtime library: the few runtime routines a
    program needs (allocator, formatting, containers, console) are emitted into
    the listing only when it uses them.
 
@@ -25,9 +26,8 @@
 /* CLI entry (aot/driver.c): the arguments after the program name. */
 int aot_main(int argc, char **argv, const char *program);
 
-/* macos: the Linux listing, translated to C (aot/x2c.c) and built by the
-   system C compiler into a native executable. */
-typedef enum { AOT_TARGET_LINUX, AOT_TARGET_KOLIBRI, AOT_TARGET_MACOS } AotTarget;
+/* The targets (src/targets/targets.h describes each). */
+typedef enum { AOT_TARGET_LINUX, AOT_TARGET_KOLIBRI, AOT_TARGET_MACOS, AOT_TARGET_C, AOT_TARGET_ESP32 } AotTarget;
 
 /* One module of the program being compiled. */
 typedef struct AotUnit {
@@ -49,7 +49,9 @@ int aot_check_modules(char **modules, int nmodules, AotTarget target);
 
 typedef struct {
     AotTarget target;
-    unsigned stack_size;       /* kolibri: application stack size in bytes (0: 64 KiB) */
+    unsigned stack_size;       /* kolibri: application stack size in bytes (0: the target's) */
+    unsigned chunk;            /* memory taken from the system for small blocks at a time (0: the target's) */
+    unsigned costack;          /* the stack of a generator or a task (0: the target's) */
     int count_allocs;          /* debugging: report the heap blocks still allocated at exit */
 } AotCodegenOptions;
 
@@ -58,9 +60,21 @@ typedef struct {
    to stderr and returns 1. */
 int aot_compile(const AotCodegenOptions *opt, AotUnit **units, int nunits, char **out, size_t *outlen);
 
-/* macos: the listing as a C program (aot/x2c.c). Returns 0 on success; on
-   error prints "plainpy: ..." to stderr and returns 1. */
-int aot_x2c(const char *listing, size_t len, char **out, size_t *outlen);
+/* aot/x2c.c: the listing as a C program.
+     X2C_HOST  a program of a hosted system (targets/macos/x2c_host.c): main(),
+               a 4 GiB guest address space, the Linux calls done with the
+               host's, C functions found with dlopen;
+     X2C_PORT  a program for a port (targets/c/x2c_port.c): ppy_main(), memory
+               from an arena, the system through ppy_port.h, C functions
+               linked with it; no C library needed.
+   Returns 0 on success; on error prints "plainpy: ..." to stderr and returns 1. */
+typedef enum { X2C_HOST, X2C_PORT } X2cMode;
+typedef struct {
+    X2cMode mode;
+    unsigned stack;            /* X2C_PORT: the main stack (bytes) */
+    unsigned arena;            /* X2C_PORT: the memory to ask the port for (0: the port decides) */
+} X2cOptions;
+int aot_x2c(const char *listing, size_t len, const X2cOptions *opt, char **out, size_t *outlen);
 
 /* aot/peep.c: the text of one generated function, rewritten into shorter
    code with the same effect (a new heap string); PPY_NO_PEEP=1 copies it.

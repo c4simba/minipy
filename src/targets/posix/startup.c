@@ -1,6 +1,6 @@
 /* Host platform hooks: at startup SIGPIPE is ignored (as in CPython); nothing else to do. */
 
-#include "platform/platform.h"
+#include "targets/platform.h"
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>

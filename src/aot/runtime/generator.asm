@@ -28,10 +28,10 @@ rt_gen_new:                     ; eax = argument bytes, edx = descriptor -> eax 
         mov     eax,[edx+4]
         and     eax,1
         mov     [ebx+32],eax
-        mov     eax,65536
+        mov     eax,RT_COSTACK  ; its stack (a constant of the program: its target's)
         call    rt_os_alloc
         mov     [ebx+16],eax
-        add     eax,65536-64
+        add     eax,RT_COSTACK-64
         sub     eax,esi
         and     eax,-16
         sub     eax,20          ; edi esi ebx ebp, then "return" into rt_gen_start
@@ -214,7 +214,7 @@ end if
         mov     eax,[ebx+44]
         call    rt_decref
         mov     eax,[ebx+16]
-        mov     edx,65536
+        mov     edx,RT_COSTACK
         call    rt_os_free
         mov     eax,ebx
         pop     ebp edi esi ebx

@@ -3,6 +3,7 @@
    listing (aot_generate, aot_compile). */
 
 #include "gen.h"
+#include "targets/targets.h"
 
 static void emit_class(AClass *c){
     const char *mn= c->builtin || !c->mod || !c->mod->name ? "builtins" : c->mod->name;     /* (before it: its module's name, and "module." as */
@@ -107,7 +108,8 @@ static void import_fflush(AProg *p){
 
 int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *outlen){
     G g; memset(&g,0,sizeof g); gg=&g;
-    g.p=p; g.target=opt->target; g.stack=opt->stack_size?opt->stack_size:65536;
+    const AotTargetDef *tg=aot_target(opt->target);
+    g.p=p; g.target=opt->target; g.stack=opt->stack_size?opt->stack_size:tg->stack?tg->stack:65536;
     g_labels.n=0; for(int k=0;k<LB_KINDS;k++) g_fnlabels[k]=NULL;          /* a fresh set of label names */
     g_vtlabels=g_dtlabels=g_glabels=g_mlabels=NULL;
     g.rt=aot_rt_new(opt->target);
@@ -185,12 +187,16 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     const char *report="";
     if(opt->count_allocs && aot_rt_used(g.rt,"rt_alloc")){ rt("rt_live_report"); buf_printf(&g.data,"RT_COUNT_ALLOCS = 1\n");
         report=g.gc_on?"        call rt_gc_collect\n        call rt_live_report\n":"        call rt_live_report\n"; }   /* (cycles left at the end: collected first) */
-    int dyn=g.target!=AOT_TARGET_KOLIBRI && dyn_used(p);
-    if(dyn) import_fflush(p);
-    if(g.target!=AOT_TARGET_KOLIBRI){
-        if(g.target==AOT_TARGET_MACOS) buf_printf(&o,"; target macos: plainpy translates this listing to C (aot/x2c.c)\n");
+    int kolibri=tg->abi==AOT_ABI_KOLIBRI, dyn=tg->cfn!=AOT_CFN_NONE && dyn_used(p);
+    if(dyn && tg->cfn==AOT_CFN_DYNAMIC) import_fflush(p);
+    {   unsigned chunk=opt->chunk?opt->chunk:tg->chunk, costack=opt->costack?opt->costack:tg->costack;   /* (memory: aot/runtime memory.asm, generator.asm, asyncio.asm) */
+        buf_printf(&o,"; target %s\n",tg->name);
+        buf_printf(&g.data,"RT_CHUNK = %u     ; bytes the allocator takes from the system at a time\nRT_COSTACK = %u   ; the stack of a generator or a task\n",
+                   (chunk+4095u)&~4095u,(costack+4095u)&~4095u); }
+    if(!kolibri){
+        if(tg->out==AOT_OUT_C) buf_printf(&o,"; plainpy translates this listing to C (aot/x2c.c)\n");
         buf_printf(&o,"format ELF executable 3\nentry start\n\n");
-        if(dyn && g.target==AOT_TARGET_LINUX) emit_dynamic_header(&o,p);
+        if(dyn && tg->out==AOT_OUT_FASM) emit_dynamic_header(&o,p);
         buf_printf(&o,"segment readable executable\n\nstart:\n%s        fninit\n%s%s",aot_rt_used(g.rt,"rt_sys_args")?"        mov [rt_sp0],esp\n":"",FPU_DOUBLE,hook);
         buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     } else {
@@ -203,17 +209,17 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     buf_cat(&o,&g.text);
     buf_printf(&o,"\n; ---- runtime\n");
     aot_rt_emit(g.rt,0,put_cb,&o);
-    if(g.target!=AOT_TARGET_KOLIBRI) buf_printf(&o,"\nsegment readable writeable\n\n");
+    if(!kolibri) buf_printf(&o,"\nsegment readable writeable\n\n");
     else buf_printf(&o,"\n; ---- data\n");
     if(g.gc_on) buf_printf(&o,"        dd 0                    ; (rt_decref reads the dword before an object: a static one too)\n");
-    if(dyn) (g.target==AOT_TARGET_MACOS ? emit_import_slots : emit_dynamic_tables)(&o,p);
+    if(dyn) (tg->out==AOT_OUT_C ? emit_import_slots : emit_dynamic_tables)(&o,p);
     buf_cat(&o,&g.data);
     aot_rt_emit(g.rt,1,put_cb,&o);
-    if(g.target==AOT_TARGET_KOLIBRI) buf_printf(&o,"\nalign 4\ni_end:\n");
+    if(kolibri) buf_printf(&o,"\nalign 4\ni_end:\n");
     buf_printf(&o,"\n; ---- uninitialized\nalign 8\n");
     buf_cat(&o,&g.bss);
     aot_rt_emit(g.rt,2,put_cb,&o);
-    if(g.target==AOT_TARGET_KOLIBRI) buf_printf(&o,"align 16\n        rb %u\nstack_top:\nmem_end:\n",(g.stack+15)&~15u);
+    if(kolibri) buf_printf(&o,"align 16\n        rb %u\nstack_top:\nmem_end:\n",(g.stack+15)&~15u);
     *out=o.s; *outlen=o.len;
     gg=NULL;
     return 0;
