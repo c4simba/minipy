@@ -1,16 +1,16 @@
 """HTTP protocol client (CPython's http.client): HTTPConnection, HTTPResponse,
 HTTPMessage and their exceptions; HTTP/1.1 over a socket (KolibriOS's too).
-HTTPSConnection: over TLS (ssl: the system's OpenSSL 3) on Linux and macOS;
-elsewhere it raises when connecting."""
+HTTPSConnection: over TLS (ssl: the system's OpenSSL 3 on Linux and macOS,
+mbedtls.obj on KolibriOS); elsewhere it raises when connecting."""
 import sys
 import socket
-if sys.platform in ("linux", "darwin"):
+if sys.platform in ("linux", "darwin", "kolibrios"):
     if sys._compiled:
         import ssl
     else:
         try:
             import ssl
-        except ImportError:              # (no OpenSSL 3 here: http:// still works)
+        except ImportError:              # (no OpenSSL 3 / mbedtls.obj here: http:// still works)
             ssl = None
 from urllib.parse import urlsplit
 from _ppy_typing import TypeVar
@@ -709,7 +709,7 @@ def _body_bytes(body) -> bytes | None:
         return None
 
 
-if sys.platform in ("linux", "darwin"):
+if sys.platform in ("linux", "darwin", "kolibrios"):
     class HTTPSConnection(HTTPConnection):
         """HTTP over TLS: the server's certificate checked against the system's certificate
         authorities and its host name (context: an ssl.SSLContext of other choices)."""
@@ -720,7 +720,7 @@ if sys.platform in ("linux", "darwin"):
             super().__init__(host, port, timeout, source_address, blocksize)
             if not sys._compiled:
                 if ssl is None:
-                    raise NotConnected("HTTPS needs OpenSSL 3 (macOS: brew install openssl@3, Linux: its libssl3 package)")
+                    raise NotConnected("HTTPS needs OpenSSL 3 (macOS: brew install openssl@3, Linux: its libssl3 package) or, on KolibriOS, mbedtls.obj")
             self._context = context if context is not None else ssl.create_default_context()
 
         def connect(self) -> None:
@@ -728,7 +728,7 @@ if sys.platform in ("linux", "darwin"):
             self.sock = self._context.wrap_socket(sock, False, True, True, self.host)
 else:
     class HTTPSConnection(HTTPConnection):
-        """No TLS here (plainpy's ssl is the system's OpenSSL, on Linux and macOS): connecting raises."""
+        """No TLS here (plainpy's ssl: OpenSSL on Linux and macOS, mbedtls.obj on KolibriOS): connecting raises."""
         default_port = HTTPS_PORT
 
         def __init__(self, host: str, port: int | None = None, timeout: float | None = -1.0,
@@ -736,4 +736,4 @@ else:
             super().__init__(host, port, timeout, source_address, blocksize)
 
         def connect(self) -> None:
-            raise NotConnected("HTTPS is not supported on " + sys.platform + ": plainpy's TLS is the system's OpenSSL (Linux, macOS)")
+            raise NotConnected("HTTPS is not supported on " + sys.platform + ": plainpy's TLS is OpenSSL (Linux, macOS) or mbedtls.obj (KolibriOS)")

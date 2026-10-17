@@ -701,12 +701,22 @@ same way in the interpreter and in compiled programs: a binary library
 (OpenSSL, SQLite, a vendor's SDK ...) is used from Python and from compiled
 code alike.
 
+On KolibriOS a library is a COFF object (`.obj`) that function 68.19 loads,
+its functions found by name in its `EXPORTS` table: `ctypes.CDLL("x.obj")`
+looks in the program's folder (the script's in the interpreter, then
+plainpy's), `/sys/lib` and `/kolibrios/lib` - a compiled program loads it when
+it first calls one of its functions, and stops with a message when it is not
+there. The calls are cdecl, as GCC and clang build libraries (mbedtls.obj
+below); the stdcall functions of KolibriOS's own libraries (box_lib, libimg
+...) are not called this way.
+
 ### TLS: `ssl`, https
 
 [`ssl`](src/stdlib/ssl.py) is CPython's module over the system's OpenSSL 3
-(libssl, libcrypto) through ctypes - the same module in the interpreter and
-in compiled programs, so `http.client.HTTPSConnection` and
-`urllib.request.urlopen("https://...")` work in both (Linux and macOS):
+(libssl, libcrypto) through ctypes - on KolibriOS over mbedTLS (`mbedtls.obj`,
+below) - the same module in the interpreter and in compiled programs, so
+`http.client.HTTPSConnection` and `urllib.request.urlopen("https://...")`
+work in both (Linux, macOS, KolibriOS):
 
 ```python
 import socket, ssl, urllib.request
@@ -737,10 +747,29 @@ type of value there: `subject` is `"CN=localhost,O=...,C=XX"`) and
 What a program needs: OpenSSL 3 - on Linux the `libssl3` package (compiled
 programs are i386: `libssl3:i386`, loaded only when the program first uses
 TLS - one that does not runs without it), on macOS Homebrew's `openssl@3`.
-KolibriOS, the c and esp32 targets and the browser have no `ssl` (importing
-it raises ImportError; `HTTPSConnection` raises when it connects).
+The c and esp32 targets and the browser have no `ssl` (importing it raises
+ImportError; `HTTPSConnection` raises when it connects).
 `make test-ssl` runs plainpy's client and server against CPython's (TARGET
 of the compiled ones: `macos`, `linux` or `none`).
+
+KolibriOS has no TLS library of its own, so plainpy brings one: `make
+kolibri-tls` builds `build/kolibri/mbedtls.obj` (176 KB, kpacked; the
+KolibriOS dist has it next to plainpy) from KolibriOS's port of mbedTLS 2.16
+with LLVM - clang, llvm-link, opt, llvm-objcopy, no KolibriOS toolchain
+([tools/kolibri-tls](tools/kolibri-tls/build.sh): its own small C library,
+the sockets of function 75, the functions `ssl` calls and nothing else).
+Put it next to the program (or plainpy), in `/sys/lib` or in
+`/kolibrios/lib`. The differences from OpenSSL's `ssl`: TLS 1.2 at most
+(mbedTLS 2's newest: `version()` says `TLSv1.2`), mbedTLS's cipher suites
+(`set_ciphers` changes nothing), no `capath`; the certificate authorities of
+`create_default_context()` / `set_default_verify_paths()` are a `cacert.pem`
+(curl.se/ca/cacert.pem) next to the program, in `/sys/settings` or in
+`/kolibrios/etc` - none there: no peer is trusted, `CERT_NONE` or `cafile=`
+it is. The random generator is seeded from RDRAND, else from the jitter of
+the time stamp counter (weaker: an emulator without RDRAND). `make
+test-kolibri-ssl KOS_IMG=kolibri.img` runs a compiled client and server in
+KolibriOS under QEMU against CPython's
+([tests/run_kolibri_ssl_tests.sh](tests/run_kolibri_ssl_tests.sh)).
 
 ### System calls: the `sys` module
 

@@ -24,8 +24,9 @@ typedef enum { AOT_ABI_LINUX, AOT_ABI_KOLIBRI } AotAbi;
 /* what becomes of the listing: fasm assembles it / aot/x2c.c translates it to C */
 typedef enum { AOT_OUT_FASM, AOT_OUT_C } AotOut;
 /* C functions (ctypes): none / found when first called (dlopen, the ELF's
-   dynamic linking) / linked with the program (extern functions of the C file) */
-typedef enum { AOT_CFN_NONE, AOT_CFN_DYNAMIC, AOT_CFN_STATIC } AotCfn;
+   dynamic linking) / linked with the program (extern functions of the C file) /
+   KolibriOS's libraries (COFF, function 68.19), found when first called */
+typedef enum { AOT_CFN_NONE, AOT_CFN_DYNAMIC, AOT_CFN_STATIC, AOT_CFN_KOLIBRI } AotCfn;
 
 /* What a build step gets: the listing is written already (base.asm). */
 typedef struct AotBuild {

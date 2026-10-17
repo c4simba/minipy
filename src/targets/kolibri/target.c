@@ -28,7 +28,7 @@ static int build(AotBuild *b){
 }
 
 const AotTargetDef aot_target_kolibri={
-    AOT_TARGET_KOLIBRI, "kolibri", "kolibrios", "kolibrios", AOT_ABI_KOLIBRI, AOT_OUT_FASM, AOT_CFN_NONE,
+    AOT_TARGET_KOLIBRI, "kolibri", "kolibrios", "kolibrios", AOT_ABI_KOLIBRI, AOT_OUT_FASM, AOT_CFN_KOLIBRI,
     65536, 65536, 65536,
     "KolibriOS application (MENUET01, int 0x40), written by fasm, kpacked",
     build

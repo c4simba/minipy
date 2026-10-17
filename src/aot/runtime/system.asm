@@ -85,6 +85,125 @@ rt_clazy:                       ; [esp] = the entry of a C function whose librar
 ;;; data rt_clazy linux
 rt_clazy_nl     db 10
 
+;;; code rt_clazy kolibri : rt_errz rt_panic rt_sys_args
+rt_clazy:                       ; [esp] = the entry of a C function of a KolibriOS library (library, symbol, slot,
+        pushad                  ; handle), the call's return address and arguments above it: the library loaded
+        mov     esi,[esp+32]    ; (function 68.19: a bare name in the program's folder - rt_kpath - else in /sys/lib/,
+        mov     ebx,[esi+12]    ; /kolibrios/lib/; a path as it is), the function found in its exports and put in
+        mov     eax,[ebx]       ; the slot, then called as the call site called it
+        test    eax,eax
+        jnz     .find
+        mov     ecx,[esi]
+        call    .load
+        jnz     .got
+        mov     edi,rt_kpath    ; (the program's folder: its path up to the last /)
+        mov     ecx,edi
+@@:     mov     al,[ecx]
+        inc     ecx
+        cmp     al,'/'
+        jne     .nsl
+        mov     edi,ecx
+.nsl:   test    al,al
+        jnz     @b
+        mov     ecx,rt_kpath
+        mov     edx,rt_clazy_dir
+@@:     cmp     ecx,edi
+        je      @f
+        mov     al,[ecx]
+        mov     [edx],al
+        inc     ecx
+        inc     edx
+        jmp     @b
+@@:     mov     byte [edx],0
+        mov     edi,rt_clazy_dir
+        call    .under
+        jnz     .got
+        mov     edi,rt_clazy_sys
+        call    .under
+        jnz     .got
+        mov     edi,rt_clazy_kos
+        call    .under
+        jz      .nolib
+.got:   mov     ebx,[esi+12]
+        mov     [ebx],eax
+.find:  mov     edx,eax         ; the exports: (name, address) pairs, a 0 name after the last
+.next:  mov     edi,[edx]
+        test    edi,edi
+        jz      .nosym
+        mov     ecx,[esi+4]
+@@:     mov     al,[ecx]
+        cmp     al,[edi]
+        jne     .skip
+        inc     ecx
+        inc     edi
+        test    al,al
+        jnz     @b
+        mov     eax,[edx+4]
+        mov     ecx,[esi+8]
+        mov     [ecx],eax
+        mov     [esp+32],eax    ; (where the entry was: ret goes on to the function, the call's frame as it was)
+        popad
+        ret
+.skip:  add     edx,8
+        jmp     .next
+.load:  push    ebx             ; ecx = a path -> eax = the exports, 0 (ZF) if it is not loaded
+        mov     eax,68
+        mov     ebx,19
+        int     0x40
+        pop     ebx
+        test    eax,eax
+        ret
+.under: push    esi             ; edi = a folder: the library's name in it (none - ZF - when the name has a / of its own)
+        mov     esi,[esi]
+        mov     ecx,esi
+@@:     mov     al,[ecx]
+        inc     ecx
+        cmp     al,'/'
+        je      .none
+        test    al,al
+        jnz     @b
+        mov     ecx,rt_clazy_buf
+@@:     mov     al,[edi]
+        mov     [ecx],al
+        inc     edi
+        inc     ecx
+        test    al,al
+        jnz     @b
+        dec     ecx
+@@:     lodsb
+        mov     [ecx],al
+        inc     ecx
+        test    al,al
+        jnz     @b
+        pop     esi
+        mov     ecx,rt_clazy_buf
+        jmp     .load
+.none:  pop     esi
+        xor     eax,eax
+        ret
+.nolib: push    esi
+        mov     esi,rt_clazy_nolib
+        call    rt_errz
+        pop     esi
+        mov     esi,[esi]
+        jmp     rt_panic
+.nosym: push    esi
+        mov     esi,[esi]
+        call    rt_errz
+        mov     esi,rt_clazy_nosym
+        call    rt_errz
+        pop     esi
+        mov     esi,[esi+4]
+        jmp     rt_panic
+;;; data rt_clazy kolibri
+rt_clazy_sys    db '/sys/lib/',0
+rt_clazy_kos    db '/kolibrios/lib/',0
+rt_clazy_nolib  db 'cannot load the library ',0
+rt_clazy_nosym  db ' has no function ',0
+;;; bss rt_clazy kolibri
+rt_clazy_buf    rb 1024
+rt_clazy_dir    rb 1024
+
 ;;; code rt_exit kolibri
 rt_exit:                        ; ebx = exit status (KolibriOS has none)
 if defined rt_con_close

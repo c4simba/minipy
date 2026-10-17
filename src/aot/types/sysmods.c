@@ -169,7 +169,7 @@ Ty *ck_bmod(Ck *c, Expr *e, const char *mod, const char *m){
    its type: int/bool c_int, float c_double, str and buffers char *, None NULL. */
 Ty *ck_ccall(Ck *c, Expr *e, ACFunc *cf){
     XInfo *xi=xinfo(e); xi->kind=X_CCALL; xi->cfn=cf; int line=e->line;
-    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"C functions (ctypes) need a target with C functions (linux, macos, c, esp32)");
+    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"C functions (ctypes) need a target with C functions (linux, macos, c, esp32, kolibri)");
     if(e->count>16) ck_err(c,line,"%s(): at most 16 arguments",cf->sym);
     if(cf->nargtypes>=0 && e->count<cf->nargtypes) ck_err(c,line,"%s() takes %d arguments (its argtypes), not %d",cf->sym,cf->nargtypes,e->count);
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i];
@@ -207,7 +207,7 @@ Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
     static const char *names[]={"ctypes.create_string_buffer","ctypes.string_at","ctypes.addressof","ctypes.get_errno",NULL};
     XInfo *xi=xinfo(e); xi->kind=X_BMOD; xi->name=m; int line=e->line;
     for(int i=0;names[i];i++) if(!strcmp(names[i]+7,m)) xi->name=names[i];
-    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"ctypes needs a target with C functions (linux, macos, c, esp32)");
+    if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,line,"ctypes needs a target with C functions (linux, macos, c, esp32, kolibri)");
     if(!strcmp(m,"create_string_buffer")){ ck_positional(c,e,1,1,"create_string_buffer"); Ty *t=ty_find(arg(c,e,0));
         if(t->k!=TY_INT&&t->k!=TY_STR&&t->k!=TY_VAR) ck_err(c,line,"create_string_buffer() takes a size or a str");
         return TY_BUF_T; }
@@ -215,6 +215,7 @@ Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
         if(e->count==2) expect(c,TY_INT_T,arg(c,e,1),line,"the size"); return TY_STR_T; }
     if(!strcmp(m,"addressof")){ ck_positional(c,e,1,1,"addressof"); expect(c,TY_BUF_T,arg(c,e,0),line,"the buffer"); return TY_INT_T; }
     if(!strcmp(m,"get_errno")){ ck_positional(c,e,0,0,"get_errno");
+        if(aot_target(c->p->target)->cfn==AOT_CFN_KOLIBRI) ck_err(c,line,"ctypes.get_errno: KolibriOS's libraries have no errno");
         ACFunc *f=cfunc_get(c->p,clib_get(c->p,"libc.so.6"),"__errno_location"); f->restype=CT_VOIDP; xi->cfn=f;
         return TY_INT_T; }
     ck_err(c,line,"ctypes.%s is not available in compiled code",m);

@@ -1,10 +1,52 @@
 /* ========================= Interpreter, modules: _ctypes =========================
-   C functions of shared libraries (dlopen / dlsym, cdecl calls). */
+   C functions of shared libraries (dlopen / dlsym, cdecl calls); on KolibriOS
+   its libraries (COFF: function 68.19, the export table's names). */
 
 #include "modules.h"
+#include "fs.h"
 
-#if !defined(PPY_KOLIBRI)
 static int ct_errno;
+#if defined(PPY_KOLIBRI)
+/* KolibriOS: a library is a COFF file function 68.19 loads (once per process:
+   the export table again after that); a bare name is looked for in the
+   script's folder, plainpy's, /sys/lib/ and /kolibrios/lib/ - as compiled
+   programs look (runtime rt_clazy) */
+static void *kos_load(const char *path){
+    void *r;
+    __asm__ volatile("int $0x40" : "=a"(r) : "a"(68), "b"(19), "c"(path) : "memory");
+    return r;
+}
+static void *ct_open(const char *name, char *err, size_t errn){
+    if(!name){ snprintf(err,errn,"KolibriOS has no C library of the program: name one (ctypes.CDLL(\"/sys/lib/x.obj\"))"); return NULL; }
+    void *h=kos_load(name);
+    if(h || strchr(name,'/')){ if(!h) snprintf(err,errn,"cannot load the library %s",name); return h; }
+    const char *dirs[4]={mp_main_dir,ppy_fs_program_dir(),"/sys/lib","/kolibrios/lib"};
+    char path[1024];
+    for(int i=0;i<4;i++){ if(!dirs[i] || !dirs[i][0]) continue;
+        snprintf(path,sizeof path,"%s/%s",dirs[i],name);
+        if((h=kos_load(path))) return h; }
+    snprintf(err,errn,"cannot load the library %s (looked in the script's folder, plainpy's, /sys/lib, /kolibrios/lib)",name);
+    return NULL;
+}
+static void *ct_find(void *table, const char *sym){         /* the exports: (name, address) pairs, a 0 name after the last */
+    for(char **e=(char**)table;e[0];e+=2) if(!strcmp(e[0],sym)) return e[1];
+    return NULL;
+}
+static Value ct_dlopen(int argc, Value *argv, TupleObj *kw){
+    (void)kw;
+    const char *name= argc>0 && IS_STR(argv[0]) ? mp_cstr(argv[0]) : NULL;
+    char err[600]="";
+    void *h=ct_open(name,err,sizeof err);
+    if(!h) mp_raise_t(E_OSError,"%s",err);
+    return v_int((int64_t)(intptr_t)h);
+}
+static Value ct_dlsym(int argc, Value *argv, TupleObj *kw){
+    (void)kw; mod_nargs("dlsym",argc,2,2);
+    void *p=ct_find((void*)(intptr_t)mp_index(argv[0],"handle"),mp_cstr(argv[1]));
+    if(!p) mp_raise_t(E_AttributeError,"function '%s' not found",mp_cstr(argv[1]));
+    return v_int((int64_t)(intptr_t)p);
+}
+#else
 /* a library by its name: where dlopen finds it, else in the folders of PLAINPY_LIBRARY_PATH
    (':'-separated), then where package managers put libraries dlopen does not look in (macOS:
    Homebrew's, and its keg-only OpenSSL 3) - compiled macOS programs look the same way (x2c_host.c) */
@@ -46,6 +88,7 @@ static Value ct_dlsym(int argc, Value *argv, TupleObj *kw){
     if(!p) mp_raise_t(E_AttributeError,"function '%s' not found",mp_cstr(argv[1]));
     return v_int((int64_t)(intptr_t)p);
 }
+#endif
 typedef intptr_t (*cfn_i)(intptr_t,intptr_t,intptr_t,intptr_t,intptr_t,intptr_t,intptr_t,intptr_t);
 typedef intptr_t (*cfn_v1)(intptr_t,...); typedef intptr_t (*cfn_v2)(intptr_t,intptr_t,...);
 typedef intptr_t (*cfn_v3)(intptr_t,intptr_t,intptr_t,...); typedef intptr_t (*cfn_v4)(intptr_t,intptr_t,intptr_t,intptr_t,...);
@@ -101,13 +144,6 @@ static Value ct_call(int argc, Value *argv, TupleObj *kw){
     return v_int((int64_t)r);
 }
 static Value ct_errno_fn(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; return v_int(ct_errno); }
-#else
-static Value ct_unsupported(int argc, Value *argv, TupleObj *kw){ (void)argc; (void)argv; (void)kw; mp_raise_t(E_OSError,"ctypes is not available on this platform"); }
-#define ct_dlopen ct_unsupported
-#define ct_dlsym ct_unsupported
-#define ct_call ct_unsupported
-#define ct_errno_fn ct_unsupported
-#endif
 Value make_ctypes_native(void){
     Value m=register_module("_ctypes");
     set_fn(m,"dlopen",ct_dlopen); set_fn(m,"dlsym",ct_dlsym); set_fn(m,"call",ct_call); set_fn(m,"errno",ct_errno_fn);

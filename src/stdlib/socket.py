@@ -378,6 +378,8 @@ class socket:
     def getpeername(self) -> tuple[str, int]:
         self._check_open()
         if sys.platform == "kolibrios":
+            if self._peer[1] == 0:                    # (not connected: ENOTCONN, as Linux says)
+                raise OSError(107, _os.strerror(107))
             return self._peer
         addr = sys.buffer(16)
         alen = sys.buffer(4)
@@ -565,9 +567,7 @@ class socket:
             except OSError:
                 pass
             try:
-                peer = self.getpeername()
-                if sys.platform != "kolibrios" or peer[1] != 0:
-                    s += ", raddr=" + repr(peer)
+                s += ", raddr=" + repr(self.getpeername())
             except OSError:
                 pass
         return s + ">"

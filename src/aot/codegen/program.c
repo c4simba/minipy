@@ -108,9 +108,19 @@ static void emit_dynamic_tables(Buf *o, AProg *p){
     }
     for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used && lazy_lib(p->clibs[i])) buf_printf(o,"CLH%d dd 0   ; %s, once loaded\n",i,p->clibs[i]->soname);
 }
+/* kolibri: every library is KolibriOS's (COFF: function 68.19), loaded the
+   first time one of its functions is called - rt_clazy's kolibri version */
+static void emit_kolibri_imports(Buf *o, AProg *p){
+    buf_printf(o,"\n; ---- C functions of KolibriOS libraries, loaded when first used (rt_clazy)\nalign 4\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){ ACFunc *cf=p->cfuncs[i];
+        buf_printf(o,"CI%d dd CL%d   ; %s (%s)\nCLT%d dd DYN_L%d,DYN_S%d,CI%d,CLH%d\n",i,i,cf->sym,cf->lib->soname,i,cf->lib->id,i,i,cf->lib->id); }
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used) buf_printf(o,"CLH%d dd 0   ; %s, once loaded\nDYN_L%d db '%s',0\n",i,p->clibs[i]->soname,i,p->clibs[i]->soname);
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used) buf_printf(o,"DYN_S%d db '%s',0\n",i,p->cfuncs[i]->sym);
+    buf_printf(o,"align 4\n");
+}
 static void emit_lazy_stubs(Buf *o, AProg *p){
     buf_printf(o,"\n; ---- C functions of libraries loaded when first used (rt_clazy)\n");
-    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && lazy_lib(p->cfuncs[i]->lib)) buf_printf(o,"CL%d:    push CLT%d\n        jmp rt_clazy\n",i,i);
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && (gg->target==AOT_TARGET_KOLIBRI || lazy_lib(p->cfuncs[i]->lib))) buf_printf(o,"CL%d:    push CLT%d\n        jmp rt_clazy\n",i,i);
 }
 /* macos: no dynamic linker - the C translation looks the functions up when
    the program starts; ";@import CI<id> <library> <symbol>" names each slot. */
@@ -217,8 +227,8 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         report=g.gc_on?"        call rt_gc_collect\n        call rt_live_report\n":"        call rt_live_report\n"; }   /* (cycles left at the end: collected first) */
     int kolibri=tg->abi==AOT_ABI_KOLIBRI, dyn=tg->cfn!=AOT_CFN_NONE && dyn_used(p);
     if(dyn && tg->cfn==AOT_CFN_DYNAMIC) import_fflush(p);
-    int lazy= dyn && tg->out==AOT_OUT_FASM && lazy_used(p);
-    if(lazy){ import_dl(p); rt("rt_clazy"); }
+    int lazy= dyn && tg->out==AOT_OUT_FASM && (kolibri || lazy_used(p));
+    if(lazy){ if(!kolibri) import_dl(p); rt("rt_clazy"); if(kolibri) rt("rt_sys_args"); }   /* (kolibri: the program's path - its folder has the libraries - in the header's buffer) */
     {   unsigned chunk=opt->chunk?opt->chunk:tg->chunk, costack=opt->costack?opt->costack:tg->costack;   /* (memory: aot/runtime memory.asm, generator.asm, asyncio.asm) */
         buf_printf(&o,"; target %s\n",tg->name);
         buf_printf(&g.data,"RT_CHUNK = %u     ; bytes the allocator takes from the system at a time\nRT_COSTACK = %u   ; the stack of a generator or a task\n",
@@ -246,7 +256,7 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
     if(!kolibri) buf_printf(&o,"\nsegment readable writeable\n\n");
     else buf_printf(&o,"\n; ---- data\n");
     if(g.gc_on) buf_printf(&o,"        dd 0                    ; (rt_decref reads the dword before an object: a static one too)\n");
-    if(dyn) (tg->out==AOT_OUT_C ? emit_import_slots : emit_dynamic_tables)(&o,p);
+    if(dyn) (tg->out==AOT_OUT_C ? emit_import_slots : kolibri ? emit_kolibri_imports : emit_dynamic_tables)(&o,p);
     buf_cat(&o,&g.data);
     aot_rt_emit(g.rt,1,put_cb,&o);
     if(kolibri) buf_printf(&o,"\nalign 4\ni_end:\n");

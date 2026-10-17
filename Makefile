@@ -98,8 +98,8 @@ LIB_ID = $(BUILD_DIR)/gen/libid.h
 # the version (rewritten only when VERSION changes: the programs are built again then)
 VERSION_H = $(BUILD_DIR)/gen/version.h
 
-.PHONY: all test test-update test-typed test-leaks test-pkg test-port test-bytecode test-ssl bench clean kolibrios kolibrios-debug clean-kolibri debug \
-        install uninstall dist deb rpm kolibrios-dist print-version wasm wasm-node FORCE
+.PHONY: all test test-update test-typed test-leaks test-pkg test-port test-bytecode test-ssl test-kolibri-ssl bench clean kolibrios kolibrios-debug clean-kolibri debug \
+        install uninstall dist deb rpm kolibrios-dist kolibri-tls print-version wasm wasm-node FORCE
 
 all: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 
@@ -191,6 +191,11 @@ test-port: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 # TLS (ssl: the system's OpenSSL 3) against CPython's ssl - the interpreter, compiled programs (TARGET=none: not those)
 test-ssl: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 	@sh tests/run_ssl_tests.sh
+
+# TLS on KolibriOS (mbedtls.obj), a compiled client and server in QEMU against CPython's:
+# KOS_IMG=<a KolibriOS floppy image>, qemu-system-i386, mtools, fasm (FASM=...)
+test-kolibri-ssl: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB) $(BUILD_DIR)/kolibri/mbedtls.obj
+	@sh tests/run_kolibri_ssl_tests.sh
 
 # bytecode files: the tests with plainpy.lib's modules as bytecode, and each test run from its .ppyc
 test-bytecode: $(HOST_TARGET) $(HOST_LIB)
@@ -293,6 +298,17 @@ $(KOS_BIN) $(KOS_BINC): $(KOS_BUILD_DIR)/%:
 $(KOS_BIN): $(KOS_OBJ) $(PACK)
 $(KOS_BINC): $(KOS_OBJC) $(PACK)
 
+# mbedtls.obj, the TLS library plainpy's ssl loads on KolibriOS (function 68.19):
+# the KolibriOS port of mbedTLS 2.16 built with LLVM (tools/kolibri-tls/build.sh:
+# clang, llvm-link, opt, llvm-objcopy - LLVM=<their folder>; no KolibriOS
+# toolchain), kpacked. kolibrios-dist takes it when it is built.
+KOS_TLS = $(KOS_BUILD_DIR)/mbedtls.obj
+kolibri-tls: $(KOS_TLS)
+$(KOS_TLS): tools/kolibri-tls/build.sh $(wildcard tools/kolibri-tls/*.c tools/kolibri-tls/include/*.h tools/kolibri-tls/include/sys/*.h) src/stdlib/ssl.py $(PACK)
+	sh tools/kolibri-tls/build.sh $(BUILD_DIR)/kolibri-tls/mbedtls.obj
+	@mkdir -p $(dir $@)
+	$(if $(filter 1,$(KOS_KPACK)),$(PACK) kpack $(BUILD_DIR)/kolibri-tls/mbedtls.obj $@,cp $(BUILD_DIR)/kolibri-tls/mbedtls.obj $@)
+
 # ---------------------------- WebAssembly (src/targets/wasm) ---------------
 # The interpreter in a browser page (site/try.js), built with Emscripten's emcc
 # (EMCC=..., or in its Docker image: emscripten/emsdk):
@@ -341,7 +357,8 @@ $(WASM_DIR)/node/plainpy: $(WASM_OBJ) $(WASM_DIR)/obj/main.o src/targets/wasm/no
 #   sudo make uninstall
 #   make dist                          a folder to unpack anywhere: bin/, lib/plainpy/
 #   make deb / make rpm                Debian / RPM packages (dpkg-deb / rpmbuild)
-#   make kolibrios-dist                the KolibriOS build, zipped (make kolibrios first)
+#   make kolibrios-dist                the KolibriOS build, zipped (make kolibrios first;
+#                                      make kolibri-tls before it: mbedtls.obj in it too)
 #   tools/launchpad.sh                 source packages (debian/) for the Ubuntu PPA
 #
 # plainpy --compile needs fasm on the PATH for the linux and kolibri targets
@@ -420,7 +437,7 @@ KOS_DIST = plainpy-$(VERSION)-kolibrios
 kolibrios-dist: $(KOS_BIN) $(KOS_BINC) $(KOS_LIB)
 	rm -rf $(DIST_DIR)/$(KOS_DIST)
 	mkdir -p $(DIST_DIR)/$(KOS_DIST)/lib
-	cp $(KOS_BIN) $(KOS_BINC) $(KOS_LIB) LICENSE LICENSE.PSF $(DIST_DIR)/$(KOS_DIST)/
+	cp $(KOS_BIN) $(KOS_BINC) $(KOS_LIB) $(wildcard $(KOS_TLS)) LICENSE LICENSE.PSF $(DIST_DIR)/$(KOS_DIST)/
 	cp $(LIB_PY) $(DIST_DIR)/$(KOS_DIST)/lib/
 	cd $(DIST_DIR) && rm -f ../$(KOS_DIST).zip && zip -qr ../$(KOS_DIST).zip $(KOS_DIST)
 	@echo "built $(BUILD_DIR)/$(KOS_DIST).zip"

@@ -40,6 +40,14 @@ jobs:
           node tests/wasm/repl_check.js
           mkdir -p site/wasm && cp build/wasm/plainpy.js build/wasm/plainpy.wasm build/wasm/plainpy.data site/wasm/
           ls -l site/wasm
+      - name: The download's size into the page (gzip, as Pages sends the files)
+        run: |
+          z=$(cat site/wasm/plainpy.js site/wasm/plainpy.wasm site/wasm/plainpy.data | wc -c)
+          g=0; for f in site/wasm/plainpy.js site/wasm/plainpy.wasm site/wasm/plainpy.data; do g=$((g + $(gzip -6 -c "$f" | wc -c))); done
+          mb() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1048576 }'; }
+          sed -i "s|<span class=\"wasm-size\">[^<]*</span> to download ([^)]*)|<span class=\"wasm-size\">About $(mb $g)\&nbsp;MB</span> to download ($(mb $z)\&nbsp;MB unpacked)|" site/index.html
+          sed -i "s|const SIZE = \"about [0-9.]* MB\";|const SIZE = \"about $(mb $g) MB\";|" site/try.js
+          grep -o 'wasm-size">[^<]*' site/index.html; grep -o 'const SIZE = "[^"]*"' site/try.js
       - name: The latest release into the page
         env:
           GH_TOKEN: ${{ github.token }}

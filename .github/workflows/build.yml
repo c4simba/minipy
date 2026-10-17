@@ -138,7 +138,9 @@ jobs:
           sh tools/kolibrios-toolchain.sh "$HOME/kos-toolchain"
       - name: Build
         run: |
+          sudo apt-get update && sudo apt-get install -y clang-15 llvm-15
           make -j"$(nproc)" VERSION="$VERSION"
+          make kolibri-tls LLVM=/usr/lib/llvm-15/bin
           make -j"$(nproc)" kolibrios-dist KOS_PORTS=1 KOS32_SDK="$HOME/kos-toolchain" VERSION="$VERSION"
           mkdir -p out
           cp "build/plainpy-$VERSION-kolibrios.zip" out/plainpy-kolibrios.zip

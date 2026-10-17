@@ -84,7 +84,7 @@ void collect_ctypes(Ck *c, AModule *m){
             Expr *nm=v->items[0]; const char *so="libc.so.6";
             if(nm->kind==EXPR_LITERAL && nm->tok->kind==T_STRING) so=nm->tok->text;
             else if(nm->kind!=EXPR_NONE) ck_err(c,s->line,"the library name must be a string literal (or None: the C library) in compiled code");
-            if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,s->line,"ctypes libraries need a target with C functions (linux, macos, c, esp32)");
+            if(aot_target(c->p->target)->cfn==AOT_CFN_NONE) ck_err(c,s->line,"ctypes libraries need a target with C functions (linux, macos, c, esp32, kolibri)");
             if(module_sym(m,t->name)) ck_err(c,s->line,"'%s' is defined twice",t->name);
             symtab_add(&m->syms,t->name,AS_CLIB,clib_get(c->p,so));
             s->kind=STMT_PASS; continue;

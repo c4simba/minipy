@@ -1,0 +1,17 @@
+context: True True
+version: TLSv1.2
+cipher: TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384 256
+echo: b'HELLO OVER TLS'
+issuer: CN=localhost,O=plainpy tests,C=XX
+notAfter: Sep 22 20:32:21 2126 GMT
+notBefore: Oct 16 20:32:21 2026 GMT
+subject: CN=localhost,O=plainpy tests,C=XX
+subjectAltName: DNS:localhost
+version: 3
+der: 885 bytes, 30820371
+no CAs: CERTIFICATE_VERIFY_FAILED - self-signed certificate
+another host: CERTIFICATE_VERIFY_FAILED - Hostname mismatch, certificate is not valid for 'example.com'.
+http.client: 200 OK b'you asked for /from/kolibrios\n'
+listening
+accepted: TLSv1.2
+done

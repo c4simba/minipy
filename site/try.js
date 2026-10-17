@@ -17,6 +17,7 @@
   const examples = document.querySelectorAll("[data-repl-code]");
 
   let worker = null, ready = false, busy = false, buffer = [], queued = null;
+  const SIZE = "about 1.2 MB";            // (what the browser downloads: pages.yml writes it from site/wasm)
   let history = [];
   try { history = JSON.parse(localStorage.getItem("plainpy-repl-history") || "[]"); } catch (e) { history = []; }
   let hpos = history.length;
@@ -132,7 +133,7 @@
   input.addEventListener("input", grow);
   box.querySelector(".repl-screen").addEventListener("click", () => { if (!line.hidden && !window.getSelection().toString()) input.focus({ preventScroll: true }); });
 
-  startBtn.addEventListener("click", () => { startBtn.hidden = true; write("loading plainpy (about 2 MB)…\n", "dim"); start(false); });
+  startBtn.addEventListener("click", () => { startBtn.hidden = true; write("loading plainpy (" + SIZE + ")…\n", "dim"); start(false); });
   stopBtn.addEventListener("click", () => {
     if (!busy) return;
     worker.terminate(); worker = null;
@@ -142,7 +143,7 @@
   clearBtn.addEventListener("click", () => { out.textContent = ""; if (!line.hidden) input.focus({ preventScroll: true }); });
   examples.forEach((b) => b.addEventListener("click", () => {
     const code = b.getAttribute("data-repl-code").replace(/\\n/g, "\n");
-    if (!worker) { startBtn.hidden = true; write("loading plainpy (about 2 MB)…\n", "dim"); queued = code; start(false); box.scrollIntoView({ block: "nearest" }); return; }
+    if (!worker) { startBtn.hidden = true; write("loading plainpy (" + SIZE + ")…\n", "dim"); queued = code; start(false); box.scrollIntoView({ block: "nearest" }); return; }
     if (busy) return;
     buffer = []; setPrompt(">>> ");
     remember(code);

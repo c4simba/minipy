@@ -24,6 +24,18 @@ Two things live here:
   (function 68.11), its threads switch in the runtime, and it links its
   libraries itself - MENUET01 asks for nothing more and every kernel knows it.
 
+- **Libraries** (`ctypes.CDLL("x.obj")`): COFF objects function 68.19
+  loads (once per process; the kernel resolves their relocations and unpacks
+  a kpacked one) and returns the `EXPORTS` table of - name / address pairs,
+  ending in 0. A compiled program looks for a library when it first calls
+  one of its functions (runtime `rt_clazy kolibri`, `aot/runtime/system.asm`):
+  the name as given, the program's folder (the current folder of a program
+  started by the system is `/RD/1`, so a relative name alone is not enough),
+  `/sys/lib/`, `/kolibrios/lib/`; the interpreter's `ctypes`
+  (`interp/modules/ctypes.c`) looks in the script's folder, plainpy's and the
+  same two. The calls are cdecl. `ssl`'s library, mbedtls.obj, is built by
+  [tools/kolibri-tls](../../../tools/kolibri-tls/build.sh) (`make kolibri-tls`).
+
 - **Clocks** (`src/stdlib/time.py`, for plainpy and compiled programs alike):
   the counters are function 26.10's nanoseconds where the kernel has them
   (HPET; checked against 26.9 once), else 26.9's 1/100 s; `time.time()` adds
