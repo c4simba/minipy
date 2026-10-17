@@ -31,6 +31,7 @@ char       *ppy_fs_module_path(const char *importer_dir, const char *module_name
    PLAINPYPATH (separated by ':' or ';'), then the `lib` folder next to the
    plainpy executable. NULL if there is none. */
 char       *ppy_fs_find_module(const char *importer_dir, const char *module_name);
+extern int  ppy_fs_bytecode;   /* set: <name>.ppyc / <name>/__init__.ppyc too, after the .py ones (the interpreter) */
 void        ppy_fs_set_program(const char *argv0);
 /* The folder of the running program (plainpy.lib and lib/ are next to it), or NULL. */
 const char *ppy_fs_program_dir(void);

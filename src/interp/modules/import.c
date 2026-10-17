@@ -34,16 +34,39 @@ static void shift_lines(PyNode *n, int d){
     for(int i=0;i<4;i++) shift_lines(n->n[i],d);
     for(int i=0;i<5;i++) for(int j=0;j<n->L[i].n;j++) shift_lines(n->L[i].v[j],d);
 }
-static CodeObj *compile_source_at(const char *src, const char *file, const char *modname, int shift){
-    PyParse pp;
-    if(py_parse(&pp,file,src,strlen(src))){ char m[512]; snprintf(m,sizeof m,"%s",pp.error); mp_raise(syntax_error(file,pp.error_line+shift>0?pp.error_line+shift:1,m)); }
+/* (the tree and the compiler's scopes are made in a region, freed with it when the code is made;
+   strip: what mp_strip adds - the carets' places of a module a file holds are not kept: a traceback
+   compiles its text again to show them) */
+static CodeObj *compile_source_at(const char *src, const char *file, const char *modname, int shift, int strip){
+    PyParse pp; PpyRegion reg={0}, *outer=ppy_region;
+    int strip0=mp_strip;
+    ppy_region=&reg;
+    if(py_parse(&pp,file,src,strlen(src))){
+        char m[512]; snprintf(m,sizeof m,"%s",pp.error); free(pp.error);
+        ppy_region=outer; ppy_region_free(&reg);
+        mp_raise(syntax_error(file,pp.error_line+shift>0?pp.error_line+shift:1,m)); }
     if(shift) shift_lines(pp.mod,shift);
-    char *err=NULL; int line=0;
-    CodeObj *co=mp_compile(pp.mod,file,modname,&err,&line);
-    if(!co) mp_raise(syntax_error(file,line,err));
+    char *err=NULL; int line=0; CodeObj *co=NULL;
+    Catch c;
+    mp_strip|=strip;
+    if(!CATCH_BEGIN(c)){ co=mp_compile(pp.mod,file,modname,&err,&line); CATCH_END(c); }
+    else { Value e=mp_catch_exc(&c); mp_strip=strip0; ppy_region=outer; ppy_region_free(&reg); mp_raise(e); }
+    mp_strip=strip0; ppy_region=outer; ppy_region_free(&reg);
+    if(!co){ char m[512]; snprintf(m,sizeof m,"%s",err); free(err); mp_raise(syntax_error(file,line,m)); }
     return co;
 }
-static CodeObj *compile_source(const char *src, const char *file, const char *modname){ return compile_source_at(src,file,modname,0); }
+static CodeObj *compile_source(const char *src, const char *file, const char *modname){ return compile_source_at(src,file,modname,0,0); }
+/* the code of a module's text compiled again with the carets' places (traceback.c: for those its code
+   left out), or NULL (a SyntaxError: the file changed) */
+CodeObj *mp_compile_places(const char *src, const char *file){
+    CodeObj *co=NULL; int strip0=mp_strip;
+    mp_strip=0;
+    Catch c;
+    if(!CATCH_BEGIN(c)){ co=compile_source(src,file,"__main__"); CATCH_END(c); }
+    else mp_catch_exc(&c);
+    mp_strip=strip0;
+    return co;
+}
 /* compile(source, filename, mode): a code object; mode "eval": the expression's value is left in
    __mp_eval__ (CO_EVAL marks it), "exec" / "single": statements */
 #define CO_EVAL 0x40000000
@@ -61,7 +84,7 @@ Value mp_compile_text(Value src, const char *file, const char *mode){
         size_t n=strlen(s); text=(char*)xmalloc(n+32); snprintf(text,n+32,"__mp_eval__ = (\n%s\n)\n",s); }
     else text=xstrdup2(s);
     mp_remember_source(file,ev?s:text);                      /* (eval: its lines as given: the wrapper is not shown) */
-    CodeObj *co=compile_source_at(text,file,"__main__",ev?-1:0);
+    CodeObj *co=compile_source_at(text,file,"__main__",ev?-1:0,0);
     free(text);
     if(ev) co->flags|=CO_EVAL;
     return v_obj(co);
@@ -112,12 +135,30 @@ Value mp_eval_annotation(const char *text, DictObj *globals, DictObj *overlay){
     Value r; if(!mp_dict_get_s(AS_DICT(tmp),"__mp_ann__",&r)) r=v_none();
     return r;
 }
-static void exec_into(Value mod, const char *src, const char *file){
-    mp_remember_source(file,src);
-    CodeObj *co=compile_source(src,file,mp_cstr(v_obj(((ModuleObj*)mod.u.o)->name)));
+/* the source of a file a traceback names, read again: a module of the standard
+   library, or a file; NULL if there is none (the caller frees it) */
+char *mp_file_source(const char *file){
+    if(!strncmp(file,"<plainpy:",9)){
+        char name[200]; size_t n=strlen(file+9);
+        if(n<2 || n>=sizeof name || file[8+n]!='>') return NULL;
+        memcpy(name,file+9,n-1); name[n-1]=0;
+        const char *ps=py_source(name);
+        return ps ? xstrdup2(ps) : ppy_stdlib_source(name,NULL);
+    }
+    if(file[0]=='<') return NULL;
+    char *err=NULL, *t=ppy_fs_try_read_file(file,&err);
+    free(err);
+    return t;
+}
+static void exec_code_into(Value mod, CodeObj *co){
     Value keep=v_obj(co); (void)keep;
     if(!mp_dict_get_s(mdict(mod),"__builtins__",NULL)){ Value bn=mp_str("builtins"); mp_dict_set_s(mdict(mod),"__builtins__",mp_builtin_import(1,&bn,NULL)); }
     mp_run_code(co,mdict(mod),NULL);
+}
+static int is_bytecode_file(const char *path){ size_t n=strlen(path); return n>5 && !strcmp(path+n-5,".ppyc"); }
+static void exec_into(Value mod, const char *src, const char *file){
+    if(file[0]=='<' && strncmp(file,"<plainpy:",9)) mp_remember_source(file,src);   /* (no file holds it) */
+    exec_code_into(mod,compile_source_at(src,file,mp_cstr(v_obj(((ModuleObj*)mod.u.o)->name)),0,file[0]=='<' && strncmp(file,"<plainpy:",9) ? 0 : MP_STRIP_PLACES));
 }
 
 /* ---------------------------------------------------------------- import */
@@ -147,16 +188,18 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
     }
     m=native_module(full);
     if(m.k!=V_UNDEF) return m;
-    { int pkg=0; const char *ss=ppy_stdlib_source(full,&pkg);         /* the standard library written in Python */
-      if(ss){
+    { int pkg=0; size_t bclen=0; char *ss=NULL;
+      const void *bc=ppy_stdlib_bytecode(full,&bclen,&pkg);           /* the standard library written in Python: compiled (a library of bytecode), */
+      if(!bc) ss=ppy_stdlib_source(full,&pkg);                        /* or its source */
+      if(ss || bc){
         m=register_module(full);
         char file[160]; snprintf(file,sizeof file,"<plainpy:%s>",full);
         mp_dict_set_s(mdict(m),"__package__",mp_str(pkg?full:""));
         if(pkg){ char pk[160]; const char *d=strrchr(full,'.'); (void)d; snprintf(pk,sizeof pk,"<plainpy:%s>",full); Value pl=mp_list(0,NULL); mp_list_append(pl,mp_str(pk)); mp_dict_set_s(mdict(m),"__path__",pl); }
         else { const char *d=strrchr(full,'.'); char pk[160]; snprintf(pk,sizeof pk,"%.*s",d?(int)(d-full):0,full); mp_dict_set_s(mdict(m),"__package__",mp_str(pk)); }
         Catch c;
-        if(!CATCH_BEGIN(c)){ exec_into(m,ss,file); CATCH_END(c); }
-        else { Value e=mp_catch_exc(&c); mp_dict_del(mp_modules,mp_str(full)); mp_raise(e); }
+        if(!CATCH_BEGIN(c)){ if(bc) exec_code_into(m,mp_bytecode_load(bc,bclen,file,1)); else exec_into(m,ss,file); CATCH_END(c); free(ss); }
+        else { Value e=mp_catch_exc(&c); free(ss); mp_dict_del(mp_modules,mp_str(full)); mp_raise(e); }
         if(!strcmp(full,"io")){ Value o; if(mp_dict_get_s(mp_builtins,"open",&o)) mp_dict_set_s(mdict(m),"open",o); }   /* io.open is open */
         return m;
       } }
@@ -181,6 +224,7 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
     char *err=NULL;
     char *src=ppy_fs_try_read_file(path,&err);
     if(!src){ free(err); Value e=mp_exc(E_ImportError,"cannot read %s",path); free(path); mp_raise(e); }
+    size_t srclen=ppy_fs_last_len;
     m=register_module(full);
     mp_dict_set_s(mdict(m),"__file__",mp_str(path));
     if(is_package_file(path)){
@@ -192,7 +236,7 @@ static Value load_module(const char *full, DictObj *importer, int leaf){
         mp_dict_set_s(mdict(m),"__package__",mp_str(pk));
     }
     Catch c;
-    if(!CATCH_BEGIN(c)){ exec_into(m,src,path); CATCH_END(c); }
+    if(!CATCH_BEGIN(c)){ if(is_bytecode_file(path)) exec_code_into(m,mp_bytecode_load(src,srclen,NULL,0)); else exec_into(m,src,path); CATCH_END(c); }
     else { Value e=mp_catch_exc(&c); free(src); free(path); mp_dict_del(mp_modules,mp_str(full)); mp_raise(e); }
     free(src); free(path);
     return m;
@@ -265,8 +309,53 @@ Value mp_run_main(const char *path){
     mp_dict_set_s(mdict(m),"__file__",mp_str(path));
     mp_dict_set_s(mdict(m),"__package__",v_none());
     { Value bn=mp_str("builtins"); mp_dict_set_s(mdict(m),"__builtins__",mp_builtin_import(1,&bn,NULL)); }
-    exec_into(m,src,path);
+    if(mp_is_bytecode(src,ppy_fs_last_len)) exec_code_into(m,mp_bytecode_load(src,ppy_fs_last_len,NULL,0));   /* (plainpy name.ppyc) */
+    else exec_into(m,src,path);
     free(src);
     return m;
+}
+
+/* ---------------------------------------------------------------- writing bytecode (plainpy --bytecode) */
+static Value compile_for_bytecode(const char *src, const char *file, int strip){
+    CodeObj *co=compile_source_at(src,file,"__main__",0,strip|MP_STRIP_PLACES);
+    Value keep=v_obj(co); (void)keep;
+    int strip0=mp_strip; mp_strip|=strip|MP_STRIP_PLACES;
+    Value b=mp_bytecode_dump(co,file);
+    mp_strip=strip0;
+    return b;
+}
+/* file.py -> out (NULL: file.ppyc next to it); strip: MP_STRIP_DOCS / MP_STRIP_LINES. Raises on errors. */
+void mp_write_bytecode(const char *path, const char *out, int strip){
+    char *err=NULL, *src=ppy_fs_try_read_file(path,&err);
+    if(!src){ Value e=mp_exc(E_OSError,"cannot read %s: %s",path,err?err:"no such file"); free(err); mp_raise(e); }
+    Value b=compile_for_bytecode(src,path,strip);
+    free(src);
+    char *o;
+    if(out) o=xstrdup2(out);
+    else { size_t n=strlen(path); o=(char*)xmalloc(n+8); memcpy(o,path,n+1); if(n>3 && !strcmp(o+n-3,".py")) o[n-3]=0; strcat(o,".ppyc"); }
+    if(ppy_fs_write_file(o,(const char*)((BytesObj*)b.u.o)->s,(size_t)((BytesObj*)b.u.o)->len,&err)){
+        Value e=mp_exc(E_OSError,"cannot write %s: %s",o,err?err:"?"); free(err); free(o); mp_raise(e); }
+    free(o);
+}
+/* plainpy.lib -> out: its modules (this program's) as bytecode, no sources (plainpy --bytecode-lib) */
+int mp_write_bytecode_lib(const char *out, int strip){
+    int n=ppy_stdlib_count(), k=0;
+    PpyLibModule *m=(PpyLibModule*)xmalloc(sizeof(PpyLibModule)*(size_t)(n+1));
+    Value keep=mp_list(0,NULL);
+    for(int i=0;i<n;i++){
+        int pkg=0; char *name=ppy_stdlib_module(i,&pkg);    /* (kept until the library is written) */
+        if(!name) continue;
+        char *src=ppy_stdlib_source(name,NULL);
+        char file[200]; snprintf(file,sizeof file,"<plainpy:%s>",name);
+        Value b=compile_for_bytecode(src,file,strip);
+        free(src);
+        mp_list_append(keep,b);
+        m[k].name=name; m[k].package=pkg; m[k].data=((BytesObj*)b.u.o)->s; m[k].len=(size_t)((BytesObj*)b.u.o)->len; k++;
+    }
+    char *err=NULL;
+    int rc=ppy_lib_write_bytecode(out,m,k,&err);
+    if(rc){ Value e=mp_exc(E_OSError,"cannot write %s: %s",out,err?err:"?"); free(err); free(m); mp_raise(e); }
+    free(m);
+    return k;
 }
 

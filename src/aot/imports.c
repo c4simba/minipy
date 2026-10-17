@@ -221,8 +221,8 @@ static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line
         char *prefix=xstrndup2(dotted,dot?(int)(dot-dotted):(int)strlen(dotted));
         int leaf=(dot==NULL);
         if(!find_unit(us,prefix)){
-            int pkg=0; const char *ss; const char *al=ppy_stdlib_alias(prefix);
-            if(al){ if(!find_unit(us,al) && (ss=ppy_stdlib_source(al,&pkg))){ char path[300]; snprintf(path,sizeof path,"<stdlib>/%s.py",al); add_unit(us,al,path,xstrdup2(ss)); } }   /* os.path: posixpath */
+            int pkg=0; char *ss; const char *al=ppy_stdlib_alias(prefix);
+            if(al){ if(!find_unit(us,al) && (ss=ppy_stdlib_source(al,&pkg))){ char path[300]; snprintf(path,sizeof path,"<stdlib>/%s.py",al); add_unit(us,al,path,ss); } }   /* os.path: posixpath */
             else if(is_builtin_module(prefix)){
                 if(!leaf && strcmp(dotted,"collections.abc")){ fprintf(stderr,"%s:%d: error: built-in module '%s' has no submodules\n",from->path,line,prefix); ok=0; }
             } else if(interp_only_module(prefix)){
@@ -230,7 +230,7 @@ static int resolve_import(Units *us, AotUnit *from, const char *dotted, int line
             } else if((ss=ppy_stdlib_source(prefix,&pkg))){            /* the standard library written in Python */
                 char path[300]; char *slashed=xstrdup2(prefix); for(char *q=slashed;*q;q++) if(*q=='.') *q='/';
                 snprintf(path,sizeof path,pkg?"<stdlib>/%s/__init__.py":"<stdlib>/%s.py",slashed); free(slashed);
-                add_unit(us,prefix,path,xstrdup2(ss));                 /* (its imports: scanned with every unit's) */
+                add_unit(us,prefix,path,ss);                           /* (its imports: scanned with every unit's) */
             } else {
                 char *path=strchr(prefix,'.') ? package_member(us,prefix) : NULL, *err=NULL;    /* pkg.sub: next to the package */
                 if(!path) path=ppy_fs_find_module(dir,prefix);       /* the importer's folder, PLAINPYPATH, <plainpy>/lib */

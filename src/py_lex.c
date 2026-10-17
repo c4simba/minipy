@@ -153,7 +153,7 @@ static const struct { const char *s; int op; } optab[]={
     {"@",O_AT},{"!",O_EXCLAMATION},{NULL,0}};
 
 static void tok_add(PyLexer *lx, PyTokKind k, int start, int end, int op){
-    if(lx->n==lx->cap){ lx->cap=lx->cap?lx->cap*2:1024; lx->v=(PyTok*)xrealloc(lx->v,sizeof(PyTok)*(size_t)lx->cap); }
+    if(lx->n==lx->cap){ lx->cap=lx->cap?lx->cap+lx->cap/2:(lx->len-start)/5+16; lx->v=(PyTok*)xrealloc(lx->v,sizeof(PyTok)*(size_t)lx->cap); }   /* (about a token a 5 bytes of source to start with) */
     PyTok *t=&lx->v[lx->n++]; t->kind=k; t->start=start; t->end=end; t->op=op;
     py_pos(lx,start,&t->line,&t->col); py_pos(lx,end,&t->end_line,&t->end_col);
 }

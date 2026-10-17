@@ -4,8 +4,8 @@
     <index>/<name>/<version>/json   a release: its dependencies (requires_dist)
 
 Only wheels made of Python source qualify (py3-none-any): plainpy runs no C
-extension modules and builds nothing. Downloads go through curl (plainpy has
-no TLS of its own); file:// URLs are read directly."""
+extension modules and builds nothing. Downloads go through curl (many at once:
+--parallel - not ssl, which needs OpenSSL 3); file:// URLs are read directly."""
 import json
 import os
 import subprocess

@@ -82,20 +82,38 @@ def _kwall() -> int:
     return ((days * 24 + _bcd(t & 255)) * 60 + _bcd((t >> 8) & 255)) * 60 + _bcd((t >> 16) & 255)
 
 
-_koff: list[int] = []
+_koff: list[int] = []      # KolibriOS: [the wall clock minus _kns(), _kns() when the wall clock was read]
+_khp: list[int] = []       # KolibriOS: [1] if fn 26.10 counts nanoseconds here (older kernels: [0])
+
+
+def _kns() -> int:
+    """KolibriOS: nanoseconds since boot - fn 26.10 (HPET), else fn 26.9's 1/100 s."""
+    if not _khp:                                # (fn 26.10 trusted when it agrees with fn 26.9)
+        t = sys.syscall(26, 9)[0] & 0xFFFFFFFF
+        r = sys.syscall(26, 10)
+        ns = ((r[3] & 0xFFFFFFFF) << 32) | (r[0] & 0xFFFFFFFF)
+        _khp.append(1 if abs(ns // 10000000 - t) <= 2 else 0)
+    if _khp[0]:
+        r = sys.syscall(26, 10)
+        return ((r[3] & 0xFFFFFFFF) << 32) | (r[0] & 0xFFFFFFFF)
+    return (sys.syscall(26, 9)[0] & 0xFFFFFFFF) * 10000000
 
 
 def _clock(clk: int) -> tuple[int, int]:
     """(seconds, nanoseconds) of a clock (Linux's numbers): 0 real time, 1 monotonic, 2 the process's CPU time, 3 the thread's."""
     if sys.platform == "kolibrios":
-        ticks = sys.syscall(26, 9)[0]
-        if clk == 0:                            # the clock's seconds, in steps of the 1/100 s counter
-            wall = _kwall() * 100
-            if not _koff or abs(_koff[0] + ticks - wall) > 150:
-                del _koff[:]
-                _koff.append(wall - ticks)
-            ticks += _koff[0]
-        return (ticks // 100, ticks % 100 * 10000000)
+        ns = _kns()
+        if clk == 0:                            # the wall clock's seconds (fn 3 / 29: the CMOS clock, slow to read) in
+            if not _koff or ns - _koff[1] >= _NS:      # the counter's steps: read again once a second, and followed
+                wall = _kwall() * _NS                  # when it moved (set) by more than 1.5 s
+                if not _koff or abs(_koff[0] + ns - wall) > 1500000000:
+                    del _koff[:]
+                    _koff.append(wall - ns)
+                    _koff.append(ns)
+                else:
+                    _koff[1] = ns
+            ns += _koff[0]
+        return (ns // _NS, ns % _NS)
     b = sys.buffer(8)
     sys.syscall(265, clk, b)
     return (sys.peek(b, 0, 4), sys.peek(b, 4, 4))

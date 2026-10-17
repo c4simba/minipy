@@ -133,11 +133,22 @@ static void *x2c_lib(const char *so){
     static const char *libc[]={"libc.so.6","libm.so.6","libpthread.so.0","libdl.so.2","librt.so.1","libc.so","libm.so",NULL};
     for(int i=0;libc[i];i++) if(!strcmp(so,libc[i])) return RTLD_DEFAULT;
     void *h=dlopen(so,RTLD_NOW|RTLD_GLOBAL);
+    char first[600]; { const char *e=h?NULL:dlerror(); snprintf(first,sizeof first,"%s",e?e:""); }
     if(!h){                                             /* libfoo.so.N -> libfoo.dylib */
         char name[512]; const char *dot=strstr(so,".so");
         if(dot && dot-so<480){ snprintf(name,sizeof name,"%.*s.dylib",(int)(dot-so),so); h=dlopen(name,RTLD_NOW|RTLD_GLOBAL); }
     }
-    if(!h) x2c_fatal("cannot load the C library %s: %s",so,dlerror());
+    if(!h && !strchr(so,'/')){                          /* the folders of PLAINPY_LIBRARY_PATH, then Homebrew's (the interpreter's too: ctypes.c) */
+        static const char *const dirs[]={"/opt/homebrew/lib","/opt/homebrew/opt/openssl@3/lib","/usr/local/lib","/usr/local/opt/openssl@3/lib",NULL};
+        char path[1024]; const char *env=getenv("PLAINPY_LIBRARY_PATH");
+        while(!h && env && *env){
+            const char *e=strchr(env,':'); size_t n= e ? (size_t)(e-env) : strlen(env);
+            if(n && n<sizeof path-strlen(so)-2){ snprintf(path,sizeof path,"%.*s/%s",(int)n,env,so); h=dlopen(path,RTLD_NOW|RTLD_GLOBAL); }
+            env= e ? e+1 : NULL;
+        }
+        for(int i=0;!h && dirs[i];i++){ snprintf(path,sizeof path,"%s/%s",dirs[i],so); h=dlopen(path,RTLD_NOW|RTLD_GLOBAL); }
+    }
+    if(!h) x2c_fatal("cannot load the C library %s: %s (PLAINPY_LIBRARY_PATH names folders to look in)",so,first);
     return h;
 }
 static void *x2c_errno_cell(void);

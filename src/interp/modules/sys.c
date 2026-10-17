@@ -169,8 +169,7 @@ static Value sys_getframe(int argc, Value *argv, TupleObj *kw){
     for(int i=n-1;i>=0;i--){ Frame *g=fs[i];
         InstObj *o=(InstObj*)mp_alloc(T_frame,sizeof(InstObj)); o->dict=AS_DICT(mp_dict()); Value fo=v_obj(o);
         int ip= g->ip>0 ? g->ip-1 : 0;
-        int line= g->code->ncode ? g->code->lines[ip<g->code->ncode?ip:g->code->ncode-1] : g->code->firstline;
-        mp_dict_set_s(o->dict,"f_code",v_obj(g->code)); mp_dict_set_s(o->dict,"f_lineno",v_int(line)); mp_dict_set_s(o->dict,"f_lasti",v_int(ip*2));
+        mp_dict_set_s(o->dict,"f_code",v_obj(g->code)); mp_dict_set_s(o->dict,"f_lineno",mp_code_lineno(g->code,ip)); mp_dict_set_s(o->dict,"f_lasti",v_int(ip*2));
         mp_dict_set_s(o->dict,"f_globals",v_obj(g->globals)); mp_dict_set_s(o->dict,"f_builtins",v_obj(g->builtins?g->builtins:mp_builtins));
         mp_dict_set_s(o->dict,"f_locals",mp_frame_locals(g)); mp_dict_set_s(o->dict,"f_back",back); mp_dict_set_s(o->dict,"f_trace",v_none());
         mp_dict_set_s(o->dict,"f_generator",v_none());

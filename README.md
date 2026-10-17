@@ -118,6 +118,7 @@ src/
     call.c attr.c class.c   calls, attributes, classes
     gen.c                   generators, coroutines, async generators
     raise.c traceback.c     exceptions and their tracebacks
+    bytecode.c              bytecode files (.ppyc, a library of bytecode)
     obj.c ops.c             the object model, the collector; operators
     builtins.c format.c bytearray.c
     methods/                the methods of str, bytes, list, dict, set, int, float, object ...
@@ -201,6 +202,58 @@ inflates a module the first time it is imported (the whole library takes
 ```sh
 ./plainpy tests/test.py
 ```
+
+### Bytecode files: running without the sources
+
+As MicroPython's `.mpy`: a module compiled once, run and imported without
+its source and without compiling it again ([src/interp/bytecode.c](src/interp/bytecode.c)):
+
+```sh
+./plainpy --bytecode app.py                 # app.ppyc (-o names another file)
+./plainpy app.ppyc                          # imports find name.ppyc too, where there is no name.py
+./plainpy --bytecode --strip app.py         # without docstrings
+./plainpy --bytecode --strip-lines app.py   # without line numbers too: tracebacks name the functions only
+./plainpy --bytecode-lib plainpy.lib        # the standard library compiled, no sources in it
+./plainpy --bytecode-lib lib.c              # the same as a C array: built in with -DPPY_LIB_EMBED (a board's flash)
+```
+
+The format is the same on every system (and checked when it is read). A
+traceback shows source lines when the file it names is there; the carets'
+places are never stored - the traceback compiles the source again for them.
+A library of bytecode is stored as it is, 4-aligned, so its code is used
+where the file is mapped (or where the linked-in array is: flash); only the
+objects are made in the heap. It is the interpreter's only: the compiler
+needs the sources (`make test-bytecode` runs the tests both ways).
+
+### Memory of the interpreter
+
+What the interpreter keeps, as little as it can:
+
+- a module's parse tree, tokens and the compiler's scopes are made in one
+  region, freed when its code object is made; sources are not kept
+  (tracebacks read the files again, as CPython's linecache does);
+- line numbers are a compact table, the carets' places are found again when
+  a traceback shows them; `plainpy.lib` is mapped, not read into the heap;
+- the methods of built-in types are made the first time a type is looked at
+  (MicroPython's types cost nothing until used), exception classes get a
+  dict when they need one, `__bases__` of a built-in type is made when asked;
+- dict index slots take 1, 2, 4 or 8 bytes as the table needs (CPython's
+  compact dict); interned strs are a table of pointers; a dict lookup by a
+  C string makes no str;
+- on 32-bit systems a value is 12 bytes, not 16, and objects come in 8-byte
+  size classes;
+- built with `-DPPY_LOWMEM` (a board), the collector runs by bytes - when
+  half the live data and 8 KiB more were made since the last collection -
+  freed objects go back to malloc at once, its own arrays stay small.
+
+The heap a program needs (`print(1)`; `machine`, a pin toggled; `json`,
+`re`, `datetime` and `collections` imported and used):
+
+| | `print(1)` | `machine` | `json re datetime collections` |
+|---|---|---|---|
+| 64-bit, before (2026-10-16) | 275 KiB | 7.6 MB | 28.7 MB |
+| 64-bit, now | 91 KiB | 178 KiB | 2.4 MB, 2.0 MB as bytecode |
+| wasm32, `PPY_LOWMEM`, bytecode built in | 72 KiB | 156 KiB | 1.5 MB |
 
 ### Diagnostic flags
 
@@ -602,9 +655,15 @@ PLAINPYPATH=$HOME/mylibs:/opt/shared ./plainpy --compile app.py
 
 On the Linux and macOS targets a program calls C functions the way CPython's
 `ctypes` does. For Linux `plainpy --compile` makes a dynamically linked
-executable (`/lib/ld-linux.so.2` loads the libraries and fills in the
-functions' addresses; `fflush(NULL)` runs at exit); on macOS each call is a
-native call with the signature its declarations give (see [macOS](#macos-target-the-listing-as-c)):
+executable: `/lib/ld-linux.so.2` loads the C library's libraries (libc,
+libm, libdl) and fills in the functions' addresses (`fflush(NULL)` runs at
+exit); any other library is loaded the first time one of its functions is
+called (dlopen, dlsym: runtime `rt_clazy`), so a program runs without a
+library it does not reach - a missing one stops it there, with the loader's
+message and exit status 127. On macOS each call is a native call with the
+signature its declarations give, its library loaded when first called too
+(see [macOS](#macos-target-the-listing-as-c)). Only code that runs calls a
+function: a library is linked only if such code is in the program.
 
 ```python
 import ctypes
@@ -634,6 +693,54 @@ objects (use buffers and `sys.peek`/`sys.poke`), passing a library around as
 a value. The interpreter has the same API on host builds (`lib/ctypes.py`
 over dlopen; up to 8 integer/pointer arguments, variadic functions need
 argtypes for their fixed arguments, as CPython on arm64 Macs).
+
+A library is found where the system's loader finds it, else in the folders
+of `PLAINPY_LIBRARY_PATH` (`:`-separated), else - on macOS - in Homebrew's
+(`/opt/homebrew/lib`, its keg-only `openssl@3`, and `/usr/local`'s), the
+same way in the interpreter and in compiled programs: a binary library
+(OpenSSL, SQLite, a vendor's SDK ...) is used from Python and from compiled
+code alike.
+
+### TLS: `ssl`, https
+
+[`ssl`](src/stdlib/ssl.py) is CPython's module over the system's OpenSSL 3
+(libssl, libcrypto) through ctypes - the same module in the interpreter and
+in compiled programs, so `http.client.HTTPSConnection` and
+`urllib.request.urlopen("https://...")` work in both (Linux and macOS):
+
+```python
+import socket, ssl, urllib.request
+
+print(urllib.request.urlopen("https://example.com/").status)      # the system's CAs, the host name checked
+
+ctx = ssl.create_default_context(cafile="my-ca.pem")               # or load_verify_locations, cadata
+with ctx.wrap_socket(socket.create_connection(("host", 443)), server_hostname="host") as s:
+    s.sendall(b"...")
+    print(s.version(), s.cipher(), s.recv(4096))
+
+server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)                   # a TLS server
+server.load_cert_chain("cert.pem", "key.pem")
+conn, addr = server.wrap_socket(listener, server_side=True).accept()
+```
+
+`SSLContext` (verify_mode, check_hostname, load_verify_locations,
+set_default_verify_paths, load_cert_chain, set_ciphers, set_alpn_protocols,
+minimum/maximum_version), `create_default_context`, `SSLSocket` (send, recv,
+sendall, do_handshake, version, cipher, getpeercert, unwrap; timeouts and
+non-blocking sockets), the `SSLError` family with CPython's reasons
+(`CERTIFICATE_VERIFY_FAILED`, `verify_message`). Not: callbacks (SNI, PSK,
+asking for a key's password), sessions, `MemoryBIO`. In compiled programs
+`getpeercert()` has CPython's keys with the values as text (a dict holds one
+type of value there: `subject` is `"CN=localhost,O=...,C=XX"`) and
+`getpeercert_der()` gives the DER bytes; the interpreter's is CPython's.
+
+What a program needs: OpenSSL 3 - on Linux the `libssl3` package (compiled
+programs are i386: `libssl3:i386`, loaded only when the program first uses
+TLS - one that does not runs without it), on macOS Homebrew's `openssl@3`.
+KolibriOS, the c and esp32 targets and the browser have no `ssl` (importing
+it raises ImportError; `HTTPSConnection` raises when it connects).
+`make test-ssl` runs plainpy's client and server against CPython's (TARGET
+of the compiled ones: `macos`, `linux` or `none`).
 
 ### System calls: the `sys` module
 

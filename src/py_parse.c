@@ -20,11 +20,11 @@ typedef struct {
 
 /* ---------------------------------------------------------------- helpers */
 PyNode *py_node(PyKind k, int line, int col){
-    PyNode *n=(PyNode*)xmalloc(sizeof(PyNode)); memset(n,0,sizeof *n);
+    PyNode *n=(PyNode*)ppy_ralloc0(sizeof(PyNode));
     n->kind=k; n->line=line; n->col=col; return n;
 }
 void py_list_add(PyList *l, PyNode *n){
-    if(l->n==l->cap){ l->cap=l->cap?l->cap*2:4; l->v=(PyNode**)xrealloc(l->v,sizeof(PyNode*)*(size_t)l->cap); }
+    if(l->n==l->cap){ l->cap=l->cap?l->cap*2:4; l->v=(PyNode**)ppy_rrealloc(l->v,sizeof(PyNode*)*(size_t)l->n,sizeof(PyNode*)*(size_t)l->cap); }
     l->v[l->n++]=n;
 }
 static PyTok *cur(P *p){ return &p->t[p->i]; }
@@ -49,7 +49,7 @@ static void expect_kw(P *p, int kw, const char *what){ if(!accept_kw(p,kw)){ cha
 /* a NAME that is not a hard keyword (soft keywords are names) */
 static int is_name(P *p){ return cur(p)->kind==PT_NAME && (cur(p)->op==KW_NONE || cur(p)->op>KW_SOFT); }
 static int is_name_at(P *p, int k){ PyTok *t=peek(p,k); return t->kind==PT_NAME && (t->op==KW_NONE || t->op>KW_SOFT); }
-static char *tok_text(P *p, PyTok *t){ return xstrndup2(p->src+t->start,t->end-t->start); }
+static char *tok_text(P *p, PyTok *t){ return ppy_rstrndup(p->src+t->start,t->end-t->start); }
 static char *expect_name(P *p){ if(!is_name(p)) fail(p,"expected a name"); char *s=tok_text(p,cur(p)); p->i++; return s; }
 #define expect_name_any expect_name
 static int is_id_char_fs(int c){ return isalnum(c)||c=='_'; }
@@ -80,11 +80,11 @@ static void call_args(P *p, PyList *args, PyList *kws, int close_op);
 static PyNode *pattern(P *p);
 
 /* ---------------------------------------------------------------- constants */
-static PyConst *konst(PyConstKind k){ PyConst *c=(PyConst*)xmalloc(sizeof(PyConst)); memset(c,0,sizeof *c); c->kind=k; return c; }
+static PyConst *konst(PyConstKind k){ PyConst *c=(PyConst*)ppy_ralloc0(sizeof(PyConst)); c->kind=k; return c; }
 
 static PyNode *number(P *p){
     PyTok *t=cur(p); PyNode *n=nd(p,PK_Constant);
-    char *s=(char*)xmalloc((size_t)(t->end-t->start)+1); int k=0;
+    char *s=(char*)ppy_ralloc((size_t)(t->end-t->start)+1); int k=0;
     for(int i=t->start;i<t->end;i++) if(p->src[i]!='_') s[k++]=p->src[i];
     s[k]=0;
     PyConstKind kind=PC_Int;
@@ -97,7 +97,7 @@ static PyNode *number(P *p){
 
 /* code points */
 typedef struct { uint32_t *v; int n, cap; } U32;
-static void u32_add(U32 *b, uint32_t c){ if(b->n==b->cap){ b->cap=b->cap?b->cap*2:32; b->v=(uint32_t*)xrealloc(b->v,sizeof(uint32_t)*(size_t)b->cap); } b->v[b->n++]=c; }
+static void u32_add(U32 *b, uint32_t c){ if(b->n==b->cap){ b->cap=b->cap?b->cap*2:32; b->v=(uint32_t*)ppy_rrealloc(b->v,sizeof(uint32_t)*(size_t)b->n,sizeof(uint32_t)*(size_t)b->cap); } b->v[b->n++]=c; }
 /* one UTF-8 character at s[*i] (invalid bytes as themselves) */
 static uint32_t utf8_next(const char *s, int len, int *i){
     unsigned char c=(unsigned char)s[*i];
@@ -114,7 +114,7 @@ static int hexval(int c){ return isdigit(c)?c-'0' : (c>='a'&&c<='f')?c-'a'+10 : 
    escape text (PyConst.text) for the C code to decode at run time. */
 typedef struct { U32 u; int named; char *esc; size_t esclen, esccap; } Dec;
 static void esc_put(Dec *d, const char *s, size_t n){
-    if(d->esclen+n+1>d->esccap){ d->esccap=(d->esclen+n+1)*2; d->esc=(char*)xrealloc(d->esc,d->esccap); }
+    if(d->esclen+n+1>d->esccap){ size_t old=d->esccap; d->esccap=(d->esclen+n+1)*2; d->esc=(char*)ppy_rrealloc(d->esc,old,d->esccap); }
     memcpy(d->esc+d->esclen,s,n); d->esclen+=n; d->esc[d->esclen]=0;
 }
 static void dec_char(Dec *d, uint32_t c){
@@ -199,7 +199,7 @@ static void f_flush(FCtx *f, int line, int col){
     if(!f->lit.u.n && !f->lit.named) return;
     PyNode *c=py_node(PK_Constant,line,col); c->k=konst(PC_Str);
     c->k->u=f->lit.u.v; c->k->ulen=f->lit.u.n;
-    if(f->lit.named){ c->k->text=f->lit.esc; } else free(f->lit.esc);
+    if(f->lit.named){ c->k->text=f->lit.esc; } else ppy_rfree(f->lit.esc);
     py_list_add(f->vals,c);
     memset(&f->lit,0,sizeof f->lit);
 }
@@ -209,13 +209,14 @@ static int f_field(FCtx *f, int i, int end){
     P *p=f->p;
     PyLexer sub; memset(&sub,0,sizeof sub); sub.line_starts=p->lx->line_starts; sub.nlines=p->lx->nlines;
     int stop=0;
-    if(py_lex(&sub,p->src,end,i,1,&stop)){ PyTok tt=*f->t; py_pos(p->lx,i,&tt.line,&tt.col); fail_at(p,&tt,sub.error); }
+    if(py_lex(&sub,p->src,end,i,1,&stop)){ PyTok tt=*f->t; py_pos(p->lx,i,&tt.line,&tt.col); free(sub.v); fail_at(p,&tt,sub.error); }
     if(sub.n==1) fail_at(p,f->t,"f-string: valid expression required before '}'");
     P q=*p; q.t=sub.v; q.n=sub.n; q.i=0; q.lx=&sub; q.err=NULL;
     jmp_buf jb2; q.jb=&jb2;
     if(setjmp(jb2)){                     /* (q changed after setjmp: read it from memory) */
         volatile P *vq=&q;
         if(!p->err){ p->err=vq->err; p->err_line=vq->err_line; p->err_col=vq->err_col; }
+        free(sub.v);
         longjmp(*p->jb,1);
     }
     PyNode *e= is_kw(&q,KW_yield) ? yield_expr(&q) : star_expressions(&q);
@@ -306,12 +307,12 @@ static PyNode *strings(P *p){
     Dec d; memset(&d,0,sizeof d);
     for(int k=first;k<last;k++){ StrTok st=strtok_info(p,&p->t[k]); decode(p,&p->t[k],st.body,st.bodyend,st.raw,st.bytes,&d); }
     if(any_b){
-        n->k=konst(PC_Bytes); n->k->blen=d.u.n; n->k->b=(unsigned char*)xmalloc((size_t)d.u.n+1);
+        n->k=konst(PC_Bytes); n->k->blen=d.u.n; n->k->b=(unsigned char*)ppy_ralloc((size_t)d.u.n+1);
         for(int k=0;k<d.u.n;k++) n->k->b[k]=(unsigned char)d.u.v[k];
-        free(d.u.v); free(d.esc);
+        ppy_rfree(d.u.v); ppy_rfree(d.esc);
     } else {
         n->k=konst(PC_Str); n->k->u=d.u.v; n->k->ulen=d.u.n;
-        if(d.named) n->k->text=d.esc; else free(d.esc);
+        if(d.named) n->k->text=d.esc; else ppy_rfree(d.esc);
         n->k->is_u=strtok_info(p,&p->t[first]).u;
     }
     return n;
@@ -383,7 +384,7 @@ static PyNode *parameters(P *p, int lambda, int close){
         if(!accept_op(p,O_COMMA)) break;
     }
     for(int k=0;k<pos.n;k++) py_list_add(&a->L[1],pos.v[k]);
-    free(pos.v);
+    ppy_rfree(pos.v);
     return a;
 }
 
@@ -970,7 +971,7 @@ static char *dotted_name(P *p){
     char *s=expect_name(p);
     while(is_op(p,O_DOT) && peek(p,1)->kind==PT_NAME){
         p->i++; char *t=expect_name_any(p);
-        size_t a=strlen(s), c=strlen(t); s=(char*)xrealloc(s,a+c+2); s[a]='.'; memcpy(s+a+1,t,c+1); free(t);
+        size_t a=strlen(s), c=strlen(t); s=(char*)ppy_rrealloc(s,a+1,a+c+2); s[a]='.'; memcpy(s+a+1,t,c+1); ppy_rfree(t);
     }
     return s;
 }
@@ -1006,7 +1007,7 @@ static PyNode *simple_stmt(P *p){
             else if(!level) fail(p,"invalid syntax");
             im->op=level;
             expect_kw(p,KW_import,"import");
-            if(is_op(p,O_STAR)){ PyNode *al=nd(p,PK_alias); p->i++; al->id[0]=xstrdup2("*"); py_list_add(&im->L[3],al); return im; }
+            if(is_op(p,O_STAR)){ PyNode *al=nd(p,PK_alias); p->i++; al->id[0]=ppy_rstrdup("*"); py_list_add(&im->L[3],al); return im; }
             int paren=accept_op(p,O_LPAR);
             do {
                 if(paren && is_op(p,O_RPAR)) break;
@@ -1148,21 +1149,23 @@ static void node_ends(PyNode *n){
         if(c->end_line>el || (c->end_line==el && c->end_col>ec)){ el=c->end_line; ec=c->end_col; } }
     if(!n->end_line){ n->end_line= el ? el : n->line; n->end_col= el ? ec : n->col; }
 }
+static void lex_free(PyLexer *lx){ free(lx->v); free(lx->line_starts); free(lx); }
 int py_parse(PyParse *pp, const char *path, const char *src, size_t len){
     memset(pp,0,sizeof *pp); pp->path=path; pp->src=src; pp->len=len;
     PyLexer *lx=(PyLexer*)xmalloc(sizeof(PyLexer)); memset(lx,0,sizeof *lx);
     int start=0;
     if(len>=3 && (unsigned char)src[0]==0xEF && (unsigned char)src[1]==0xBB && (unsigned char)src[2]==0xBF) start=3;
-    if(py_lex(lx,src,(int)len,start,0,NULL)){ pp->error=lx->error; pp->error_line=lx->error_line; pp->error_col=lx->error_col; return 1; }
+    if(py_lex(lx,src,(int)len,start,0,NULL)){ pp->error=lx->error; pp->error_line=lx->error_line; pp->error_col=lx->error_col; lex_free(lx); return 1; }
     P p; memset(&p,0,sizeof p); p.lx=lx; p.t=lx->v; p.n=lx->n; p.src=src; p.len=(int)len;
     jmp_buf jb; p.jb=&jb;
     if(setjmp(jb)){                      /* (p changed after setjmp: read it from memory) */
         volatile P *vp=&p;
-        pp->error=vp->err?vp->err:xstrdup2("invalid syntax"); pp->error_line=vp->err_line; pp->error_col=vp->err_col; return 1;
+        pp->error=vp->err?vp->err:xstrdup2("invalid syntax"); pp->error_line=vp->err_line; pp->error_col=vp->err_col; lex_free(lx); return 1;
     }
     PyNode *m=py_node(PK_Module,1,0);
     statement_list(&p,&m->L[0]);
     node_ends(m);
     pp->mod=m;
+    lex_free(lx);
     return 0;
 }

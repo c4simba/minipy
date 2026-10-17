@@ -22,7 +22,14 @@
 /* ---------------------------------------------------------------- values */
 typedef enum { V_UNDEF=0, V_NONE, V_BOOL, V_INT, V_FLOAT, V_OBJ } VKind;
 typedef struct Obj Obj;
+#if UINTPTR_MAX == 0xffffffffu
+/* (32-bit: 12 bytes, 4-aligned - not the 16 an 8-aligned int64 / double would
+   make it on wasm32, Xtensa, ARM: a quarter less for every list item, dict
+   entry, local and stack slot) */
+typedef struct Value { int k; union { int64_t i; double f; Obj *o; } __attribute__((packed, aligned(4))) u; } __attribute__((aligned(4))) Value;
+#else
 typedef struct Value { int k; union { int64_t i; double f; Obj *o; } u; } Value;
+#endif
 
 static inline Value v_undef(void){ Value v; v.k=V_UNDEF; v.u.i=0; return v; }
 static inline Value v_none(void){ Value v; v.k=V_NONE; v.u.i=0; return v; }
@@ -45,12 +52,12 @@ typedef enum {
     LY_NUM                  /* an instance of a subclass of int or float: NumObj */
 } Layout;
 
-typedef struct StrObj { Obj h; int64_t len, cplen; uint64_t hash; int hashed, ascii; char s[]; } StrObj;   /* UTF-8, NUL-terminated */
+typedef struct StrObj { Obj h; int64_t len, cplen; uint64_t hash; uint8_t hashed, ascii; char s[]; } StrObj;   /* UTF-8, NUL-terminated */
 typedef struct BytesObj { Obj h; int64_t len; uint64_t hash; int hashed; unsigned char s[]; } BytesObj;
 typedef struct TupleObj { Obj h; int64_t len; uint64_t hash; int hashed; Value items[]; } TupleObj;
 typedef struct ListObj { Obj h; Value *items; int64_t len, cap; } ListObj;
 typedef struct { Value key, val; uint64_t hash; } DEnt;
-typedef struct DictObj { Obj h; DEnt *ent; int64_t nent, cap, used; int64_t *idx; int64_t isize; } DictObj;   /* insertion-ordered */
+typedef struct DictObj { Obj h; DEnt *ent; int64_t nent, cap, used; void *idx; int64_t isize; } DictObj;   /* insertion-ordered; idx: 1, 2, 4 or 8 bytes a slot, as isize needs (obj.c) */
 /* set / frozenset: CPython's table (open addressing, linear probes + perturbation), so they iterate in its order */
 typedef struct { Value key; uint64_t hash; } SEnt;
 typedef struct SetObj { Obj h; SEnt *table; int64_t mask, fill, used, finger; uint64_t hash; int hashed; } SetObj;
@@ -85,18 +92,20 @@ struct Type {
 };
 enum { TF_BUILTIN=1, TF_BASETYPE=2, TF_HEAP=4, TF_DUNDERS=8 /* a class: look its dunders up */, TF_ABSTRACT_DONE=16,
        TF_SUBVAL=32 /* a subclass of str, bytes, tuple, list, dict, set, frozenset, int or float: its objects have the
-                       built-in's layout (LY_NUM for the numbers) and an instance dict in their last pointer slot */ };
+                       built-in's layout (LY_NUM for the numbers) and an instance dict in their last pointer slot */,
+       TF_LAZY=64   /* methods mp_type_add gave it are not in its dict yet: mp_tdict puts them there */ };
 
 /* ---------------------------------------------------------------- code, functions */
-enum { CO_VARARGS=1, CO_VARKW=2, CO_GEN=4, CO_CORO=8, CO_ASYNCGEN=16, CO_CLASS=32, CO_MODULE=64, CO_NESTED=128, CO_COMP=256 };
+enum { CO_VARARGS=1, CO_VARKW=2, CO_GEN=4, CO_CORO=8, CO_ASYNCGEN=16, CO_CLASS=32, CO_MODULE=64, CO_NESTED=128, CO_COMP=256,
+       CO_BORROWED=0x20000000 /* code / loc where a bytecode file mapped for good has them (bytecode.c): not freed */ };
 typedef struct CodeObj {
     Obj h;
     StrObj *name, *qualname;
     const char *file;
     int firstline;
-    uint32_t *code; int *lines; int ncode;       /* instruction: opcode | arg<<8 */
-    int *pos;                                    /* per instruction: end line, column, end column (bytes; -1: unknown) */
-    int *anc; int nanc;                          /* traceback carets: (instruction, kind 1 binop / 2 subscript / 3 call, line, col, line2, col2, special col) */
+    uint32_t *code; int ncode;                   /* instruction: opcode | arg<<8 */
+    uint8_t *loc;                                /* the instructions' lines and places, compact (mp_code_line / mp_code_place); NULL: none kept */
+    uint8_t *carets; int ncarets;                /* traceback carets' anchors, compact (mp_code_anchor); NULL: none */
     Value *consts; int nconsts;
     StrObj **names; int nnames;                  /* globals, attributes */
     StrObj **varnames; int nlocals;              /* the parameters first */
@@ -300,6 +309,11 @@ int     mp_getattr_opt(Value o, Value name, Value *out);   /* 0: no such attribu
 void    mp_setattr(Value o, Value name, Value v);
 void    mp_delattr(Value o, Value name);
 Value   mp_type_lookup(Type *t, Value name);     /* through the MRO; V_UNDEF if none */
+/* a type's dict, read through this: a built-in type's methods are made the first time it is
+   looked at (MicroPython's types cost nothing until they are used; class.c) */
+void    mp_type_fill(Type *t);
+static inline DictObj *mp_tdict(Type *t){ if((t->flags&TF_LAZY) || !t->dict) mp_type_fill(t); return t->dict; }
+TupleObj *mp_type_bases(Type *t);                /* __bases__ (a built-in type's: made when asked for) */
 Value   mp_type_lookup_s(Type *t, const char *name);
 Value   mp_call(Value f, int argc, Value *argv, TupleObj *kw);
 Value   mp_call0(Value f);
@@ -325,7 +339,9 @@ Value mp_format_exception(Value e);                /* (traceback.c) a traceback'
 Value mp_stack_list(void);
 Value mp_frame_source(const char *file, int line, Value code, int ip);   /* (traceback.c) a traceback entry's source lines, with carets */
 Value mp_frame_locals(Frame *f);                  /* (builtins.c) locals() of a frame */
-Value mp_source_getline(const char *file, int line);   /* (traceback.c) a line of a file it ran */                        /* (traceback.c) the running frames, outermost first */
+Value mp_source_getline(const char *file, int line);   /* (traceback.c) a line of a file it ran */
+char *mp_file_source(const char *file);                /* (import.c) the text of a file a traceback names, read again (caller frees) */
+CodeObj *mp_compile_places(const char *src, const char *file);   /* (import.c) a module's text compiled again, the carets' places kept */
 /* (bytearray.c) bytearray */
 extern Type *T_bytearray;
 #define IS_BA(v) ((v).k==V_OBJ && (v).u.o->type->layout==LY_BYTEARRAY)
@@ -384,6 +400,20 @@ Value   mp_catch_exc(Catch *c);
 /* compiler (compile.c) */
 CodeObj *mp_compile(PyNode *mod, const char *file, const char *modname, char **error, int *error_line);
 void     mp_dump_code(CodeObj *co);
+/* what the compiler leaves out (MicroPython's choices, `plainpy --bytecode --strip`):
+   docstrings (None), the column places of the carets, the line numbers too */
+enum { MP_STRIP_DOCS=1, MP_STRIP_PLACES=2, MP_STRIP_LINES=4 };
+extern int mp_strip;
+int mp_code_line(CodeObj *co, int ip);           /* the line of instruction ip; -1: not kept */
+Value mp_code_lineno(CodeObj *co, int ip);       /* the same as a value: None when not kept (f_lineno, a traceback's entry) */
+int mp_code_place(CodeObj *co, int ip, int *eline, int *col, int *ecol);   /* 1 and its span's end line, columns (-1: none) */
+int mp_code_anchor(CodeObj *co, int ip, int rec[6]);
+/* bytecode files (bytecode.c): a module's code as bytes and back */
+Value    mp_bytecode_dump(CodeObj *co, const char *file);
+CodeObj *mp_bytecode_load(const void *data, size_t len, const char *file, int borrow);
+int      mp_is_bytecode(const void *data, size_t len);
+void     mp_write_bytecode(const char *path, const char *out, int strip);   /* (import.c) file.py -> out (NULL: file.ppyc) */
+int      mp_write_bytecode_lib(const char *out, int strip);                 /* (import.c) plainpy.lib's modules -> a library of bytecode */   /* 1 and its carets' anchor: kind 1 binop / 2 subscript / 3 call, line, col, line2, col2, special col */
 
 /* modules (modules/) */
 void   mp_modules_init(void);

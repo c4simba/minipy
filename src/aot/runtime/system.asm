@@ -31,6 +31,60 @@ end if
         mov     eax,1
         int     0x80
 
+;;; code rt_clazy linux : rt_exit
+rt_clazy:                       ; [esp] = the entry of a C function whose library is loaded when first used (library,
+        pushad                  ; symbol, slot, handle), the call's return address and arguments above it: the library
+        mov     esi,[esp+32]    ; loaded (dlopen), the function found (dlsym) and put in the slot, then called as the
+        mov     ebp,esp         ; call site called it
+        and     esp,-16
+        mov     ebx,[esi+12]
+        mov     eax,[ebx]
+        test    eax,eax
+        jnz     .sym
+        sub     esp,8
+        push    0x102           ; RTLD_NOW | RTLD_GLOBAL
+        push    dword [esi]
+        call    dword [CI_dlopen]
+        add     esp,16
+        test    eax,eax
+        jz      .fail
+        mov     [ebx],eax
+.sym:   sub     esp,8
+        push    dword [esi+4]
+        push    eax
+        call    dword [CI_dlsym]
+        add     esp,16
+        test    eax,eax
+        jz      .fail
+        mov     ecx,[esi+8]
+        mov     [ecx],eax
+        mov     esp,ebp
+        mov     [esp+32],eax    ; (where the entry was: ret goes on to the function, the call's frame as it was)
+        popad
+        ret
+.fail:  call    dword [CI_dlerror]   ; ("libssl.so.3: cannot open shared object file ...") on stderr, exit status 127
+        test    eax,eax
+        jz      .out
+        mov     ecx,eax
+        mov     edx,eax
+@@:     cmp     byte [edx],0
+        je      @f
+        inc     edx
+        jmp     @b
+@@:     sub     edx,ecx
+        mov     eax,4
+        mov     ebx,2
+        int     0x80
+        mov     eax,4
+        mov     ebx,2
+        mov     ecx,rt_clazy_nl
+        mov     edx,1
+        int     0x80
+.out:   mov     ebx,127
+        jmp     rt_exit
+;;; data rt_clazy linux
+rt_clazy_nl     db 10
+
 ;;; code rt_exit kolibri
 rt_exit:                        ; ebx = exit status (KolibriOS has none)
 if defined rt_con_close

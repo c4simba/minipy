@@ -194,8 +194,7 @@ Ty *ck_ccall(Ck *c, Expr *e, ACFunc *cf){
         } else if(!isint) ck_err(c,line,"argument %d of %s() must be an int, not %s",i+1,cf->sym,ty_name(t));
         xi->argmap[i]=k;
     }
-    cf->used=1; cf->lib->used=1;
-    switch(cf->restype){
+    switch(cf->restype){                                 /* (the function and its library: used once code calls it - codegen/ctypes.c) */
         case CT_DOUBLE: case CT_FLOAT: return TY_FLOAT_T;
         case CT_CHARP: return optional(TY_STR_T);          /* NULL is None */
         case CT_VOID: return TY_VOID_T;
@@ -216,7 +215,7 @@ Ty *ck_ctypes_fn(Ck *c, Expr *e, const char *m){
         if(e->count==2) expect(c,TY_INT_T,arg(c,e,1),line,"the size"); return TY_STR_T; }
     if(!strcmp(m,"addressof")){ ck_positional(c,e,1,1,"addressof"); expect(c,TY_BUF_T,arg(c,e,0),line,"the buffer"); return TY_INT_T; }
     if(!strcmp(m,"get_errno")){ ck_positional(c,e,0,0,"get_errno");
-        ACFunc *f=cfunc_get(c->p,clib_get(c->p,"libc.so.6"),"__errno_location"); f->restype=CT_VOIDP; f->used=1; f->lib->used=1; xi->cfn=f;
+        ACFunc *f=cfunc_get(c->p,clib_get(c->p,"libc.so.6"),"__errno_location"); f->restype=CT_VOIDP; xi->cfn=f;
         return TY_INT_T; }
     ck_err(c,line,"ctypes.%s is not available in compiled code",m);
 }

@@ -39,24 +39,24 @@ static Sym *sym_find(Scope *s, const char *name){ for(int i=0;i<s->nsyms;i++) if
 static Sym *sym_add(Scope *s, const char *name, int flags){
     Sym *y=sym_find(s,name);
     if(!y){
-        if(s->nsyms==s->cap){ s->cap=s->cap?s->cap*2:16; s->syms=(Sym*)xrealloc(s->syms,sizeof(Sym)*(size_t)s->cap); }
-        y=&s->syms[s->nsyms++]; y->name=xstrdup2(name); y->flags=0; y->scope=0;
+        if(s->nsyms==s->cap){ s->cap=s->cap?s->cap*2:16; s->syms=(Sym*)ppy_rrealloc(s->syms,sizeof(Sym)*(size_t)s->nsyms,sizeof(Sym)*(size_t)s->cap); }
+        y=&s->syms[s->nsyms++]; y->name=ppy_rstrdup(name); y->flags=0; y->scope=0;
     }
     y->flags|=flags;
     return y;
 }
 static Scope *scope_new(C *c, int kind, PyNode *node, Scope *parent, const char *name){
     (void)c;
-    Scope *s=PPY_NEW0(Scope); s->kind=kind; s->node=node; s->parent=parent; s->name=xstrdup2(name);
+    Scope *s=(Scope*)ppy_ralloc0(sizeof(Scope)); s->kind=kind; s->node=node; s->parent=parent; s->name=ppy_rstrdup(name);
     if(parent){
-        if(parent->nkids==parent->kcap){ parent->kcap=parent->kcap?parent->kcap*2:8; parent->kids=(Scope**)xrealloc(parent->kids,sizeof(Scope*)*(size_t)parent->kcap); }
+        if(parent->nkids==parent->kcap){ parent->kcap=parent->kcap?parent->kcap*2:8; parent->kids=(Scope**)ppy_rrealloc(parent->kids,sizeof(Scope*)*(size_t)parent->nkids,sizeof(Scope*)*(size_t)parent->kcap); }
         parent->kids[parent->nkids++]=s;
         char q[512];
         if(parent->kind==SK_MODULE) snprintf(q,sizeof q,"%s",name);
         else if(parent->kind==SK_CLASS) snprintf(q,sizeof q,"%s.%s",parent->qualname,name);
         else snprintf(q,sizeof q,"%s.<locals>.%s",parent->qualname,name);
-        s->qualname=xstrdup2(q);
-    } else s->qualname=xstrdup2(name);
+        s->qualname=ppy_rstrdup(q);
+    } else s->qualname=ppy_rstrdup(name);
     return s;
 }
 
@@ -368,13 +368,13 @@ static void place(G *g, int l){
 }
 static int name_ix(G *g, const char *s){
     for(int i=0;i<g->nnames;i++) if(!strcmp(g->names[i],s)) return i;
-    if(g->nnames==g->cnames){ g->cnames=g->cnames?g->cnames*2:16; g->names=(char**)xrealloc(g->names,sizeof(char*)*(size_t)g->cnames); }
-    g->names[g->nnames]=xstrdup2(s); return g->nnames++;
+    if(g->nnames==g->cnames){ g->cnames=g->cnames?g->cnames*2:16; g->names=(char**)ppy_rrealloc(g->names,sizeof(char*)*(size_t)g->nnames,sizeof(char*)*(size_t)g->cnames); }
+    g->names[g->nnames]=ppy_rstrdup(s); return g->nnames++;
 }
 static int var_ix(G *g, const char *s){
     for(int i=0;i<g->nvars;i++) if(!strcmp(g->vars[i],s)) return i;
-    if(g->nvars==g->cvars){ g->cvars=g->cvars?g->cvars*2:16; g->vars=(char**)xrealloc(g->vars,sizeof(char*)*(size_t)g->cvars); }
-    g->vars[g->nvars]=xstrdup2(s); return g->nvars++;
+    if(g->nvars==g->cvars){ g->cvars=g->cvars?g->cvars*2:16; g->vars=(char**)ppy_rrealloc(g->vars,sizeof(char*)*(size_t)g->nvars,sizeof(char*)*(size_t)g->cvars); }
+    g->vars[g->nvars]=ppy_rstrdup(s); return g->nvars++;
 }
 static int cell_ix(G *g, const char *s){
     for(int i=0;i<g->ncells;i++) if(!strcmp(g->cells[i],s)) return i;
@@ -1401,6 +1401,77 @@ static void comp_body(G *g, PyNode *n, int gi, int depth_items){
     if(gen->op){ place(g,done); emit(g,I_END_ASYNC_FOR,0); }
     else place(g,exit_);
 }
+/* ---------------------------------------------------------------- the instructions' places, compact
+   CodeObj.loc: a byte saying what follows (1: lines and places, 2: lines), then runs of instructions
+   with the same place: count, line - the previous run's line (zigzag), [end line - line, column + 1,
+   end column + 1]; numbers as LEB128. CodeObj.carets: per anchor: instruction - the previous one's,
+   kind, line, column + 1, line2, column2 + 1, special column + 1. Read only for tracebacks, frames'
+   f_lineno and the like: a walk from the start. */
+int mp_strip;
+typedef struct { uint8_t *b; int n, cap; } Bytes;
+static void b_put(Bytes *o, unsigned v){ do{ if(o->n==o->cap){ o->cap=o->cap?o->cap*2:64; o->b=(uint8_t*)xrealloc(o->b,(size_t)o->cap); }
+    o->b[o->n++]=(uint8_t)((v&127)|(v>127?128:0)); v>>=7; } while(v); }
+static void b_sput(Bytes *o, int v){ b_put(o,v<0?((unsigned)(-(v+1))<<1)|1u:(unsigned)v<<1); }
+static unsigned b_get(const uint8_t **p){ unsigned v=0; int sh=0; uint8_t c; do{ c=*(*p)++; v|=(unsigned)(c&127)<<sh; sh+=7; } while(c&128); return v; }
+static int b_sget(const uint8_t **p){ unsigned v=b_get(p); return v&1 ? -(int)(v>>1)-1 : (int)(v>>1); }
+static void encode_places(CodeObj *co, G *g){
+    co->loc=NULL; co->carets=NULL; co->ncarets=0;
+    if((mp_strip&MP_STRIP_LINES) || !g->n) return;
+    int places=!(mp_strip&MP_STRIP_PLACES);
+    Bytes o={0}; b_put(&o,places?1:2);
+    int prev=0;
+    for(int i=0;i<g->n;){
+        int j=i+1;
+        while(j<g->n && g->lines[j]==g->lines[i] && (!places || !memcmp(g->pos+3*j,g->pos+3*i,3*sizeof(int)))) j++;
+        b_put(&o,(unsigned)(j-i)); b_sput(&o,g->lines[i]-prev); prev=g->lines[i];
+        if(places){ int *q=g->pos+3*i; b_put(&o,(unsigned)(q[0]-g->lines[i])); b_put(&o,(unsigned)(q[1]+1)); b_put(&o,(unsigned)(q[2]+1)); }
+        i=j;
+    }
+    co->loc=(uint8_t*)xrealloc(o.b,(size_t)o.n);
+    if(!places || !g->nanc) return;
+    Bytes a={0}; int pip=0;
+    for(int k=0;k<g->nanc;k++){ int *r=g->anc+7*k;
+        b_put(&a,(unsigned)(r[0]-pip)); pip=r[0];
+        b_put(&a,(unsigned)r[1]); b_put(&a,(unsigned)r[2]); b_put(&a,(unsigned)(r[3]+1)); b_put(&a,(unsigned)r[4]); b_put(&a,(unsigned)(r[5]+1)); b_put(&a,(unsigned)(r[6]+1)); }
+    co->carets=(uint8_t*)xrealloc(a.b,(size_t)a.n); co->ncarets=g->nanc;
+}
+/* the run of instruction ip: its line and, when kept, its place */
+static int find_place(CodeObj *co, int ip, int *line, int pl[3]){
+    if(!co->loc || ip<0 || ip>=co->ncode) return 0;
+    const uint8_t *p=co->loc; int places= *p++==1, at=0, ln=0;
+    while(at<co->ncode){
+        int run=(int)b_get(&p); ln+=b_sget(&p);
+        int e=0, c=-1, ec=-1;
+        if(places){ e=ln+(int)b_get(&p); c=(int)b_get(&p)-1; ec=(int)b_get(&p)-1; }
+        if(ip<at+run){ *line=ln; if(pl){ pl[0]= places?e:ln; pl[1]=c; pl[2]=ec; } return places?2:1; }
+        at+=run;
+    }
+    return 0;
+}
+int mp_code_line(CodeObj *co, int ip){
+    int line;
+    if(!co->ncode) return co->firstline;
+    if(ip>=co->ncode) ip=co->ncode-1;
+    return find_place(co,ip,&line,NULL) ? line : -1;
+}
+Value mp_code_lineno(CodeObj *co, int ip){ int l=mp_code_line(co,ip); return l<0 ? v_none() : v_int(l); }
+int mp_code_place(CodeObj *co, int ip, int *eline, int *col, int *ecol){
+    int line, pl[3];
+    if(find_place(co,ip,&line,pl)!=2) return 0;
+    *eline=pl[0]; *col=pl[1]; *ecol=pl[2]; return 1;
+}
+int mp_code_anchor(CodeObj *co, int ip, int rec[6]){
+    if(!co->carets) return 0;
+    const uint8_t *p=co->carets; int at=0;
+    for(int k=0;k<co->ncarets;k++){
+        at+=(int)b_get(&p);
+        int r[6]; r[0]=(int)b_get(&p); r[1]=(int)b_get(&p); r[2]=(int)b_get(&p)-1; r[3]=(int)b_get(&p); r[4]=(int)b_get(&p)-1; r[5]=(int)b_get(&p)-1;
+        if(at==ip){ memcpy(rec,r,sizeof r); return 1; }
+        if(at>ip) return 0;
+    }
+    return 0;
+}
+
 static Value make_code(C *c, Scope *s){
     G G0; memset(&G0,0,sizeof G0); G *g=&G0;
     g->c=c; g->sc=s; g->consts=mp_list(0,NULL);
@@ -1436,7 +1507,7 @@ static Value make_code(C *c, Scope *s){
     /* the body */
     if(s->kind==SK_MODULE || (s->kind==SK_FUNC && n->kind!=PK_Lambda) || s->kind==SK_CLASS){
         PyList *body=&n->L[0];
-        int has_doc= body->n && body->v[0]->kind==PK_Expr && body->v[0]->n[0]->kind==PK_Constant && body->v[0]->n[0]->k->kind==PC_Str;
+        int has_doc= !(mp_strip&MP_STRIP_DOCS) && body->n && body->v[0]->kind==PK_Expr && body->v[0]->n[0]->kind==PK_Constant && body->v[0]->n[0]->k->kind==PC_Str;
         if(has_doc) co->doc=const_of(g,body->v[0]->n[0]);
         if(s->kind==SK_CLASS){
             emit(g,I_LOAD_GLOBAL,name_ix(g,"__name__")); emit(g,I_STORE_NAME,name_ix(g,"__module__"));
@@ -1461,7 +1532,9 @@ static Value make_code(C *c, Scope *s){
     }
     /* labels -> positions */
     for(int i=0;i<g->njumps;i++){ int at=g->jumps[i]; int l=(int)(g->code[at]>>8); g->code[at]=(g->code[at]&0xff)|((uint32_t)g->labels[l].pos<<8); }
-    co->code=g->code; co->lines=g->lines; co->pos=g->pos; co->anc=g->anc; co->nanc=g->nanc; co->ncode=g->n;
+    co->code=(uint32_t*)xrealloc(g->code,sizeof(uint32_t)*(size_t)g->n); co->ncode=g->n;   /* (the buffer's spare room given back) */
+    encode_places(co,g);
+    free(g->lines); free(g->pos); free(g->anc);
     ListObj *cl=AS_LIST(keep_list);
     co->nconsts=(int)cl->len; co->consts=(Value*)xmalloc(sizeof(Value)*(size_t)(cl->len+1)); memcpy(co->consts,cl->items,sizeof(Value)*(size_t)cl->len);
     co->nnames=g->nnames; co->names=(StrObj**)xmalloc(sizeof(StrObj*)*(size_t)(g->nnames+1));
@@ -1495,7 +1568,7 @@ static Value make_code(C *c, Scope *s){
         for(int i=0;i<no;i++) if(order[i]->n[0]){ co->annname[co->nann]=xstrdup2(order[i]->id[0]); co->anntext[co->nann++]=ann_text(order[i]->n[0]); }
         if(nr){ co->annname[co->nann]=xstrdup2("return"); co->anntext[co->nann++]=ann_text(n->n[1]); }
     }
-    free(g->names); free(g->vars); free(g->cells); free(g->frees); free(g->labels); free(g->jumps);
+    ppy_rfree(g->names); ppy_rfree(g->vars); free(g->cells); free(g->frees); free(g->labels); free(g->jumps);
     (void)keep_list;
     return cov;
 }
@@ -1528,7 +1601,7 @@ void mp_dump_code(CodeObj *co){
     printf("code %s (%s:%d) args=%d kwonly=%d locals=%d cells=%d frees=%d stack=%d flags=%d\n",co->qualname->s,co->file,co->firstline,co->argc,co->kwonly,co->nlocals,co->ncells,co->nfrees,co->stacksize,co->flags);
     for(int i=0;i<co->ncode;i++){
         int op=(int)(co->code[i]&0xff), arg=(int)(co->code[i]>>8);
-        printf("  %4d %4d %-20s %d",i,co->lines[i],op<I__COUNT&&op_names[op]?op_names[op]:"?",arg);
+        printf("  %4d %4d %-20s %d",i,mp_code_line(co,i),op<I__COUNT&&op_names[op]?op_names[op]:"?",arg);
         if(op==I_CONST){ Value r=mp_repr(co->consts[arg]); printf("  (%s)",mp_cstr(r)); }
         else if(op==I_LOAD_GLOBAL||op==I_STORE_GLOBAL||op==I_LOAD_NAME||op==I_STORE_NAME||op==I_LOAD_ATTR||op==I_STORE_ATTR||op==I_LOAD_METHOD||op==I_IMPORT_FROM) printf("  (%s)",co->names[arg]->s);
         else if(op==I_LOAD_FAST||op==I_STORE_FAST) printf("  (%s)",co->varnames[arg]->s);

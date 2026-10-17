@@ -138,11 +138,12 @@ static void ppy_fs_init_search(void){
     const char *data=ppy_fs_data_dir();
     if(data){ char *lib=ppy_fs_join_path(data,"lib"); ppy_fs_add_search(lib,(int)strlen(lib)); free(lib); }
 }
+int ppy_fs_bytecode;                      /* the interpreter: name.ppyc (bytecode) where there is no name.py */
 static char *ppy_fs_try_module(const char *dir,const char *module_name){
-    static const char *forms[]={"%s.py","%s/__init__.py",NULL};
+    static const char *forms[]={"%s.py","%s/__init__.py","%s.ppyc","%s/__init__.ppyc",NULL};
     char *rel=ppy_fs_module_relpath(module_name);
     rel[strlen(rel)-3]=0;                                   /* without ".py" */
-    for(int i=0;forms[i];i++){
+    for(int i=0;forms[i] && (i<2 || ppy_fs_bytecode);i++){
         size_t n=strlen(rel)+16; char *name=(char*)xmalloc(n); snprintf(name,n,forms[i],rel);
         char *path=ppy_fs_join_path(dir,name);
         free(name);

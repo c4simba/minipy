@@ -26,7 +26,7 @@ static Value excgroup_mod;
 Value mp_excgroup(const char *fn){
     if(excgroup_mod.k!=V_OBJ){
         Value nm=mp_str("_excgroup"); excgroup_mod=mp_builtin_import(1,&nm,NULL); mp_gc_add_root(&excgroup_mod);
-        DictObj *m=mdict(excgroup_mod), *d=E_BaseExceptionGroup->dict; Value v;
+        DictObj *m=mdict(excgroup_mod), *d=mp_tdict(E_BaseExceptionGroup); Value v;
         E_BaseExceptionGroup->flags|=TF_DUNDERS; E_ExceptionGroup->flags|=TF_DUNDERS;      /* (__str__ written in Python) */
         mp_dict_get_s(m,"_new",&v); BoxObj *sm=(BoxObj*)mp_alloc(T_staticmethod,sizeof(BoxObj)); sm->v=v; mp_dict_set_s(d,"__new__",v_obj(sm));
         mp_dict_get_s(m,"_str",&v); mp_dict_set_s(d,"__str__",v);

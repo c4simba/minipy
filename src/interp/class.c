@@ -134,7 +134,7 @@ static void compute_mro(Type *t){
         out[n++]=cand;
         for(int i=0;i<=nb;i++) if(pos[i]<lens[i] && seqs[i][pos[i]]==cand) pos[i]++;
     }
-    free(t->mro); t->mro=out; t->nmro=n;
+    free(t->mro); t->mro=(Type**)xrealloc(out,sizeof(Type*)*(size_t)n); t->nmro=n;
     free(seqs[nb]); free(seqs); free(lens); free(pos);
 }
 void mp_type_finish(Type *t){ compute_mro(t); }
@@ -190,7 +190,7 @@ Value mp_make_class_kw(Type *meta, Value name, Value bases, DictObj *ns, int nkw
           Value sn=mp_type_lookup_s(sv.u.o->type,"__set_name__");
           if(sn.k!=V_UNDEF){ Value a[3]={sv,v_obj(t),sk}; mp_call(sn,3,a,NULL); } } }
     for(int i=1;i<t->nmro;i++){                              /* super(t, t).__init_subclass__(**kwargs) */
-        Value isc; if(t->mro[i]->dict && mp_dict_get_s(t->mro[i]->dict,"__init_subclass__",&isc)){
+        Value isc; if(mp_tdict(t->mro[i]) && mp_dict_get_s(t->mro[i]->dict,"__init_subclass__",&isc)){
             Value keep=mp_tuple(nkw,kwv);                        /* (kept from the collector) */
             mp_call(descr_get(isc,v_obj(t),t),nkw,AS_TUPLE(keep)->items,kwn);
             break;
@@ -202,14 +202,53 @@ Value mp_new_type(const char *name, Type *base, Layout layout, int flags){
     Type *t=(Type*)mp_alloc(T_type,sizeof(Type));
     t->name=AS_STR(mp_intern(name)); t->qualname=t->name; t->base=base; t->layout=layout; t->flags=flags|TF_BUILTIN;
     t->dict=AS_DICT(mp_dict());
-    if(base){ Value bv=v_obj(base); t->bases=AS_TUPLE(mp_tuple(1,&bv)); if(base->make && layout==base->layout) t->make=base->make;
-        note_subclass(base,t); }
-    else t->bases=AS_TUPLE(mp_tuple(0,NULL));
-    compute_mro(t);
+    if(base){ if(base->make && layout==base->layout) t->make=base->make; note_subclass(base,t); }
+    /* (one base: the MRO is it and the base's; __bases__ is made when it is asked for - mp_type_bases) */
+    t->nmro= base ? base->nmro+1 : 1; t->mro=(Type**)xmalloc(sizeof(Type*)*(size_t)t->nmro);
+    t->mro[0]=t; for(int i=1;i<t->nmro;i++) t->mro[i]=base->mro[i-1];
     return v_obj(t);
 }
+/* methods of built-in types: (name, function) here until the type's dict is first read, in runs
+   of one type each (mp_type_add is called type after type) */
+typedef struct { const char *name; NFn fn; } LazyMethod;
+typedef struct { Type *t; int first, n; } LazyRun;
+static LazyMethod *lazy; static int nlazy, clazy;
+static LazyRun *runs; static int nruns, cruns;
+static int has_key(DictObj *d, const char *name){       /* (no str made for the question) */
+    int64_t pos=0; Value k;
+    while(mp_dict_next(d,&pos,&k,NULL)) if(IS_STR(k) && !strcmp(AS_STR(k)->s,name)) return 1;
+    return 0;
+}
 void mp_type_add(Type *t, const char *name, NFn fn){
-    Value n=mp_native(name,fn); ((NativeObj*)n.u.o)->is_method=1;
-    mp_dict_set(t->dict,mp_intern(name),n);
+    if(t->dict && has_key(t->dict,name)){                /* (one set before: replaced now, as it always was) */
+        Value n=mp_native(name,fn); ((NativeObj*)n.u.o)->is_method=1;
+        mp_dict_set(t->dict,mp_intern(name),n); return; }
+    if(nlazy==clazy){ clazy=clazy?clazy+clazy/2:640; lazy=(LazyMethod*)xrealloc(lazy,sizeof(LazyMethod)*(size_t)clazy); }   /* (640: about what the built-in types have) */
+    if(!nruns || runs[nruns-1].t!=t || runs[nruns-1].first+runs[nruns-1].n!=nlazy){
+        if(nruns==cruns){ cruns=cruns?cruns*2:64; runs=(LazyRun*)xrealloc(runs,sizeof(LazyRun)*(size_t)cruns); }
+        runs[nruns].t=t; runs[nruns].first=nlazy; runs[nruns].n=0; nruns++; }
+    lazy[nlazy].name=name; lazy[nlazy].fn=fn; nlazy++; runs[nruns-1].n++;
+    t->flags|=TF_LAZY;
+}
+TupleObj *mp_type_bases(Type *t){
+    if(!t->bases){ Value b=v_obj(t->base); t->bases=AS_TUPLE(t->base ? mp_tuple(1,&b) : mp_tuple(0,NULL)); }
+    return t->bases;
+}
+void mp_type_fill(Type *t){
+    if(!t->dict) t->dict=AS_DICT(mp_dict());             /* (an exception class has none until it is needed) */
+    if(!(t->flags&TF_LAZY)) return;
+    t->flags&=~TF_LAZY;
+    int n=0;
+    for(int r=0;r<nruns;r++) if(runs[r].t==t) n+=runs[r].n;
+    LazyMethod *mine=(LazyMethod*)xmalloc(sizeof(LazyMethod)*(size_t)(n+1)); n=0;
+    for(int r=0;r<nruns;r++) if(runs[r].t==t){ memcpy(mine+n,lazy+runs[r].first,sizeof(LazyMethod)*(size_t)runs[r].n); n+=runs[r].n; runs[r].t=NULL; }
+                                                         /* (out of the table first: what runs meanwhile may fill another type) */
+    for(int i=0;i<n;i++){
+        Value k=mp_intern(mine[i].name);
+        if(mp_dict_get(t->dict,k,NULL)) continue;        /* (what was set in the dict after it: that stays) */
+        Value f=mp_native(mine[i].name,mine[i].fn); ((NativeObj*)f.u.o)->is_method=1;
+        mp_dict_set(t->dict,k,f);
+    }
+    free(mine);
 }
 

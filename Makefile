@@ -98,7 +98,7 @@ LIB_ID = $(BUILD_DIR)/gen/libid.h
 # the version (rewritten only when VERSION changes: the programs are built again then)
 VERSION_H = $(BUILD_DIR)/gen/version.h
 
-.PHONY: all test test-update test-typed test-leaks test-pkg test-port bench clean kolibrios kolibrios-debug clean-kolibri debug \
+.PHONY: all test test-update test-typed test-leaks test-pkg test-port test-bytecode test-ssl bench clean kolibrios kolibrios-debug clean-kolibri debug \
         install uninstall dist deb rpm kolibrios-dist print-version wasm wasm-node FORCE
 
 all: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
@@ -187,6 +187,14 @@ test-leaks: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 # the c target: exact float text, the program's C freestanding, the typed suite on its posix port
 test-port: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
 	@sh tests/run_port_tests.sh
+
+# TLS (ssl: the system's OpenSSL 3) against CPython's ssl - the interpreter, compiled programs (TARGET=none: not those)
+test-ssl: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)
+	@sh tests/run_ssl_tests.sh
+
+# bytecode files: the tests with plainpy.lib's modules as bytecode, and each test run from its .ppyc
+test-bytecode: $(HOST_TARGET) $(HOST_LIB)
+	@sh tests/run_bytecode_tests.sh
 
 # the package manager (plainpy add / sync / check ...) on a package index of its own
 test-pkg: $(HOST_TARGET) $(HOST_COMPILER) $(HOST_LIB)

@@ -42,7 +42,18 @@ void mp_gil_acquire(Thread *self){
 
 /* ---------------------------------------------------------------- memory */
 static Obj *gc_head;
+static StrObj **itab; static size_t itab_size, itab_used;   /* the interned strs (mp_intern) */
 static int64_t gc_count, gc_threshold=20000;
+/* the bytes made since the last collection (objects, list and dict tables) and how many may be:
+   PPY_LOWMEM (a small board's heap) collects by bytes - half the live data and 8 KiB more at
+   most, as MicroPython keeps its heap - not by how many objects there are */
+#if defined(PPY_LOWMEM)
+#define GC_SLACK 8192
+static int64_t gc_bytes, gc_bytes_limit=4*GC_SLACK;             /* (the first: after the start) */
+#else
+static int64_t gc_bytes, gc_bytes_limit;
+#endif
+static inline void gc_account(size_t n){ gc_bytes+=(int64_t)n; }
 static Value *extra_roots[256]; static int nextra;
 void mp_gc_add_root(Value *v){ if(nextra<256) extra_roots[nextra++]=v; }
 /* Shared objects, as in CPython: the empty str, bytes and tuple, the str of
@@ -51,15 +62,27 @@ void mp_gc_add_root(Value *v){ if(nextra<256) extra_roots[nextra++]=v; }
    changes a str, bytes or tuple once it is made). [256]: the empty one. */
 static Obj *small_str[257], *small_bytes[257], *empty_tuple;
 
-/* small objects' memory: freed ones kept per 16-byte size class and made again from there */
-static void *mp_free_small[17];
+/* small objects' memory: freed ones kept per size class (16 bytes; 8 on 32-bit systems, where
+   objects are smaller) and made again from there */
+#if UINTPTR_MAX == 0xffffffffu
+#define CLASS_SHIFT 3
+#define NCLASSES 32
+#else
+#define CLASS_SHIFT 4
+#define NCLASSES 16
+#endif
+static void *mp_free_small[NCLASSES+1];
 void *mp_alloc(Type *t, size_t size){
-    size_t c=(size+15)>>4; Obj *o;
-    if(c<=16 && mp_free_small[c]){ o=(Obj*)mp_free_small[c]; mp_free_small[c]=*(void**)o; }
-    else o=(Obj*)xmalloc(c<=16?c<<4:size);
+    size_t c=(size+(1u<<CLASS_SHIFT)-1)>>CLASS_SHIFT; Obj *o;
+#if !defined(PPY_LOWMEM)
+    if(c<=NCLASSES && mp_free_small[c]){ o=(Obj*)mp_free_small[c]; mp_free_small[c]=*(void**)o; }
+#else
+    if(0) o=NULL;                                     /* (a small heap: freed objects go back to malloc, which joins them) */
+#endif
+    else o=(Obj*)xmalloc(c<=NCLASSES?c<<CLASS_SHIFT:size);
     memset(o,0,size);
     o->type=t; o->size=(uint32_t)size;
-    o->gcnext=gc_head; gc_head=o; gc_count++;
+    o->gcnext=gc_head; gc_head=o; gc_count++; gc_account(size);
     return o;
 }
 
@@ -84,7 +107,11 @@ static Value *final; static int nfinal, cfinal, finalizing;      /* unreachable 
 static void mark_obj(Obj *o){
     if(!o || o->mark) return;
     o->mark=1;
+#if defined(PPY_LOWMEM)
+    if(msp==mcap){ mcap=mcap?mcap*2:256; mstack=(Obj**)xrealloc(mstack,sizeof(Obj*)*(size_t)mcap); }
+#else
     if(msp==mcap){ mcap=mcap?mcap*2:4096; mstack=(Obj**)xrealloc(mstack,sizeof(Obj*)*(size_t)mcap); }
+#endif
     mstack[msp++]=o;
 }
 static inline void mark_v(Value v){ if(v.k==V_OBJ) mark_obj(v.u.o); }
@@ -145,7 +172,7 @@ static void free_obj(Obj *o){
         case LY_LIST: free(((ListObj*)o)->items); break;
         case LY_DICT: free(((DictObj*)o)->ent); free(((DictObj*)o)->idx); break;
         case LY_SET: free(((SetObj*)o)->table); break;
-        case LY_CODE:{ CodeObj *c=(CodeObj*)o; free(c->code); free(c->lines); free(c->pos); free(c->anc); free(c->consts); free(c->names); free(c->varnames); free(c->cellnames); free(c->freenames); free(c->cellarg);
+        case LY_CODE:{ CodeObj *c=(CodeObj*)o; if(!(c->flags&CO_BORROWED)){ free(c->code); free(c->loc); free(c->carets); } free(c->consts); free(c->names); free(c->varnames); free(c->cellnames); free(c->freenames); free(c->cellarg);
             if(c->annots){ for(int i=0;i<c->argc+c->kwonly+2;i++) free(c->annots[i]); free(c->annots); }
             for(int i=0;i<c->nann;i++){ free(c->annname[i]); free(c->anntext[i]); }
             free(c->annname); free(c->anntext); break; }
@@ -155,9 +182,13 @@ static void free_obj(Obj *o){
         case LY_FILE: free(((FileObj*)o)->buf); break;
         default: break;
     }
-    size_t c=((size_t)o->size+15)>>4;
-    if(c<=16){ *(void**)o=mp_free_small[c]; mp_free_small[c]=o; }
+    size_t c=((size_t)o->size+(1u<<CLASS_SHIFT)-1)>>CLASS_SHIFT;
+#if !defined(PPY_LOWMEM)
+    if(c<=NCLASSES){ *(void**)o=mp_free_small[c]; mp_free_small[c]=o; }
     else free(o);
+#else
+    (void)c; free(o);
+#endif
 }
 /* the objects, sorted: is a word a pointer into one? */
 static Obj **sorted; static int64_t nsorted;
@@ -222,6 +253,7 @@ void mp_gc_collect(void){
     mark_obj((Obj*)mp_builtins); mark_obj((Obj*)mp_modules);
     mark_v(mp_NotImplemented); mark_v(mp_Ellipsis);
     for(int i=0;i<nextra;i++) mark_v(*extra_roots[i]);
+    for(size_t i=0;i<itab_size;i++) if(itab[i]) mark_obj((Obj*)itab[i]);
     for(int i=0;i<257;i++){ mark_obj(small_str[i]); mark_obj(small_bytes[i]); }
     mark_obj(empty_tuple);
     for(int t=0;t<mp_nthreads;t++){ Thread *th=mp_threads[t];
@@ -251,6 +283,12 @@ void mp_gc_collect(void){
     for(int64_t i=nsorted-1;i>=0;i--){ Obj *o=sorted[i]; if(o->mark){ o->gcnext=head; head=o; } else { free_obj(o); gc_count--; } }
     gc_head=head; nsorted=0;                                       /* (find_obj's array is stale now) */
     gc_threshold=gc_count*2+100000;
+#if defined(PPY_LOWMEM)
+    { int64_t live=0; for(Obj *o=gc_head;o;o=o->gcnext) live+=o->size;
+      gc_bytes_limit=live/2+GC_SLACK; gc_threshold=INT64_MAX;
+      free(sorted); sorted=NULL; }                                 /* (the collector's array: not kept between collections) */
+#endif
+    gc_bytes=0;
     if(!finalizing){ finalizing=1;
         while(nfinal>0){ Value g=final[--nfinal]; mp_gen_close_quietly(g); }
         finalizing=0; }
@@ -260,7 +298,7 @@ void mp_gc_maybe(void){
     static int stress=-1;
     if(stress<0) stress=getenv("PPY_GC_STRESS")?1:0;
     if(!mp_gc_enabled) return;
-    if(stress || gc_count>=gc_threshold) mp_gc_collect();
+    if(stress || gc_count>=gc_threshold || (gc_bytes_limit && gc_bytes>=gc_bytes_limit)) mp_gc_collect();
 }
 int64_t mp_gc_objects(void){ return gc_count; }
 #endif
@@ -321,13 +359,27 @@ int64_t mp_str_byteoff(StrObj *s, int64_t cpi){
     int64_t p=0; for(int64_t i=0;i<cpi && p<s->len;i++) mp_utf8_decode(s->s,s->len,&p);
     return p;
 }
-static DictObj *interned; static Value interned_v;
+/* the interned strs: a table of the objects (open addressing), found by their text - no str is
+   made to ask - and kept for good (the collector marks them all) */
+static uint64_t hash_bytes(const unsigned char *s, int64_t n);
+static void itab_put(StrObj *o){ size_t m=itab_size-1, p=(size_t)o->hash&m; while(itab[p]) p=(p+1)&m; itab[p]=o; }
 Value mp_intern(const char *s){
-    if(!interned){ interned_v=mp_dict(); interned=AS_DICT(interned_v); mp_gc_add_root(&interned_v); }
-    Value k=mp_str(s), out;
-    if(mp_dict_get(interned,k,&out)) return out;
-    mp_dict_set(interned,k,k);
-    return k;
+    size_t n=strlen(s);
+    uint64_t h=hash_bytes((const unsigned char*)s,(int64_t)n);
+    if((itab_used+1)*4>=itab_size*3){
+        StrObj **old=itab; size_t on=itab_size;
+        itab_size=itab_size?itab_size*2:256; itab=(StrObj**)xmalloc(sizeof(StrObj*)*itab_size); memset(itab,0,sizeof(StrObj*)*itab_size);
+        for(size_t i=0;i<on;i++) if(old[i]) itab_put(old[i]);
+        free(old);
+    }
+    for(size_t m=itab_size-1, p=(size_t)h&m; itab[p]; p=(p+1)&m){
+        StrObj *o=itab[p];
+        if(o->hash==h && (size_t)o->len==n && !memcmp(o->s,s,n)) return v_obj(o);
+    }
+    Value v=mp_strn(s,(int64_t)n);
+    StrObj *o=AS_STR(v); o->hash=h; o->hashed=1;
+    itab_put(o); itab_used++;
+    return v;
 }
 Value mp_bytes(const void *s, int64_t n){
     int k= n==0 ? 256 : n==1 ? *(const unsigned char*)s : -1;   /* b"", one byte: the shared one */
@@ -386,7 +438,7 @@ Value mp_list(int64_t n, const Value *items){
 }
 void mp_list_append(Value lv, Value v){
     ListObj *l=AS_LIST(lv);
-    if(l->len==l->cap){ l->cap=l->cap*2+4; l->items=(Value*)xrealloc(l->items,sizeof(Value)*(size_t)l->cap); }
+    if(l->len==l->cap){ l->cap=l->cap*2+4; l->items=(Value*)xrealloc(l->items,sizeof(Value)*(size_t)l->cap); gc_account(sizeof(Value)*(size_t)l->cap/2); }
     l->items[l->len++]=v;
 }
 
@@ -495,20 +547,35 @@ static int key_eq(Value a, uint64_t ha, Value b, uint64_t hb){
 
 /* ---------------------------------------------------------------- dict */
 Value mp_dict(void){ return v_obj(mp_alloc(T_dict,sizeof(DictObj))); }
+/* the index: per slot an entry's number, -1 empty, -2 deleted - in as few bytes as its size needs
+   (CPython's compact dict: a dict of up to 85 entries has a byte a slot) */
+static inline int64_t ix_get(const DictObj *d, uint64_t p){
+    if(d->isize<=128) return ((int8_t*)d->idx)[p];
+    if(d->isize<=32768) return ((int16_t*)d->idx)[p];
+    if(d->isize<=((int64_t)1<<31)) return ((int32_t*)d->idx)[p];
+    return ((int64_t*)d->idx)[p];
+}
+static inline void ix_set(DictObj *d, uint64_t p, int64_t v){
+    if(d->isize<=128) ((int8_t*)d->idx)[p]=(int8_t)v;
+    else if(d->isize<=32768) ((int16_t*)d->idx)[p]=(int16_t)v;
+    else if(d->isize<=((int64_t)1<<31)) ((int32_t*)d->idx)[p]=(int32_t)v;
+    else ((int64_t*)d->idx)[p]=v;
+}
+static size_t ix_bytes(int64_t isz){ return (size_t)isz*(isz<=128?1:isz<=32768?2:isz<=((int64_t)1<<31)?4:8); }
 static void dict_rebuild(DictObj *d, int64_t need){
     /* compact the entries, then a fresh index of a size that keeps it at most 2/3 full */
     int64_t j=0;
     for(int64_t i=0;i<d->nent;i++) if(d->ent[i].key.k!=V_UNDEF) d->ent[j++]=d->ent[i];
     d->nent=j;
     int64_t want=need>j?need:j;
-    if(d->cap<want+1){ d->cap=want<8?8:want*2; d->ent=(DEnt*)xrealloc(d->ent,sizeof(DEnt)*(size_t)d->cap); }
+    if(d->cap<want+1){ d->cap=want<4?4:want+want/2; d->ent=(DEnt*)xrealloc(d->ent,sizeof(DEnt)*(size_t)d->cap); gc_account(sizeof(DEnt)*(size_t)d->cap); }
     int64_t isz=8; while(isz*2<=d->cap*3) isz*=2;
-    free(d->idx); d->idx=(int64_t*)xmalloc(sizeof(int64_t)*(size_t)isz); d->isize=isz;
-    for(int64_t i=0;i<isz;i++) d->idx[i]=-1;
+    free(d->idx); d->isize=isz; d->idx=xmalloc(ix_bytes(isz));
+    memset(d->idx,0xff,ix_bytes(isz));                    /* (all -1) */
     for(int64_t i=0;i<d->nent;i++){
         uint64_t h=d->ent[i].hash, m=(uint64_t)isz-1, p=h&m, perturb=h;
-        while(d->idx[p]!=-1){ perturb>>=5; p=(p*5+1+perturb)&m; }
-        d->idx[p]=i;
+        while(ix_get(d,p)!=-1){ perturb>>=5; p=(p*5+1+perturb)&m; }
+        ix_set(d,p,i);
     }
 }
 /* the index slot of key (its entry: idx[slot]>=0), or the slot for it */
@@ -517,13 +584,13 @@ static int64_t dict_lookup(DictObj *d, Value key, uint64_t h, int *found){
     if(!d->idx) return -1;
     uint64_t m=(uint64_t)d->isize-1, p=h&m, perturb=h; int64_t freeslot=-1;
     for(;;){
-        int64_t ix=d->idx[p];
+        int64_t ix=ix_get(d,p);
         if(ix==-1) return freeslot>=0?freeslot:(int64_t)p;
         if(ix==-2){ if(freeslot<0) freeslot=(int64_t)p; }
         else {
             DEnt *e=&d->ent[ix];
             if(e->hash==h && key_eq(e->key,e->hash,key,h)){
-                if(!d->idx || d->idx[p]!=ix) return dict_lookup(d,key,h,found);   /* changed by __eq__ */
+                if(!d->idx || ix_get(d,p)!=ix) return dict_lookup(d,key,h,found);   /* changed by __eq__ */
                 *found=1; return (int64_t)p;
             }
         }
@@ -549,26 +616,26 @@ int mp_dict_get(DictObj *d, Value key, Value *out){
     if(!d->used) return 0;
     int64_t slot=dict_lookup(d,key,h,&found);
     if(!found) return 0;
-    if(out) *out=d->ent[d->idx[slot]].val;
+    if(out) *out=d->ent[ix_get(d,(uint64_t)slot)].val;
     return 1;
 }
 void mp_dict_set(DictObj *d, Value key, Value val){
     uint64_t h=hash_as(key,"dict key"); int found;
-    if(!d->idx) dict_rebuild(d,8);
+    if(!d->idx) dict_rebuild(d,1);
     int64_t slot=dict_lookup(d,key,h,&found);
-    if(found){ d->ent[d->idx[slot]].val=val; return; }
+    if(found){ d->ent[ix_get(d,(uint64_t)slot)].val=val; return; }
     if(d->nent+1>d->cap || (d->nent+1)*3>d->isize*2){ dict_rebuild(d,d->used+1); slot=dict_lookup(d,key,h,&found); }
     d->ent[d->nent].key=key; d->ent[d->nent].val=val; d->ent[d->nent].hash=h;
-    d->idx[slot]=d->nent++; d->used++;
+    ix_set(d,(uint64_t)slot,d->nent++); d->used++;
 }
 int mp_dict_del(DictObj *d, Value key){
     uint64_t h=hash_as(key,"dict key"); int found;
     if(!d->used) return 0;
     int64_t slot=dict_lookup(d,key,h,&found);
     if(!found) return 0;
-    int64_t ix=d->idx[slot];
+    int64_t ix=ix_get(d,(uint64_t)slot);
     d->ent[ix].key=v_undef(); d->ent[ix].val=v_undef();
-    d->idx[slot]=-2; d->used--;
+    ix_set(d,(uint64_t)slot,-2); d->used--;
     return 1;
 }
 int mp_dict_next(DictObj *d, int64_t *pos, Value *key, Value *val){
@@ -578,7 +645,23 @@ int mp_dict_next(DictObj *d, int64_t *pos, Value *key, Value *val){
     }
     return 0;
 }
-int mp_dict_get_s(DictObj *d, const char *key, Value *out){ return mp_dict_get(d,mp_str(key),out); }
+/* a str key by its text: found without making a str for it */
+int mp_dict_get_s(DictObj *d, const char *key, Value *out){
+    if(!d->used) return 0;
+    size_t n=strlen(key); uint64_t h=hash_bytes((const unsigned char*)key,(int64_t)n);
+    uint64_t m=(uint64_t)d->isize-1, p=h&m, perturb=h;
+    for(;;){
+        int64_t ix=ix_get(d,p);
+        if(ix==-1) return 0;
+        if(ix>=0 && d->ent[ix].hash==h){
+            Value k=d->ent[ix].key;
+            if(k.k!=V_OBJ || k.u.o->type!=T_str) return mp_dict_get(d,mp_str(key),out);   /* (another kind of key: the general way) */
+            StrObj *s=AS_STR(k);
+            if((size_t)s->len==n && !memcmp(s->s,key,n)){ if(out) *out=d->ent[ix].val; return 1; }
+        }
+        perturb>>=5; p=(p*5+1+perturb)&m;
+    }
+}
 void mp_dict_set_s(DictObj *d, const char *key, Value val){ mp_dict_set(d,mp_intern(key),val); }
 
 /* ---------------------------------------------------------------- set (CPython's setobject.c) */

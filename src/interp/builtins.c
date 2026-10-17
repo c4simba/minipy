@@ -742,8 +742,8 @@ BI(dir){ no_kw("dir",kw); nargs("dir",argc,0,1);
         Value ud= t->layout!=LY_TYPE ? mp_type_lookup_user(t,"__dir__") : v_undef();
         if(ud.k!=V_UNDEF){ Value l=mp_list_of(mp_call1(ud,x)); mp_sort(l,v_none(),0); return l; }   /* (a class's own __dir__) */
         if(t->layout==LY_MODULE){ dir_add(s,((ModuleObj*)x.u.o)->dict); }                         /* (a module: its names only) */
-        else if(t->layout==LY_TYPE){ Type *c=AS_TYPE(x); for(int i=0;i<c->nmro;i++) dir_add(s,c->mro[i]->dict); }
-        else { Value d; if(mp_getattr_opt(x,mp_intern("__dict__"),&d) && IS_DICT(d)) dir_add(s,AS_DICT(d)); for(int i=0;i<t->nmro;i++) dir_add(s,t->mro[i]->dict); }
+        else if(t->layout==LY_TYPE){ Type *c=AS_TYPE(x); for(int i=0;i<c->nmro;i++) dir_add(s,mp_tdict(c->mro[i])); }
+        else { Value d; if(mp_getattr_opt(x,mp_intern("__dict__"),&d) && IS_DICT(d)) dir_add(s,AS_DICT(d)); for(int i=0;i<t->nmro;i++) dir_add(s,mp_tdict(t->mro[i])); }
     }
     Value l=mp_list_of(s); mp_sort(l,v_none(),0); return l; }
 Value mp_builtin_import(int argc, Value *argv, TupleObj *kw);
@@ -826,6 +826,7 @@ Value mp_std_stream(int err){ return err?sys_stderr:sys_stdout; }
 /* ---------------------------------------------------------------- start */
 static Type *exc_type(const char *name, Type *base){
     Value t=mp_new_type(name,base,LY_EXC,TF_BASETYPE);
+    AS_TYPE(t)->dict=NULL;                               /* (made when first needed: mp_tdict - most of them never are) */
     mp_dict_set_s(mp_builtins,name,t);
     return AS_TYPE(t);
 }
@@ -837,6 +838,7 @@ static Type *btype(const char *name, Type *base, Layout l, int flags, Value (*ma
 static void reg(const char *name, NFn fn){ mp_dict_set_s(mp_builtins,name,mp_native(name,fn)); }
 static Value builtins_v, modules_v, stdout_keep, stderr_keep;
 void mp_init(void){
+    ppy_fs_bytecode=1;                                   /* (imports find name.ppyc too: bytecode.c) */
     /* the first types by hand: type, object, str, dict (interning needs them) */
     T_type=(Type*)mp_alloc(NULL,sizeof(Type)); T_type->h.type=T_type; T_type->layout=LY_TYPE; T_type->flags=TF_BUILTIN|TF_BASETYPE;
     T_object=(Type*)mp_alloc(T_type,sizeof(Type)); T_object->layout=LY_OBJECT; T_object->flags=TF_BUILTIN|TF_BASETYPE;

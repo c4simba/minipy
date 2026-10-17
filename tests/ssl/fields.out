@@ -1,0 +1,7 @@
+issuer CN=localhost,O=plainpy tests,C=XX
+notAfter Sep 22 20:32:21 2126 GMT
+notBefore Oct 16 20:32:21 2026 GMT
+subject CN=localhost,O=plainpy tests,C=XX
+subjectAltName DNS:localhost, IP Address:127.0.0.1
+version 3
+der 885 30820371

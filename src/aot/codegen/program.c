@@ -55,11 +55,29 @@ static void emit_lit_pools(void){
 /* Dynamic linking (ctypes): the C functions the program calls are imported
    from their libraries by ld-linux.so.2 - a PT_INTERP segment, a PT_DYNAMIC
    one, and symbol / relocation / hash / string tables for the slots CI<id>
-   (R_386_32: the linker writes each function's address there at start). */
+   (R_386_32: the linker writes each function's address there at start).
+   Only the C library's (libc, libm, libdl, libpthread) are loaded at start;
+   another library (libssl ...) is loaded the first time one of its functions
+   is called - its slot starts at a stub that has rt_clazy dlopen and dlsym
+   it - so a program with such calls it does not reach runs without the
+   library, as on macOS (x2c_host.c). */
 static int dyn_used(AProg *p){ for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used) return 1; return 0; }
+ACLib *clib_get(AProg *p, const char *soname);                 /* (types/ctypes.c) */
+ACFunc *cfunc_get(AProg *p, ACLib *lib, const char *sym);
+static int lazy_lib(const ACLib *l){
+    static const char *const at_start[]={"libc.so.6","libm.so.6","libdl.so.2","libpthread.so.0",NULL};
+    for(int i=0;at_start[i];i++) if(!strcmp(l->soname,at_start[i])) return 0;
+    return 1;
+}
+static int lazy_used(AProg *p){ for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && lazy_lib(p->cfuncs[i]->lib)) return 1; return 0; }
+static void import_dl(AProg *p){                                /* dlopen, dlsym, dlerror (libdl.so.2: glibc's, older ones' too) */
+    static const char *const fns[]={"dlopen","dlsym","dlerror",NULL};
+    ACLib *dl=clib_get(p,"libdl.so.2"); dl->used=1;
+    for(int i=0;fns[i];i++){ ACFunc *f=cfunc_get(p,dl,fns[i]); f->used=1; f->restype=CT_VOIDP; }
+}
 static void emit_dynamic_header(Buf *o, AProg *p){
     buf_printf(o,"segment interpreter readable\n        db '/lib/ld-linux.so.2',0\n\nsegment dynamic readable\n");
-    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used) buf_printf(o,"        dd 1,DYN_L%d-DYN_strtab       ; DT_NEEDED %s\n",i,p->clibs[i]->soname);
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used && !lazy_lib(p->clibs[i])) buf_printf(o,"        dd 1,DYN_L%d-DYN_strtab       ; DT_NEEDED %s\n",i,p->clibs[i]->soname);
     buf_printf(o,"        dd 5,DYN_strtab,10,DYN_strsz   ; DT_STRTAB, DT_STRSZ\n"
                  "        dd 6,DYN_symtab,11,16          ; DT_SYMTAB, DT_SYMENT\n"
                  "        dd 17,DYN_rel,18,DYN_relsz,19,8   ; DT_REL, DT_RELSZ, DT_RELENT\n"
@@ -69,10 +87,10 @@ static void emit_dynamic_header(Buf *o, AProg *p){
 static void emit_dynamic_tables(Buf *o, AProg *p){
     int n=0;
     buf_printf(o,"\n; ---- imports of the dynamic linker\nalign 4\nDYN_symtab:\n        dd 0,0,0,0\n");
-    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){ n++; buf_printf(o,"        dd DYN_S%d-DYN_strtab,0,0\n        db 0x12,0\n        dw 0\n",i); }   /* STB_GLOBAL, STT_FUNC */
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && !lazy_lib(p->cfuncs[i]->lib)){ n++; buf_printf(o,"        dd DYN_S%d-DYN_strtab,0,0\n        db 0x12,0\n        dw 0\n",i); }   /* STB_GLOBAL, STT_FUNC */
     buf_printf(o,"DYN_rel:\n");
     int k=0;
-    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){ k++; buf_printf(o,"        dd CI%d,(%d shl 8) or 1   ; R_386_32 %s\n",i,k,p->cfuncs[i]->sym); }
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && !lazy_lib(p->cfuncs[i]->lib)){ k++; buf_printf(o,"        dd CI%d,(%d shl 8) or 1   ; R_386_32 %s\n",i,k,p->cfuncs[i]->sym); }
     buf_printf(o,"DYN_relsz = $-DYN_rel\nDYN_hash:\n        dd 1,%d,0\n",n+1);           /* one bucket, empty: nothing to export */
     for(int i=0;i<=n;i++) buf_printf(o,"        dd 0\n");
     buf_printf(o,"DYN_strtab db 0\n");
@@ -80,9 +98,19 @@ static void emit_dynamic_tables(Buf *o, AProg *p){
     for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used) buf_printf(o,"DYN_L%d db '%s',0\n",i,p->clibs[i]->soname);
     buf_printf(o,"DYN_strsz = $-DYN_strtab\nalign 4\n");
     for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used){
-        buf_printf(o,"CI%d dd 0   ; %s\n",i,p->cfuncs[i]->sym);
-        if(!strcmp(p->cfuncs[i]->sym,"fflush")) buf_printf(o,"CI_fflush = CI%d\n",i);
+        ACFunc *cf=p->cfuncs[i];
+        if(lazy_lib(cf->lib)){                          /* (its stub first; the entry rt_clazy reads: library, symbol, slot, handle) */
+            buf_printf(o,"CI%d dd CL%d   ; %s (%s: loaded when first called)\nCLT%d dd DYN_L%d,DYN_S%d,CI%d,CLH%d\n",i,i,cf->sym,cf->lib->soname,i,cf->lib->id,i,i,cf->lib->id);
+            continue; }
+        buf_printf(o,"CI%d dd 0   ; %s\n",i,cf->sym);
+        if(!strcmp(cf->sym,"fflush")) buf_printf(o,"CI_fflush = CI%d\n",i);
+        if(cf->lib->soname && !strcmp(cf->lib->soname,"libdl.so.2")) buf_printf(o,"CI_%s = CI%d\n",cf->sym,i);
     }
+    for(int i=0;i<p->nclibs;i++) if(p->clibs[i]->used && lazy_lib(p->clibs[i])) buf_printf(o,"CLH%d dd 0   ; %s, once loaded\n",i,p->clibs[i]->soname);
+}
+static void emit_lazy_stubs(Buf *o, AProg *p){
+    buf_printf(o,"\n; ---- C functions of libraries loaded when first used (rt_clazy)\n");
+    for(int i=0;i<p->ncfuncs;i++) if(p->cfuncs[i]->used && lazy_lib(p->cfuncs[i]->lib)) buf_printf(o,"CL%d:    push CLT%d\n        jmp rt_clazy\n",i,i);
 }
 /* macos: no dynamic linker - the C translation looks the functions up when
    the program starts; ";@import CI<id> <library> <symbol>" names each slot. */
@@ -189,6 +217,8 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         report=g.gc_on?"        call rt_gc_collect\n        call rt_live_report\n":"        call rt_live_report\n"; }   /* (cycles left at the end: collected first) */
     int kolibri=tg->abi==AOT_ABI_KOLIBRI, dyn=tg->cfn!=AOT_CFN_NONE && dyn_used(p);
     if(dyn && tg->cfn==AOT_CFN_DYNAMIC) import_fflush(p);
+    int lazy= dyn && tg->out==AOT_OUT_FASM && lazy_used(p);
+    if(lazy){ import_dl(p); rt("rt_clazy"); }
     {   unsigned chunk=opt->chunk?opt->chunk:tg->chunk, costack=opt->costack?opt->costack:tg->costack;   /* (memory: aot/runtime memory.asm, generator.asm, asyncio.asm) */
         buf_printf(&o,"; target %s\n",tg->name);
         buf_printf(&g.data,"RT_CHUNK = %u     ; bytes the allocator takes from the system at a time\nRT_COSTACK = %u   ; the stack of a generator or a task\n",
@@ -197,7 +227,10 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         if(tg->out==AOT_OUT_C) buf_printf(&o,"; plainpy translates this listing to C (aot/x2c.c)\n");
         buf_printf(&o,"format ELF executable 3\nentry start\n\n");
         if(dyn && tg->out==AOT_OUT_FASM) emit_dynamic_header(&o,p);
-        buf_printf(&o,"segment readable executable\n\nstart:\n%s        fninit\n%s%s",aot_rt_used(g.rt,"rt_sys_args")?"        mov [rt_sp0],esp\n":"",FPU_DOUBLE,hook);
+        int vdso=tg->out==AOT_OUT_FASM && aot_rt_used(g.rt,"rt_sys_clock_gettime");    /* (Linux's clocks read without a system call) */
+        if(vdso) rt("rt_vdso_init");
+        buf_printf(&o,"segment readable executable\n\nstart:\n%s%s        fninit\n%s%s",aot_rt_used(g.rt,"rt_sys_args")?"        mov [rt_sp0],esp\n":"",
+                   vdso?"        mov eax,esp\n        call rt_vdso_init\n":"",FPU_DOUBLE,hook);
         buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     } else {
         buf_printf(&o,"format binary as ''\nuse32\n        org 0\n        db 'MENUET01'\n        dd 1,start,i_end,mem_end,stack_top,%s\n\nstart:\n        fninit\n%s",
@@ -207,6 +240,7 @@ int aot_generate(AProg *p, const AotCodegenOptions *opt, char **out, size_t *out
         buf_printf(&o,"        call %s\n%s%s        xor ebx,ebx\n        jmp rt_exit\n",fnl(main_body,LB_CODE),aot_rt_used(g.rt,"rt_thread_drain")?"        call rt_thread_drain\n":"",report);
     }
     buf_cat(&o,&g.text);
+    if(lazy) emit_lazy_stubs(&o,p);
     buf_printf(&o,"\n; ---- runtime\n");
     aot_rt_emit(g.rt,0,put_cb,&o);
     if(!kolibri) buf_printf(&o,"\nsegment readable writeable\n\n");

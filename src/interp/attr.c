@@ -6,7 +6,7 @@
 
 Value mp_type_lookup(Type *t, Value name){
     Value v;
-    for(int i=0;i<t->nmro;i++) if(t->mro[i]->dict && mp_dict_get(t->mro[i]->dict,name,&v)) return v;
+    for(int i=0;i<t->nmro;i++) if(mp_tdict(t->mro[i]) && mp_dict_get(t->mro[i]->dict,name,&v)) return v;
     return v_undef();
 }
 Value mp_type_lookup_s(Type *t, const char *name){ return mp_type_lookup(t,mp_intern(name)); }
@@ -14,7 +14,7 @@ Value mp_type_lookup_s(Type *t, const char *name){ return mp_type_lookup(t,mp_in
    statement put in a class (IntEnum.__str__ = int.__repr__); not the built-in types' own */
 Value mp_type_lookup_user(Type *t, const char *name){
     Value v, key=mp_intern(name);
-    for(int i=0;i<t->nmro;i++) if(t->mro[i]->dict && mp_dict_get(t->mro[i]->dict,key,&v)){
+    for(int i=0;i<t->nmro;i++) if(mp_tdict(t->mro[i]) && mp_dict_get(t->mro[i]->dict,key,&v)){
         if(IS(v,T_native) && !(t->mro[i]->flags&TF_HEAP)) return v_undef();
         return v; }
     return v_undef();
@@ -102,7 +102,7 @@ static int getattr_generic(Value o, Value name, Value *out, int with_getattr){
     if(t->layout==LY_TYPE){                        /* an attribute of a class: its MRO, then the metaclass */
         Type *cls=AS_TYPE(o);
         if(!strcmp(n,"__annotations__")){ int found=0; *out=special_attr(o,n,&found); return 1; }   /* its own, evaluated (not inherited) */
-        if(!strcmp(n,"__annotate__") && cls->dict){                        /* its own too (3.14): None when it has no annotations */
+        if(!strcmp(n,"__annotate__") && mp_tdict(cls)){                        /* its own too (3.14): None when it has no annotations */
             Value an; if(mp_dict_get_s(cls->dict,"__annotate__",&an) || mp_dict_get_s(cls->dict,"__annotate_func__",&an)){ *out=an; return 1; }
             if(mp_dict_get_s(cls->dict,"__annotations__",&an) && IS_DICT(an)){
                 NativeObj *b=(NativeObj*)mp_alloc(T_native,sizeof(NativeObj)); b->name="__annotate__"; b->fn=fn_annotate; b->self=o; b->is_method=1;
@@ -129,7 +129,7 @@ static int getattr_generic(Value o, Value name, Value *out, int with_getattr){
         SuperObj *s=(SuperObj*)o.u.o;
         Type *start=s->objtype; int i=0;
         while(i<start->nmro && start->mro[i]!=s->start) i++;
-        for(i++;i<start->nmro;i++){ Value v; if(start->mro[i]->dict && mp_dict_get(start->mro[i]->dict,name,&v)){ *out=descr_get(v,IS_TYPE(s->obj)&&AS_TYPE(s->obj)==s->objtype?v_undef():s->obj,s->objtype); return 1; } }
+        for(i++;i<start->nmro;i++){ Value v; if(mp_tdict(start->mro[i]) && mp_dict_get(start->mro[i]->dict,name,&v)){ *out=descr_get(v,IS_TYPE(s->obj)&&AS_TYPE(s->obj)==s->objtype?v_undef():s->obj,s->objtype); return 1; } }
         if(!strcmp(n,"__class__")){ *out=v_obj(T_super); return 1; }
         return 0;
     }
@@ -176,20 +176,20 @@ static Value special_attr(Value o, const char *n, int *found){
     *found=1;
     Type *t=TYPE(o);
     if(!strcmp(n,"__class__")) return v_obj(t);
-    if(!strcmp(n,"__dict__")){ DictObj *d=inst_dict(o); if(t->layout==LY_TYPE) d=AS_TYPE(o)->dict;
+    if(!strcmp(n,"__dict__")){ DictObj *d=inst_dict(o); if(t->layout==LY_TYPE) d=mp_tdict(AS_TYPE(o));
         if(!d && t->layout==LY_FUNC){ d=AS_DICT(mp_dict()); ((FuncObj*)o.u.o)->dict=d; }          /* (a function's attributes: made when asked) */
         if(d) return v_obj(d); }
     switch(t->layout){
         case LY_TYPE:{ Type *c=AS_TYPE(o);
             if(!strcmp(n,"__name__")) return v_obj(c->name);
             if(!strcmp(n,"__qualname__")) return v_obj(c->qualname?c->qualname:c->name);
-            if(!strcmp(n,"__bases__")) return v_obj(c->bases);
+            if(!strcmp(n,"__bases__")) return v_obj(mp_type_bases(c));
             if(!strcmp(n,"__base__")) return c->base?v_obj(c->base):v_none();
             if(!strcmp(n,"__mro__")){ Value r=mp_tuple(c->nmro,NULL); for(int i=0;i<c->nmro;i++) AS_TUPLE(r)->items[i]=v_obj(c->mro[i]); return r; }
             if(!strcmp(n,"__module__")){ Value m=mp_type_lookup_s(c,"__module__"); return m.k==V_UNDEF?mp_str("builtins"):m; }
             if(!strcmp(n,"__flags__")){                    /* CPython's bits copyreg and inspect look at: heap type (a class statement's), base type, abstract */
                 int64_t r=0; if(c->flags&TF_HEAP) r|=1<<9; if(c->flags&TF_BASETYPE) r|=1<<10;
-                Value am; if(c->dict && mp_dict_get_s(c->dict,"__abstractmethods__",&am) && mp_truth(am)) r|=1<<20;
+                Value am; if(mp_tdict(c) && mp_dict_get_s(c->dict,"__abstractmethods__",&am) && mp_truth(am)) r|=1<<20;
                 return v_int(r); }
             if(!strcmp(n,"__doc__")) return v_none();
             if(!strcmp(n,"__annotations__")){ Value own, r=mp_dict();          /* its own, evaluated now (CPython 3.14) */
@@ -366,7 +366,7 @@ void mp_delattr(Value o, Value name){
     if(t->layout==LY_TYPE && t!=T_type && (t->flags&TF_HEAP) && o.u.o!=mp_raw_obj){      /* a metaclass's __delattr__ */
         Value da=mp_type_lookup_s(t,"__delattr__");
         if(da.k!=V_UNDEF && !IS(da,T_native)){ mp_call2(da,o,name); return; } }
-    if(t->layout==LY_TYPE){ if(!mp_dict_del(AS_TYPE(o)->dict,name)) mp_raise_t(E_AttributeError,"type object '%s' has no attribute '%s'",AS_TYPE(o)->name->s,mp_cstr(name)); return; }
+    if(t->layout==LY_TYPE){ if(!mp_dict_del(mp_tdict(AS_TYPE(o)),name)) mp_raise_t(E_AttributeError,"type object '%s' has no attribute '%s'",AS_TYPE(o)->name->s,mp_cstr(name)); return; }
     Value d=mp_type_lookup(t,name);
     if(IS(d,T_property)){ PropertyObj *p=(PropertyObj*)d.u.o; if(p->del.k==V_UNDEF||IS_NONE(p->del)) mp_raise_t(E_AttributeError,"property '%s' of '%s' object has no deleter",mp_cstr(name),t->name->s); mp_call1(p->del,o); return; }
     if(t->flags&TF_DUNDERS){ Value da=mp_type_lookup_user(t,"__delattr__"); if(da.k!=V_UNDEF){ mp_call2(da,o,name); return; } }

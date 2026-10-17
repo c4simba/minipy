@@ -119,7 +119,10 @@ void gen_syscall_regs(F *f, Expr *e, int keep){
     static const char *regs[6]={"eax","ebx","ecx","edx","esi","edi"};
     E(f,"push ebp"); E(f,"mov ebp,[esp+28]");                         /* (on Linux: the 6th argument) */
     for(int i=5;i>=0;i--) E(f,"mov %s,[esp+%d]",regs[i],4+4*i);
-    E(f,aot_target(gg->target)->abi==AOT_ABI_KOLIBRI?"int 0x40":"int 0x80");
+    Tok *n0= e->count && e->items[0]->kind==EXPR_LITERAL ? e->items[0]->tok : NULL;
+    if(aot_target(gg->target)->abi==AOT_ABI_KOLIBRI) E(f,"int 0x40");
+    else if(n0 && n0->kind==T_NUMBER && !n0->is_float && n0->i==265){ rt("rt_sys_clock_gettime"); E(f,"call rt_sys_clock_gettime"); }   /* (clock_gettime: the vDSO's) */
+    else E(f,"int 0x80");
     for(int i=0;i<6;i++) if(keep&(1<<i)) E(f,"mov [esp+%d],%s",4+4*i,regs[i]);
     E(f,"pop ebp");
 }

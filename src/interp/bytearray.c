@@ -218,7 +218,7 @@ static Value as_ba(Value r){
 }
 static Value delegate(const char *name, int argc, Value *argv, TupleObj *kw, int convert){
     Value m;
-    if(!mp_dict_get(T_bytes->dict,mp_intern(name),&m) || !IS(m,T_native)) mp_raise_t(E_AttributeError,"'bytearray' object has no attribute '%s'",name);
+    if(!mp_dict_get(mp_tdict(T_bytes),mp_intern(name),&m) || !IS(m,T_native)) mp_raise_t(E_AttributeError,"'bytearray' object has no attribute '%s'",name);
     Value *a=(Value*)xmalloc(sizeof(Value)*(size_t)(argc>0?argc:1));
     for(int i=0;i<argc;i++) a[i]=argv[i];
     a[0]=mp_bytes(BA(SELF)->data,BA(SELF)->len);
@@ -239,7 +239,7 @@ DEL(d_partition,"partition",1) DEL(d_rpartition,"rpartition",1) DEL(d_removepref
 DEL(d_splitlines,"splitlines",1) DEL(d_center,"center",1) DEL(d_ljust,"ljust",1) DEL(d_rjust,"rjust",1) DEL(d_zfill,"zfill",1)
 DEL(d_expandtabs,"expandtabs",1) DEL(d_translate,"translate",1)
 static Value m_fromhex(int argc, Value *argv, TupleObj *kw){
-    Value m; if(!mp_dict_get(T_bytes->dict,mp_intern("fromhex"),&m)) mp_raise_t(E_AttributeError,"fromhex");
+    Value m; if(!mp_dict_get(mp_tdict(T_bytes),mp_intern("fromhex"),&m)) mp_raise_t(E_AttributeError,"fromhex");
     Value f=((BoxObj*)m.u.o)->v;                                  /* (bytes.fromhex: a classmethod) */
     Value r=((NativeObj*)f.u.o)->fn(argc,argv,kw);
     Type *t= IS_TYPE(argv[0]) ? (Type*)argv[0].u.o : T_bytearray;

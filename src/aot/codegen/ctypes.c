@@ -40,13 +40,14 @@ static void ccall_marker(F *f, ACFunc *cf, const int *kinds, int n){
 }
 int gen_ccall(F *f, Expr *e, XInfo *xi){
     ACFunc *cf=xi->cfn; int off[16], size=0;
+    cf->used=1; cf->lib->used=1;                         /* (a library only code that runs calls: linked - a program that never calls ssl does not need libssl) */
     for(int i=0;i<e->count;i++){ off[i]=size; size+=csize(xi->argmap[i]); }
     E(f,"mov eax,esp"); E(f,"sub esp,%d",size+4); E(f,"and esp,-16"); E(f,"mov [esp+%d],eax",size);
     for(int i=0;i<e->count;i++){ Expr *a=e->items[i]; int k=xi->argmap[i]; Ty *t=TY(a);
         if(k==CT_DOUBLE||k==CT_FLOAT){ gen_as(f,a,TY_FLOAT_T,0); E(f,k==CT_DOUBLE?"fstp qword [esp+%d]":"fstp dword [esp+%d]",off[i]); continue; }
         gen_borrow(f,a);
-        if(t->k==TY_STR||t->k==TY_BYTES){ int l=new_label(), l2=new_label();                 /* the bytes, NUL-terminated ("" too) */
-            E(f,"test eax,eax"); E(f,"jnz L%d",l); E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
+        if(t->k==TY_STR||t->k==TY_BYTES){ int l=new_label(), l2=new_label();                 /* the bytes, NUL-terminated ("" too); None of str | None: NULL */
+            E(f,"test eax,eax"); E(f,"jnz L%d",l); if(!is_opt(t)) E(f,"mov eax,Z%d",zlit("")); E(f,"jmp L%d",l2); LBL(f,l); E(f,"add eax,12"); LBL(f,l2); }
         else if(t->k==TY_BUF){ int l=new_label(); E(f,"test eax,eax"); E(f,"jz L%d",l); E(f,"add eax,12"); LBL(f,l); }
         E(f,"mov [esp+%d],eax",off[i]);
         if(k==CT_LONGLONG||k==CT_ULONGLONG){ if(!is_lng(t)) widen(f,k==CT_LONGLONG); E(f,"mov [esp+%d],edx",off[i]+4); }
@@ -79,7 +80,7 @@ int gen_ctypes_fn(F *f, Expr *e, XInfo *xi){
     if(!strcmp(m,"string_at")){ gen(f,e->items[0]); E(f,"push eax");
         if(e->count==2){ gen(f,e->items[1]); to_i32(f,TY(e->items[1])); E(f,"mov edx,eax"); E(f,"pop eax"); CALLRT(f,"rt_mem_peek_str"); return 1; }
         E(f,"pop eax"); E(f,"mov edx,0x7FFFFFFF"); CALLRT(f,"rt_mem_cstr"); return 1; }
-    if(!strcmp(m,"get_errno")){ E(f,"mov eax,esp"); E(f,"and esp,-16"); E(f,"sub esp,12"); E(f,"push eax");
+    if(!strcmp(m,"get_errno")){ xi->cfn->used=1; xi->cfn->lib->used=1; E(f,"mov eax,esp"); E(f,"and esp,-16"); E(f,"sub esp,12"); E(f,"push eax");
         ccall_marker(f,xi->cfn,NULL,0);
         E(f,"call [CI%d]   ; __errno_location",xi->cfn->id); E(f,"pop esp"); E(f,"mov eax,[eax]"); widen(f,1); return 0; }
     cg_fail(e->line,"unsupported ctypes function");

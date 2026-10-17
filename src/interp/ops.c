@@ -72,7 +72,7 @@ static void complex_part(SBuf *b, double f){
 }
 static void repr_into(SBuf *b, Value v);
 static const char *module_of(Type *t){
-    Value m; if(t->dict && mp_dict_get_s(t->dict,"__module__",&m) && IS_STR(m)) return mp_cstr(m);
+    Value m; if(mp_tdict(t) && mp_dict_get_s(t->dict,"__module__",&m) && IS_STR(m)) return mp_cstr(m);
     return "builtins";
 }
 static void type_repr_into(SBuf *b, Type *t){

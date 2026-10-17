@@ -27,6 +27,7 @@
 #endif
 
 void mp_remember_source(const char *file, const char *src);
+char *mp_file_source(const char *file);
 Value mp_std_stream(int err);
 void mp_repr_into(SBuf *b, Value v);
 int mp_parse_int(const char *s, int64_t n, int base, int64_t *out);

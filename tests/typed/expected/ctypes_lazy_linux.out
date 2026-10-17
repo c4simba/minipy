@@ -1,0 +1,5 @@
+started: no library loaded yet
+42 2
+hello from a library loaded when first used
+libnope.so.9: cannot open shared object file: No such file or directory
+[exit 127]

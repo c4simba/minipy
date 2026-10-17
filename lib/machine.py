@@ -20,7 +20,6 @@
 # program loops and sleeps instead.
 
 import sys
-import time
 
 _PIN_INIT = 0x7000
 _PIN_WRITE = 0x7001
@@ -258,20 +257,34 @@ def call(n: int, a: int = 0, b: int = 0, c: int = 0, d: int = 0) -> int:
 
 # ---------------------------------------------------------------- time, as MicroPython has it
 
+# (sys's calls, not the time module's: importing time - its tables, strftime, the time zones -
+# would cost a small board's interpreter more memory than the program)
+
+def _now_ns() -> int:
+    """The monotonic clock in nanoseconds (time.monotonic_ns())."""
+    if sys.platform == "kolibrios":
+        return (sys.syscall(26, 9)[0] & 0xFFFFFFFF) * 10000000      # fn 26.9: 1/100 s since boot
+    b = sys.buffer(8)
+    sys.syscall(265, 1, b)                                         # clock_gettime(CLOCK_MONOTONIC)
+    return sys.peek(b, 0, 4) * 1000000000 + sys.peek(b, 4, 4)
+
+
 def sleep_ms(ms: int) -> None:
-    time.sleep(ms / 1000)
+    if ms > 0:
+        sys._sleep(ms / 1000)
 
 
 def sleep_us(us: int) -> None:
-    time.sleep(us / 1000000)
+    if us > 0:
+        sys._sleep(us / 1000000)
 
 
 def ticks_ms() -> int:
-    return time.monotonic_ns() // 1000000
+    return _now_ns() // 1000000
 
 
 def ticks_us() -> int:
-    return time.monotonic_ns() // 1000
+    return _now_ns() // 1000
 
 
 def ticks_diff(end: int, start: int) -> int:

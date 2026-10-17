@@ -62,7 +62,7 @@ int load_program(Units *us, const char *src_path, char *src){
     if(!find_unit(us,"cmath")) for(int i=0;i<us->n;i++) if(us->v[i]->src && uses_complex(us->v[i]->src)){
         add_unit(us,"cmath","<cmath>",xstrdup2(CMATH_PRELUDE)); if(!scan_unit(us,us->v[us->n-1])) return 1; break; }
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strstr(us->v[i]->src,"open(")) any=1;       /* open(): io.py (first: what it uses comes next) */
-      if(any){ if(!find_unit(us,"io")){ int pkg; add_unit(us,"io","<stdlib>/io.py",xstrdup2(ppy_stdlib_source("io",&pkg)));
+      if(any){ if(!find_unit(us,"io")){ int pkg; add_unit(us,"io","<stdlib>/io.py",ppy_stdlib_source("io",&pkg));
                    for(int i=0;i<us->n;i++) if(us->v[i]->ast && !scan_unit(us,us->v[i])) return 1; }
                main_imports(us->v[0],"io"); } }
     { int any=0, more=0;                                                    /* encode() / decode(): codecs.py; other encodings than */
@@ -72,12 +72,12 @@ int load_program(Units *us, const char *src_path, char *src){
           if(us->v[i]->path && !strncmp(us->v[i]->path,"<stdlib>",8)) continue;
           if(names_codec(t)) more=1; }
       if(any || more){ int pkg;
-          if(!find_unit(us,"codecs")) add_unit(us,"codecs","<stdlib>/codecs.py",xstrdup2(ppy_stdlib_source("codecs",&pkg)));
+          if(!find_unit(us,"codecs")) add_unit(us,"codecs","<stdlib>/codecs.py",ppy_stdlib_source("codecs",&pkg));
           main_imports(us->v[0],"codecs");
-          if(more && !find_unit(us,"_codecs_more")){ add_unit(us,"_codecs_more","<stdlib>/_codecs_more.py",xstrdup2(ppy_stdlib_source("_codecs_more",&pkg))); main_imports(us->v[0],"_codecs_more"); } } }
+          if(more && !find_unit(us,"_codecs_more")){ add_unit(us,"_codecs_more","<stdlib>/_codecs_more.py",ppy_stdlib_source("_codecs_more",&pkg)); main_imports(us->v[0],"_codecs_more"); } } }
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strcmp(us->v[i]->name,"_sysio") && (strstr(us->v[i]->src,".stdout") || strstr(us->v[i]->src,".stdin") ||
                                                                 strstr(us->v[i]->src,".__std") || has_stderr_value(us->v[i]->src))) any=1;     /* sys.stdout ...: _sysio.py */
-      if(any && !find_unit(us,"_sysio")){ int pkg; add_unit(us,"_sysio","<stdlib>/_sysio.py",xstrdup2(ppy_stdlib_source("_sysio",&pkg)));
+      if(any && !find_unit(us,"_sysio")){ int pkg; add_unit(us,"_sysio","<stdlib>/_sysio.py",ppy_stdlib_source("_sysio",&pkg));
           if(!scan_unit(us,us->v[us->n-1])) return 1; main_imports(us->v[0],"_sysio"); } }
     { int eg=0; for(int i=0;i<us->n;i++) if(us->v[i]->src && (strstr(us->v[i]->src,"ExceptionGroup") || strstr(us->v[i]->src,"except*") || strstr(us->v[i]->src,"except *"))) eg=1;
       if(eg) add_unit(us,"__ppy_eg","<exceptiongroup>",xstrdup2(EG_PRELUDE)); }      /* ExceptionGroup, except*: written in Python */
@@ -85,20 +85,20 @@ int load_program(Units *us, const char *src_path, char *src){
           "NotADirectoryError","ConnectionError","ConnectionRefusedError","ConnectionResetError","ConnectionAbortedError","BrokenPipeError","BlockingIOError",
           "TimeoutError","InterruptedError","ProcessLookupError","ChildProcessError","UnicodeDecodeError","UnicodeEncodeError",NULL};
       int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src) for(int k=0;oserr[k];k++) if(strstr(us->v[i]->src,oserr[k])){ any=1; break; }
-      if(any && !find_unit(us,"_oserror")){ int pkg; add_unit(us,"_oserror","<stdlib>/_oserror.py",xstrdup2(ppy_stdlib_source("_oserror",&pkg))); } }   /* OSError(errno, strerror) */
+      if(any && !find_unit(us,"_oserror")){ int pkg; add_unit(us,"_oserror","<stdlib>/_oserror.py",ppy_stdlib_source("_oserror",&pkg)); } }   /* OSError(errno, strerror) */
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strstr(us->v[i]->src,"math") && strcmp(us->v[i]->name,"_mathx")) any=1;   /* math's functions in Python: _mathx.py */
-      if(any && !find_unit(us,"_mathx")){ int pkg; add_unit(us,"_mathx","<stdlib>/_mathx.py",xstrdup2(ppy_stdlib_source("_mathx",&pkg))); main_imports(us->v[0],"_mathx"); } }
+      if(any && !find_unit(us,"_mathx")){ int pkg; add_unit(us,"_mathx","<stdlib>/_mathx.py",ppy_stdlib_source("_mathx",&pkg)); main_imports(us->v[0],"_mathx"); } }
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strcmp(us->v[i]->name,"_ppy_exit") && (strstr(us->v[i]->src,"SystemExit") || strstr(us->v[i]->src,"exit("))) any=1;   /* SystemExit's code: _ppy_exit.py */
-      if(any && !find_unit(us,"_ppy_exit")){ int pkg; add_unit(us,"_ppy_exit","<stdlib>/_ppy_exit.py",xstrdup2(ppy_stdlib_source("_ppy_exit",&pkg))); if(!scan_unit(us,us->v[us->n-1])) return 1; } }
+      if(any && !find_unit(us,"_ppy_exit")){ int pkg; add_unit(us,"_ppy_exit","<stdlib>/_ppy_exit.py",ppy_stdlib_source("_ppy_exit",&pkg)); if(!scan_unit(us,us->v[us->n-1])) return 1; } }
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strstr(us->v[i]->src,"json") && (strstr(us->v[i]->src,"load") || strstr(us->v[i]->src,"JSONDecodeError"))) any=1;   /* json.loads: _ppy_jsonr.py */
-      if(any && !find_unit(us,"_ppy_jsonr")){ int pkg; add_unit(us,"_ppy_jsonr","<stdlib>/_ppy_jsonr.py",xstrdup2(ppy_stdlib_source("_ppy_jsonr",&pkg))); if(!scan_unit(us,us->v[us->n-1])) return 1;
+      if(any && !find_unit(us,"_ppy_jsonr")){ int pkg; add_unit(us,"_ppy_jsonr","<stdlib>/_ppy_jsonr.py",ppy_stdlib_source("_ppy_jsonr",&pkg)); if(!scan_unit(us,us->v[us->n-1])) return 1;
           main_imports(us->v[0],"_ppy_jsonr"); } }
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strstr(us->v[i]->src,"__next__")) any=1;   /* iterator objects: _ppy_iter.py */
-      if(any && !find_unit(us,"_ppy_iter")){ int pkg; add_unit(us,"_ppy_iter","<stdlib>/_ppy_iter.py",xstrdup2(ppy_stdlib_source("_ppy_iter",&pkg))); } }
+      if(any && !find_unit(us,"_ppy_iter")){ int pkg; add_unit(us,"_ppy_iter","<stdlib>/_ppy_iter.py",ppy_stdlib_source("_ppy_iter",&pkg)); } }
     if(find_unit(us,"threading")) main_epilogue(us->v[0],"import threading as __ppy_threading\n__ppy_threading._shutdown()\n");   /* (non-daemon threads waited for) */
     if(find_unit(us,"atexit")) main_epilogue(us->v[0],"import atexit as __ppy_atexit\n__ppy_atexit._run_exitfuncs()\n");
     { int any=0; for(int i=0;i<us->n && !any;i++) if(us->v[i]->src && strstr(us->v[i]->src,"argv")) any=1;     /* sys.argv: _sysargs.py */
-      if(any && !find_unit(us,"_sysargs")){ int pkg; add_unit(us,"_sysargs","<stdlib>/_sysargs.py",xstrdup2(ppy_stdlib_source("_sysargs",&pkg)));
+      if(any && !find_unit(us,"_sysargs")){ int pkg; add_unit(us,"_sysargs","<stdlib>/_sysargs.py",ppy_stdlib_source("_sysargs",&pkg));
           main_imports(us->v[0],"_sysargs"); } }
     { int ck=0; for(int i=0;i<us->n;i++) if(us->v[i]->src && strstr(us->v[i]->src,"cmp_to_key")) ck=1;
       if(ck){ add_unit(us,"__ppy_cmpkey","<cmp_to_key>",xstrdup2(CMPKEY_PRELUDE)); if(!scan_unit(us,us->v[us->n-1])) return 1; } }

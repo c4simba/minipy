@@ -264,6 +264,20 @@ class Emu:
         a = lambda i: struct.unpack('<I', bytes(uc.mem_read(esp + 4 + 4 * i, 4)))[0]
         s32 = lambda v: v - 2**32 if v >= 2**31 else v
         if name == 'getpid': return 4242
+        if name == 'dlopen':                                 # (libraries loaded when first used: libplainpytest.so.1 is the only one here)
+            lib = self.cstr(a(0))
+            if lib == 'libplainpytest.so.1': return 0x1001
+            self.dlerr = lib + ': cannot open shared object file: No such file or directory'; return 0
+        if name == 'dlsym':
+            sym = self.cstr(a(1))
+            if a(0) != 0x1001 or sym not in ('ppytest_add', 'ppytest_greeting'):
+                self.dlerr = 'undefined symbol: ' + sym; return 0
+            stub = self.LIBC_STUBS + 4 * len(self.imports)
+            self.imports.append(sym); uc.mem_write(stub, b'\xcd\x81\xc3\x90')
+            return stub
+        if name == 'dlerror': return self.cstring(getattr(self, 'dlerr', '')) if getattr(self, 'dlerr', '') else 0
+        if name == 'ppytest_add': return (a(0) + a(1)) & 0xFFFFFFFF
+        if name == 'ppytest_greeting': return self.cstring('hello from a library loaded when first used')
         if name == 'fflush': return 0
         if name == '__errno_location': return self.LIBC_DATA
         if name == 'strlen': return len(self.cstr_bytes(a(0)))

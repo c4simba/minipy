@@ -1,6 +1,9 @@
 /* ========================= Interpreter: tracebacks =========================
    The source lines of tracebacks, with carets under the failing part
-   (CPython 3.13+); formatting and printing exceptions. */
+   (CPython 3.13+); formatting and printing exceptions. Sources are not kept:
+   a traceback reads its files again, as CPython's linecache does (a module
+   of the standard library: unpacked again from plainpy.lib); only the text
+   of compile() / exec() / the REPL, which no file holds, is remembered. */
 
 #include "run.h"
 
@@ -10,10 +13,23 @@ void mp_remember_source(const char *file, const char *src){
     if(!sources){ keep=mp_dict(); sources=AS_DICT(keep); mp_gc_add_root(&keep); }
     mp_dict_set(sources,mp_str(file),mp_str(src));
 }
-static void source_line(SBuf *b, const char *file, int line){
+/* the text of a file a traceback names, or NULL (the last one read is kept
+   for the next frames, until the traceback is printed) */
+static char *last_file, *last_text;
+static Value last_code;                           /* (last_text compiled again with the places: places_of) */
+static void forget_text(void){ free(last_file); free(last_text); last_file=last_text=NULL; last_code=v_none(); }
+static const char *file_text(const char *file){
     Value s;
-    if(!sources || !mp_dict_get(sources,mp_str(file),&s)) return;
-    const char *p=mp_cstr(s);
+    if(sources && mp_dict_get(sources,mp_str(file),&s)) return mp_cstr(s);
+    if(last_file && !strcmp(last_file,file)) return last_text;
+    char *t=mp_file_source(file);
+    if(!t) return NULL;
+    forget_text(); last_file=xstrdup2(file); last_text=t;
+    return t;
+}
+static void source_line(SBuf *b, const char *file, int line){
+    const char *p=file_text(file);
+    if(!p) return;
     for(int l=1;l<line && *p;p++) if(*p=='\n') l++;
     while(*p==' '||*p=='\t') p++;
     const char *e=p; while(*e && *e!='\n' && *e!='\r') e++;
@@ -21,10 +37,9 @@ static void source_line(SBuf *b, const char *file, int line){
 }
 /* line `line` of a file the interpreter ran (with its newline; "" if unknown): linecache's */
 Value mp_source_getline(const char *file, int line){
-    Value s;
-    if(!sources || line<0 || !mp_dict_get(sources,mp_str(file),&s)) return mp_str("");
-    if(line==0) return s;                                            /* (0: all of it) */
-    const char *p=mp_cstr(s);
+    const char *p= line<0 ? NULL : file_text(file);
+    if(!p) return mp_str("");
+    if(line==0) return mp_str(p);                                    /* (0: all of it) */
     for(int l=1;l<line && *p;p++) if(*p=='\n') l++;
     if(!*p) return mp_str("");
     const char *e=p; while(*e && *e!='\n') e++;
@@ -42,11 +57,6 @@ static void cput(SBuf *b, const uint32_t *c, int n){ for(int i=0;i<n;i++){ char 
 static int cspace(uint32_t c){ return c==' '||c=='\t'||c=='\f'||c=='\v'||c=='\r'||c=='\n'; }
 /* bytes [0, off) of a UTF-8 line: how many code points */
 static int chars_of(const char *s, int64_t n, int64_t off){ if(off>n) off=n; int k=0; int64_t p=0; while(p<off){ mp_utf8_decode(s,n,&p); k++; } return k; }
-static int anc_find(CodeObj *co, int ip){
-    int lo=0, hi=co->nanc-1;
-    while(lo<=hi){ int m=(lo+hi)/2; int v=co->anc[7*m]; if(v==ip) return m; if(v<ip) lo=m+1; else hi=m-1; }
-    return -1;
-}
 typedef struct { CLine *L; int nl; int endoff; } Seg;
 static int seg_len(Seg *g, int i){ return i==g->nl-1 ? g->endoff : g->L[i].n; }
 static int seg_next_valid(Seg *g, int *li, int *ci){ while(*li<g->nl && *ci>=seg_len(g,*li)){ *ci=0; (*li)++; } return *li<g->nl && *ci<seg_len(g,*li); }
@@ -63,14 +73,38 @@ static int seg_until(Seg *g, int *li, int *ci, int mode){
     return 0;
 }
 static int lead_ws(const char *s, int64_t n){ int k=0; while(k<n && (s[k]==' '||s[k]=='\t'||s[k]=='\f')) k++; return k; }
+/* the code object of co's text with the carets' places: co, or the one of file's text compiled again
+   that stands at the same place (qualified name, first line, as many instructions) - NULL if none */
+static CodeObj *find_code(CodeObj *in, CodeObj *co){
+    if(in->firstline==co->firstline && in->ncode==co->ncode && !strcmp(in->qualname->s,co->qualname->s)) return in;
+    for(int i=0;i<in->nconsts;i++) if(IS(in->consts[i],T_code)){ CodeObj *r=find_code((CodeObj*)in->consts[i].u.o,co); if(r) return r; }
+    return NULL;
+}
+static CodeObj *places_of(CodeObj *co, const char *file){
+    int el,c,ec;
+    if(!co || !co->loc || co->loc[0]==1 || !co->ncode) return co;
+    if(mp_code_place(co,0,&el,&c,&ec)) return co;
+    const char *text=file_text(file);
+    if(!text || !last_text || text!=last_text) return co;     /* (only a file's text: compiled again) */
+    if(last_code.k!=V_OBJ){
+        static int rooted; if(!rooted){ rooted=1; last_code=v_none(); mp_gc_add_root(&last_code); }
+        CodeObj *m=mp_compile_places(text,file);
+        if(!m) return co;
+        last_code=v_obj(m);
+    }
+    CodeObj *r=find_code((CodeObj*)last_code.u.o,co);
+    return r ? r : co;
+}
 /* the source of traceback entry (file, line) at instruction ip of co: CPython's lines and carets */
 static void frame_source(SBuf *out, const char *file, int line, CodeObj *co, int ip){
-    Value src;
-    if(!sources || !mp_dict_get(sources,mp_str(file),&src)) return;
+    const char *p=file_text(file);
+    if(!p) return;
+    co=places_of(co,file);
+    p=file_text(file);                                          /* (places_of may have read it again) */
+    if(!p) return;
     int eline=line, col=-1, ecol=-1;
-    if(co && co->pos && ip>=0 && ip<co->ncode){ eline=co->pos[3*ip]; col=co->pos[3*ip+1]; ecol=co->pos[3*ip+2]; if(eline<line) eline=line; }
+    if(co && mp_code_place(co,ip,&eline,&col,&ecol)){ if(eline<line) eline=line; }
     if(eline-line>200) eline=line;
-    const char *p=mp_cstr(src);
     for(int l=1;l<line && *p;p++) if(*p=='\n') l++;
     int nl=eline-line+1;
     const char **ls=(const char**)xmalloc(sizeof(char*)*(size_t)nl); int64_t *ln=(int64_t*)xmalloc(sizeof(int64_t)*(size_t)nl);
@@ -96,8 +130,8 @@ static void frame_source(SBuf *out, const char *file, int line, CodeObj *co, int
     if(end>L[nl-1].n) end=L[nl-1].n;
     /* the anchors (~~^~~): from what the compiler kept */
     int has=0, ll=0, lc=0, rl=0, rc=0; uint32_t prim='^', sec='^';
-    int ai= co && co->anc ? anc_find(co,ip) : -1, special=-1;
-    if(ai>=0){ int *r=co->anc+7*ai, kind=r[1];
+    int anc[7], special=-1;
+    if(co && mp_code_anchor(co,ip,anc+1)){ int *r=anc, kind=r[1];
         Seg g={L,nl,end};
         int li=r[2]-line; int ci= li>=0 && li<nl ? chars_of(ls[li],ln[li],r[3])-(int)mlen : 0;
         special=r[6];
@@ -204,10 +238,11 @@ static void print_one(SBuf *b, Value e){
         TupleObj *prev=NULL; int64_t same=0;                      /* as CPython: a frame repeated more than 3 times in a row -> */
         for(int64_t i=l->len-1;i>=0;i--){                         /* "[Previous line repeated N more times]" */
             TupleObj *t=AS_TUPLE(l->items[i]);
-            if(!prev || strcmp(mp_cstr(prev->items[0]),mp_cstr(t->items[0])) || prev->items[1].u.i!=t->items[1].u.i || strcmp(mp_cstr(prev->items[2]),mp_cstr(t->items[2]))){
+            if(!prev || strcmp(mp_cstr(prev->items[0]),mp_cstr(t->items[0])) || prev->items[1].k!=t->items[1].k || prev->items[1].u.i!=t->items[1].u.i || strcmp(mp_cstr(prev->items[2]),mp_cstr(t->items[2]))){
                 if(same>3) sb_printf(b,"  [Previous line repeated %lld more time%s]\n",(long long)(same-3),same-3>1?"s":"");
                 prev=t; same=0; }
             if(++same>3) continue;
+            if(t->items[1].k!=V_INT){ sb_printf(b,"  File \"%s\", in %s\n",mp_cstr(t->items[0]),mp_cstr(t->items[2])); continue; }   /* (no line numbers kept: --strip-lines) */
             sb_printf(b,"  File \"%s\", line %lld, in %s\n",mp_cstr(t->items[0]),(long long)t->items[1].u.i,mp_cstr(t->items[2]));
             if(t->len>=5) frame_source(b,mp_cstr(t->items[0]),(int)t->items[1].u.i,IS(t->items[3],T_code)?(CodeObj*)t->items[3].u.o:NULL,(int)t->items[4].u.i);
             else source_line(b,mp_cstr(t->items[0]),(int)t->items[1].u.i);
@@ -225,14 +260,14 @@ static void print_one(SBuf *b, Value e){
 }
 /* the text mp_print_exception writes (sys._format_exception: the traceback module's) */
 Value mp_format_exception(Value e){
-    SBuf b={0}; PCtx pc={0,0}; format_exc(&b,e,&pc,0); return sb_value(&b);
+    SBuf b={0}; PCtx pc={0,0}; format_exc(&b,e,&pc,0); forget_text(); return sb_value(&b);
 }
 /* the running frames, outermost first: (file, line, function) (traceback.extract_stack) */
 Value mp_stack_list(void){
     Value l=mp_list(0,NULL);
     for(Frame *f=mp_ts->frame;f;f=f->back){
         int ip= f->ip>0 ? f->ip-1 : 0;
-        Value ent[5]={mp_str(f->code->file),v_int(f->code->ncode?f->code->lines[ip<f->code->ncode?ip:f->code->ncode-1]:f->code->firstline),v_obj(f->code->name),
+        Value ent[5]={mp_str(f->code->file),mp_code_lineno(f->code,ip),v_obj(f->code->name),
                       v_obj(f->code),v_int(ip<f->code->ncode?ip:-1)};
         mp_list_append(l,mp_tuple(5,ent)); }
     ListObj *x=AS_LIST(l); for(int64_t i=0,j=x->len-1;i<j;i++,j--){ Value t=x->items[i]; x->items[i]=x->items[j]; x->items[j]=t; }
@@ -243,6 +278,7 @@ void mp_print_exception(Value e){
     Catch c;
     if(!CATCH_BEGIN(c)){ PCtx pc={0,0}; format_exc(&b,e,&pc,0); CATCH_END(c); }
     else { mp_catch_exc(&c); sb_puts(&b,"(error printing the exception)\n"); }
+    forget_text();
     mp_flush_stdout();
     mp_write_err(b.s?b.s:"",b.n);
     free(b.s);

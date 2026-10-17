@@ -39,6 +39,21 @@ void *xrealloc(void *p, size_t n);
 char *xstrndup2(const char *s, int n);
 char *xstrdup2(const char *s);
 
+/* A region: many small allocations that all go at once - a parse tree and
+   the bytecode compiler's scopes, freed when the code object is made. While
+   ppy_region is set the ppy_r* functions take from it (ppy_rfree does
+   nothing); with none set they are xmalloc / xrealloc / free. */
+typedef struct PpyRegionBlock PpyRegionBlock;
+typedef struct { PpyRegionBlock *blocks; } PpyRegion;
+extern PpyRegion *ppy_region;
+void *ppy_ralloc(size_t n);
+void *ppy_ralloc0(size_t n);
+void *ppy_rrealloc(void *p, size_t old, size_t n);
+void  ppy_rfree(void *p);
+char *ppy_rstrndup(const char *s, int n);
+char *ppy_rstrdup(const char *s);
+void  ppy_region_free(PpyRegion *r);
+
 /* Split a raw command-line string (KolibriOS hands over one) into argv[1..]
    in buf; argv[0] = exe, or argv0_default without one. Returns argc. */
 int ppy_split_cmdline(const char *cmd,const char *exe,const char *argv0_default,char *buf,int buflen,char **argv,int maxargv);

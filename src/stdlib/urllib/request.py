@@ -1,8 +1,9 @@
-"""Open URLs (CPython's urllib.request, its urlopen and Request): http:// over
-http.client, redirects followed, errors as urllib.error's. No https (no TLS)."""
+"""Open URLs (CPython's urllib.request, its urlopen and Request): http:// and
+https:// (TLS: Linux and macOS) over http.client, redirects followed, errors as
+urllib.error's."""
 from urllib.parse import urlsplit, urljoin, unquote
 from urllib.error import URLError, HTTPError
-from http.client import HTTPConnection, HTTPResponse
+from http.client import HTTPConnection, HTTPSConnection, HTTPResponse
 
 _USER_AGENT = "Python-urllib/3.14"
 _MAX_REDIRECTIONS = 10
@@ -82,8 +83,8 @@ class Request:
         return list(hdrs.items())
 
 
-def _open(req: Request, timeout: float | None) -> HTTPResponse:
-    if req.type != "http":
+def _open(req: Request, timeout: float | None, context) -> HTTPResponse:
+    if req.type != "http" and req.type != "https":
         raise URLError("unknown url type: " + req.type)
     if not req.host:
         raise URLError("no host given")
@@ -95,7 +96,10 @@ def _open(req: Request, timeout: float | None) -> HTTPResponse:
     if "User-Agent" not in headers:
         headers["User-Agent"] = _USER_AGENT
     headers["Connection"] = "close"
-    conn = HTTPConnection(req.host, timeout=timeout)
+    if req.type == "https":
+        conn: HTTPConnection = HTTPSConnection(req.host, None, timeout, None, context)
+    else:
+        conn = HTTPConnection(req.host, timeout=timeout)
     try:
         conn.request(req.get_method(), req.selector, req.data, headers)
         r = conn.getresponse()
@@ -106,9 +110,10 @@ def _open(req: Request, timeout: float | None) -> HTTPResponse:
     return r
 
 
-def urlopen(url, data: bytes | None = None, timeout: float | None = -1.0) -> HTTPResponse:
+def urlopen(url, data: bytes | None = None, timeout: float | None = -1.0, *, context=None) -> HTTPResponse:
     """The response to a request of url (a str or a Request): status, headers, read() ...
-    Redirections are followed; an error status raises HTTPError."""
+    Redirections are followed; an error status raises HTTPError. context: an
+    ssl.SSLContext for https:// (else the system's certificate authorities)."""
     if isinstance(url, str):
         req = Request(url, data)
     else:
@@ -117,7 +122,7 @@ def urlopen(url, data: bytes | None = None, timeout: float | None = -1.0) -> HTT
             req.data = data
     seen = 0
     while True:
-        r = _open(req, timeout)
+        r = _open(req, timeout, context)
         code = r.status
         if 200 <= code < 300:
             return r

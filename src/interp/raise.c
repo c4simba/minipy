@@ -217,7 +217,7 @@ void tb_add(Value e, Frame *f){
     x->tb_frame=f;
     if(x->tb.k==V_UNDEF) x->tb=mp_list(0,NULL);
     int ip= f->ip>0 ? f->ip-1 : 0;
-    Value ent[5]={mp_str(f->code->file),v_int(f->code->ncode?f->code->lines[ip<f->code->ncode?ip:f->code->ncode-1]:f->code->firstline),v_obj(f->code->name),
+    Value ent[5]={mp_str(f->code->file),mp_code_lineno(f->code,ip),v_obj(f->code->name),
                   v_obj(f->code),v_int(ip<f->code->ncode?ip:-1)};
     ListObj *l=AS_LIST(x->tb);
     if(l->len){                                         /* a list / set / dict comprehension's entry: CPython runs it in this frame (PEP 709) */

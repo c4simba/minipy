@@ -79,6 +79,7 @@ static int ppy_run(int argc,char **argv){
         if(!script_path){
             fprintf(stderr,"usage: %s [-v|--version] [--dump-ast|--dump-bytecode|--fs-info] file.py [args...]\n",program);
             fprintf(stderr,"       %s --compile [options] file.py   (see --compile --help)\n",program);
+            fprintf(stderr,"       %s --bytecode [--strip|--strip-lines] file.py [-o file.ppyc]   (a module compiled: run and imported without its source)\n",program);
             fprintf(stderr,"       %s add|remove|lock|sync|check|list|vendor ...   (packages of PyPI: %s add --help)\n",program,program);
             return 2;
         }
@@ -99,6 +100,32 @@ static int ppy_run(int argc,char **argv){
         mp_dump_code(co);
         free(src);
         return 0;
+    }
+    /* bytecode files (src/interp/bytecode.c): plainpy --bytecode [--strip | --strip-lines] file.py... [-o out.ppyc],
+       plainpy --bytecode-lib [--strip...] out.lib (plainpy.lib's modules compiled, no sources) */
+    if(!script_path && (strcmp(argv[1],"--bytecode")==0 || strcmp(argv[1],"--bytecode-lib")==0)){
+        int lib=strcmp(argv[1],"--bytecode-lib")==0, strip=0, nfiles=0; const char *out=NULL, *files[256];
+        for(int i=2;i<argc;i++){
+            if(!strcmp(argv[i],"--strip")) strip|=MP_STRIP_DOCS;
+            else if(!strcmp(argv[i],"--strip-lines")) strip|=MP_STRIP_DOCS|MP_STRIP_LINES;
+            else if(!strcmp(argv[i],"-o") && i+1<argc) out=argv[++i];
+            else if(argv[i][0]=='-'){ fprintf(stderr,"%s: unknown option %s\n",program,argv[i]); return 2; }
+            else if(nfiles<256) files[nfiles++]=argv[i];
+        }
+        if(lib ? !out && nfiles!=1 : !nfiles || (out && nfiles>1)){
+            fprintf(stderr,"usage: %s --bytecode [--strip|--strip-lines] file.py... [-o out.ppyc]\n"
+                           "       %s --bytecode-lib [--strip|--strip-lines] out.lib\n"
+                           "  --strip        without docstrings\n"
+                           "  --strip-lines  without docstrings and line numbers (tracebacks name the functions only)\n",program,program);
+            return 2; }
+        volatile int brc=0;
+        Catch bc;
+        if(!CATCH_BEGIN(bc)){
+            if(lib){ int n=mp_write_bytecode_lib(out?out:files[0],strip); printf("%s: %d modules\n",out?out:files[0],n); }
+            else for(int i=0;i<nfiles;i++) mp_write_bytecode(files[i],out,strip);
+            CATCH_END(bc); }
+        else { mp_print_exception(mp_catch_exc(&bc)); brc=1; }
+        return brc;
     }
     int first=1;
     if(!script_path) script_path = argv[1];

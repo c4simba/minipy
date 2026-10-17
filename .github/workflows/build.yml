@@ -47,8 +47,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rpm
-          if [ "${{ matrix.arch }}" = x86_64 ]; then      # fasm, and i386 libc for the compiled programs' ctypes
-            sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y fasm libc6:i386 tzdata
+          if [ "${{ matrix.arch }}" = x86_64 ]; then      # fasm, and i386 libc for the compiled programs' ctypes (libssl: their TLS)
+            sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y fasm libc6:i386 libssl3:i386 tzdata
           fi
       - name: Build
         run: make -j"$(nproc)" VERSION="$VERSION"
@@ -59,6 +59,10 @@ jobs:
         run: make test-typed
       - name: The C target (exact floats, freestanding C, the typed suite on its posix port)
         run: make test-port
+      - name: TLS (ssl over OpenSSL 3) against CPython's
+        run: TARGET=${{ matrix.arch == 'x86_64' && 'linux' || 'none' }} make test-ssl
+      - name: Bytecode files
+        run: make test-bytecode
       - name: Packages
         run: |
           make dist deb rpm VERSION="$VERSION"
@@ -94,6 +98,12 @@ jobs:
         run: make test
       - name: The C target (exact floats, freestanding C)
         run: QUICK=1 make test-port
+      - name: TLS (ssl over Homebrew's OpenSSL 3) against CPython's
+        run: |
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          make test-ssl
+      - name: Bytecode files
+        run: make test-bytecode
       - name: Tarball
         run: |
           make dist VERSION="$VERSION"

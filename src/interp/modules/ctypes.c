@@ -5,14 +5,39 @@
 
 #if !defined(PPY_KOLIBRI)
 static int ct_errno;
+/* a library by its name: where dlopen finds it, else in the folders of PLAINPY_LIBRARY_PATH
+   (':'-separated), then where package managers put libraries dlopen does not look in (macOS:
+   Homebrew's, and its keg-only OpenSSL 3) - compiled macOS programs look the same way (x2c_host.c) */
+static void *ct_open(const char *name, char *err, size_t errn){
+    void *h=dlopen(name,RTLD_NOW|RTLD_GLOBAL);
+    if(h || !name) return h;
+    { const char *e=dlerror(); snprintf(err,errn,"%s",e?e:"cannot load the library"); }
+#if defined(__APPLE__)
+    if(!strncmp(name,"libc.so",7) || !strncmp(name,"libm.so",7)) return dlopen("libSystem.B.dylib",RTLD_NOW|RTLD_GLOBAL);
+#endif
+    if(strchr(name,'/')) return NULL;
+    static const char *const dirs[]={
+#if defined(__APPLE__)
+        "/opt/homebrew/lib","/opt/homebrew/opt/openssl@3/lib","/usr/local/lib","/usr/local/opt/openssl@3/lib",
+#else
+        "/usr/local/lib",
+#endif
+        NULL};
+    char path[1024]; const char *env=getenv("PLAINPY_LIBRARY_PATH");
+    while(env && *env){
+        const char *e=strchr(env,':'); size_t n= e ? (size_t)(e-env) : strlen(env);
+        if(n && n<sizeof path-strlen(name)-2){ snprintf(path,sizeof path,"%.*s/%s",(int)n,env,name); if((h=dlopen(path,RTLD_NOW|RTLD_GLOBAL))) return h; }
+        env= e ? e+1 : NULL;
+    }
+    for(int i=0;dirs[i];i++){ snprintf(path,sizeof path,"%s/%s",dirs[i],name); if((h=dlopen(path,RTLD_NOW|RTLD_GLOBAL))) return h; }
+    return NULL;
+}
 static Value ct_dlopen(int argc, Value *argv, TupleObj *kw){
     (void)kw;
     const char *name= argc>0 && IS_STR(argv[0]) ? mp_cstr(argv[0]) : NULL;
-    void *h=dlopen(name,RTLD_NOW|RTLD_GLOBAL);
-#if defined(__APPLE__)
-    if(!h && name && (!strncmp(name,"libc.so",7) || !strncmp(name,"libm.so",7))) h=dlopen("libSystem.B.dylib",RTLD_NOW|RTLD_GLOBAL);
-#endif
-    if(!h){ const char *e=dlerror(); mp_raise_t(E_OSError,"%s",e?e:"cannot load the library"); }
+    char err[600]="";
+    void *h=ct_open(name,err,sizeof err);
+    if(!h) mp_raise_t(E_OSError,"%s",err[0]?err:"cannot load the library");
     return v_int((int64_t)(intptr_t)h);
 }
 static Value ct_dlsym(int argc, Value *argv, TupleObj *kw){
